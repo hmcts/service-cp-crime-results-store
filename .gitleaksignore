@@ -1,4 +1,4 @@
-# False positive: the estate's `internal-urls` rule matches the `.gitignore` entry
-# `.claude/settings.local.json` (the `.local` suffix). A fingerprint is bound to its commit, so this
-# covers only that line in history; new findings are not silenced by this file.
+# False positive: the estate's `internal-urls` rule matches one `.gitignore` entry, the path of a
+# local-only tool settings file whose name carries a `.local.` infix. A fingerprint is bound to its
+# commit, so this covers only that line in history; new findings are not silenced by this file.
 d6e0d581b4cf392e4bb0f0366c487220c2c003a2:.gitignore:internal-urls:38
