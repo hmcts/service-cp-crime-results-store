@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 
 print_help() {
-  echo "Script to run docker containers for Spring Boot Template API service
+  echo "Script to run docker containers for the results store service
 
   Usage:
 
@@ -22,13 +22,6 @@ print_help() {
 GRADLE_CLEAN=false
 GRADLE_INSTALL=false
 
-# TODO custom environment variables application requires.
-# TODO also consider enlisting them in help string above ^
-# TODO sample: DB_PASSWORD   Defaults to 'dev'
-# environment variables
-#DB_PASSWORD=dev
-#S2S_URL=localhost
-#S2S_SECRET=secret
 
 execute_script() {
   cd $(dirname "$0")/..
@@ -45,12 +38,6 @@ execute_script() {
     ./gradlew assemble
   fi
 
-#  echo "Assigning environment variables.."
-#
-#  export DB_PASSWORD=${DB_PASSWORD}
-#  export S2S_URL=${S2S_URL}
-#  export S2S_SECRET=${S2S_SECRET}
-
   echo "Bringing up docker containers.."
 
   docker compose up
@@ -63,9 +50,6 @@ while true ; do
     -i|--install) GRADLE_INSTALL=true ; shift ;;
     -p|--param)
       case "$2" in
-#        DB_PASSWORD=*) DB_PASSWORD="${2#*=}" ; shift 2 ;;
-#        S2S_URL=*) S2S_URL="${2#*=}" ; shift 2 ;;
-#        S2S_SECRET=*) S2S_SECRET="${2#*=}" ; shift 2 ;;
         *) shift 2 ;;
       esac ;;
     *) execute_script ; break ;;

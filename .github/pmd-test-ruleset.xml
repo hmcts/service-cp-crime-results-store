@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ruleset name="Custom Test Ruleset"
+         xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0
+         https://pmd.github.io/pmd-7.17.0/pmd-7.17.0.xsd">
+
+    <description>
+        src/test ruleset. Same base as .github/pmd-ruleset.xml (main), minus rules that are either
+        inapplicable to test code or that report against this project's own test conventions. Every
+        exclusion below names the reason it is here; a finding with no reason to be excluded should
+        be fixed instead.
+    </description>
+
+    <rule ref="category/java/codestyle.xml/MethodNamingConventions">
+        <properties>
+            <!-- This regex allows underscores in JUnit 5 test method names -->
+            <property name="junit5TestPattern" value="^[a-z][a-zA-Z0-9_]*$"/>
+        </properties>
+    </rule>
+
+    <rule ref="category/java/bestpractices.xml">
+        <exclude name="GuardLogStatement"/>
+        <exclude name="UnitTestAssertionsShouldIncludeMessage"/>
+        <exclude name="UnitTestContainsTooManyAsserts"/>
+        <exclude name="PreserveStackTrace"/>
+        <exclude name="ImplicitFunctionalInterface"/>
+        <!-- PMD's heuristic for "an assertion was made" recognises only JUnit/Hamcrest-style
+             assert calls; it does not recognise AssertJ's assertThat(...).isX() chains or
+             MockMvc's andExpect(...) chains, both used throughout this suite. -->
+        <exclude name="UnitTestShouldIncludeAssert"/>
+        <!-- 127.0.0.1 in a container test is the address the mapped port is reached on, not a
+             deployment detail that could leak into an environment. The main ruleset still
+             catches hard-coded addresses in production code. -->
+        <exclude name="AvoidUsingHardCodedIP"/>
+    </rule>
+
+    <rule ref="category/java/codestyle.xml">
+        <exclude name="AtLeastOneConstructor"/>
+        <exclude name="CallSuperInConstructor"/>
+        <exclude name="LongVariable"/>
+        <exclude name="ShortVariable"/>
+        <exclude name="TooManyStaticImports"/>
+        <!-- Declaring every local and parameter final adds noise to short, single-use test
+             methods; the main ruleset still requires it for production code. -->
+        <exclude name="LocalVariableCouldBeFinal"/>
+        <exclude name="MethodArgumentCouldBeFinal"/>
+        <!-- Package-private test classes and methods are the idiomatic JUnit 5 style. -->
+        <exclude name="CommentDefaultAccessModifier"/>
+        <!-- An early return in a test helper states the special case and keeps the body flat;
+             single-exit is still enforced on main sources. -->
+        <exclude name="OnlyOneReturn"/>
+        <!-- In a test the initialiser almost always names the type on the same line, so `var`
+             loses nothing; the main ruleset still requires explicit types. -->
+        <exclude name="UseExplicitTypes"/>
+        <!-- JUnit 5 @Nested classes declare their fixtures next to the tests that use them. -->
+        <exclude name="FieldDeclarationsShouldBeAtStartOfClass"/>
+    </rule>
+
+    <rule ref="category/java/errorprone.xml">
+        <exclude name="InvalidLogMessageFormat"/>
+        <!-- Fixture literals are repeated inline at each point of use for readability; hoisting
+             them into constants hides the expectation the test is stating. -->
+        <exclude name="AvoidDuplicateLiterals"/>
+        <exclude name="AvoidLiteralsInIfCondition"/>
+    </rule>
+
+    <rule ref="category/java/performance.xml">
+        <!-- Nothing in a test suite is hot; building fixtures in a loop is fine. -->
+        <exclude name="AvoidInstantiatingObjectsInLoops"/>
+    </rule>
+
+    <rule ref="category/java/security.xml"/>
+</ruleset>

@@ -4,6 +4,10 @@ updates:
     directory: "/" # location of build.gradle
     schedule:
       interval: "daily" # or "weekly", "monthly"
+    # Hold new releases for 14 days before proposing them, so freshly
+    # compromised upstream versions are flagged before they reach a PR
+    cooldown:
+      default-days: 14
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
@@ -16,3 +20,21 @@ updates:
     directory: "/" # location of your workflow files
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 14
+    groups:
+      # codeql-action/init and codeql-action/analyze MUST be bumped together:
+      # CodeQL aborts with "Loaded a configuration file for version X, but
+      # running version Y" if the two pins diverge. Ungrouped, they arrive as
+      # two PRs, and merging either one alone breaks main and every open PR
+      # until its twin lands (see #22 / #24).
+      # A group carries a single applies-to, so both update kinds need an entry
+      # or a security advisory would still arrive as two separate PRs.
+      codeql-action:
+        applies-to: version-updates
+        patterns:
+          - "github/codeql-action/*"
+      codeql-action-security:
+        applies-to: security-updates
+        patterns:
+          - "github/codeql-action/*"
