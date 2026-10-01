@@ -31,3 +31,41 @@ tasks.named('jacocoTestReport') {
     html.required.set(true)
   }
 }
+
+// Coverage gate. The bootstrap class and config/** (wiring with no meaningful branching) are
+// excluded so the gate reflects logic coverage.
+tasks.named('jacocoTestCoverageVerification') {
+  dependsOn tasks.named('test')
+  mustRunAfter tasks.named('jacocoTestReport')
+  executionData fileTree(
+    dir: layout.buildDirectory.dir("jacoco").get().asFile,
+    include: ["*.exec"]
+  )
+  classDirectories.setFrom(
+    files(sourceSets.main.output.collect {
+      fileTree(dir: it, exclude: [
+        'uk/gov/hmcts/cp/resultsstore/Application.class',
+        'uk/gov/hmcts/cp/resultsstore/config/**'
+      ])
+    })
+  )
+  violationRules {
+    rule {
+      limit {
+        counter = 'LINE'
+        value = 'COVEREDRATIO'
+        minimum = 0.88
+      }
+      limit {
+        counter = 'BRANCH'
+        value = 'COVEREDRATIO'
+        minimum = 0.85
+      }
+    }
+  }
+}
+
+// Make the gate part of `check` (and therefore `build`).
+tasks.named('check') {
+  dependsOn tasks.named('jacocoTestCoverageVerification')
+}

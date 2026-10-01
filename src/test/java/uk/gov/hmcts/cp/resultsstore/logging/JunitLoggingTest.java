@@ -1,4 +1,4 @@
-package uk.gov.hmcts.cp.logging;
+package uk.gov.hmcts.cp.resultsstore.logging;
 
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.type.TypeReference;
@@ -29,7 +29,7 @@ class JunitLoggingTest {
         assertThat(capturedFields)
                 .containsEntry("traceId", "1234-1234")
                 .containsKey("timestamp") // or keep .get("timestamp").isNotNull()
-                .containsEntry("logger_name", "uk.gov.hmcts.cp.logging.JunitLoggingTest")
+                .containsEntry("logger_name", "uk.gov.hmcts.cp.resultsstore.logging.JunitLoggingTest")
                 .containsEntry("thread_name", "Test worker")
                 .containsEntry("level", "INFO")
                 .containsEntry("message", "junit test message");

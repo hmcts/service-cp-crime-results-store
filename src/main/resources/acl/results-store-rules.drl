@@ -1,0 +1,11 @@
+// Authorisation rules for the results store's HTTP API.
+//
+// No rules yet. `authz.http.deny-when-no-rules` is true, so every action is refused until a rule
+// allows it; `/actuator` and `/error` are excluded from the filter altogether. Each read endpoint
+// adds one allow rule here when its feature spec lands, naming the action ActionHeaderFilter
+// derives for it.
+
+import uk.gov.moj.cpp.authz.drools.Outcome;
+import uk.gov.moj.cpp.authz.drools.Action;
+
+global uk.gov.moj.cpp.authz.http.providers.UserAndGroupProvider userAndGroupProvider;

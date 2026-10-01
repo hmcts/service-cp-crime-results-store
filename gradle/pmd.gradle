@@ -4,26 +4,24 @@ pmd {
   ruleSets = []
   ruleSetFiles = files(".github/pmd-ruleset.xml")
   ignoreFailures = false
+  // Pinned so a Gradle upgrade cannot silently change which rules run. Same version as the
+  // sibling services.
+  toolVersion = "7.22.0"
 }
 
 tasks.named("pmdMain").configure {
   onlyIf { gradle.startParameter.taskNames.contains(name) }
 }
 
+// src/test gets its own ruleset: the same base as main, minus rules that do not fit test code.
+// Each exclusion in that file names its reason.
 tasks.named("pmdTest").configure {
-  enabled = false
+  ruleSetFiles = files(".github/pmd-test-ruleset.xml")
 }
 
 tasks.withType(Pmd) {
   reports {
     xml.required.set(true)
     html.required.set(true)
-  }
-}
-
-tasks.withType(Checkstyle).configureEach {
-  def generatedDir = file("${layout.buildDirectory.get().asFile.absolutePath}/generated/src/main/java").canonicalPath
-  source = source.filter { file ->
-    !file.canonicalPath.startsWith(generatedDir)
   }
 }

@@ -1,0 +1,12 @@
+# The results store's HTTP API. Read by cp-audit-filter-springboot to resolve path parameters; the
+# file name is unique to this service because the filter finds it by a suffix glob over the classpath.
+# No paths yet: the read API is described here as its feature spec adds it.
+openapi: 3.0.3
+
+info:
+  title: Results Store API
+  version: 0.1.0
+  description: >-
+    Versioned, queryable store of every share of every resulted hearing day.
+
+paths: {}

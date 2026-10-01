@@ -22,6 +22,11 @@ apply {
   from("$rootDir/gradle/jar.gradle")
 }
 
+// CVE-2026-68497 (jackson-databind, unbounded numeric parsing): Spring Boot 4.1.1 manages
+// 3.1.5 and 2.21.5, and the image scan refuses both. Remove once a Boot release manages these.
+ext['jackson-bom.version'] = '3.1.6'
+ext['jackson-2-bom.version'] = '2.21.6'
+
 // We MUST keep all dependencies in the build.gradle to allow dependabot to provide version updates
 // Sadly, dependabot does not track dependencies in the apply-from files
 dependencies {
@@ -41,6 +46,20 @@ dependencies {
     exclude group: 'org.junit.vintage', module: 'junit-vintage-engine'
   }
 
+  // --- Estate starters: authorisation (drools rules over usersgroups, identity from CJSCPPUID)
+  // and HTTP audit. Versions in gradle/libs.versions.toml, which dependabot also reads.
+  implementation libs.cp.auth.rules.filter
+  implementation libs.cp.audit.filter.springboot
+
+  // --- Persistence: the store (JdbcClient + Flyway) ---
+  implementation 'org.springframework.boot:spring-boot-starter-jdbc'
+  implementation 'org.springframework.boot:spring-boot-starter-flyway'
+  implementation 'org.flywaydb:flyway-database-postgresql'
+  runtimeOnly 'org.postgresql:postgresql'
+
+  // --- Messaging: hearing-resulted public events from the Artemis 'public.event' topic ---
+  // Spring Boot 4 brings jakarta.jms + artemis-jakarta-client transitively; version via the BOM.
+  implementation 'org.springframework.boot:spring-boot-starter-artemis'
 
   // --- Observability / Actuator / OTEL / Prometheus ---
   implementation 'org.springframework.boot:spring-boot-starter-actuator'
@@ -49,4 +68,25 @@ dependencies {
   // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
   // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable
   implementation 'org.apache.tomcat.embed:tomcat-embed-core:11.0.26'
+
+  // --- Test: Testcontainers Postgres (versions from the testcontainers BOM Spring Boot imports;
+  // 2.x module names carry the `testcontainers-` prefix) ---
+  testImplementation 'org.testcontainers:testcontainers-postgresql'
+  testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+
+  // Embedded Artemis broker for the subscription IT. Version via the BOM, so the embedded server
+  // always matches the client; declared on the relocated `org.apache.artemis` group.
+  testImplementation 'org.apache.artemis:artemis-jakarta-server'
+
+  // usersgroups stub for the authorisation IT. The standalone, shaded artefact: the plain one drags
+  // Jetty and Jackson 2 onto the test classpath beside the Jackson 3 stack this service runs on.
+  testImplementation 'org.wiremock:wiremock-standalone:3.13.2'
+}
+
+// Keep legacy javax.jms off the classpath beside Spring Boot 4's jakarta.jms. artemis-jms-client is
+// the javax client, and Artemis relocated it to `org.apache.artemis`, so both coordinates go.
+configurations.all {
+  exclude group: 'javax.jms', module: 'javax.jms-api'
+  exclude group: 'org.apache.activemq', module: 'artemis-jms-client'
+  exclude group: 'org.apache.artemis', module: 'artemis-jms-client'
 }

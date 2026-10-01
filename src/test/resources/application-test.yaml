@@ -1,0 +1,45 @@
+# The `test` profile: no database, no broker, no usersgroups, so context-load tests run without
+# Docker. Suites that need one of those switch it back on for themselves.
+resultsstore:
+  publicevents:
+    # Literal, so an exported RESULTSSTORE_PUBLICEVENTS_ENABLED cannot start a listener here.
+    enabled: false
+
+authz:
+  http:
+    enabled: false
+
+audit:
+  http:
+    enabled: false
+
+cp:
+  audit:
+    enabled: false
+
+spring:
+  artemis:
+    # artemis-jakarta-server is on the test classpath, and with it visible Boot deduces embedded
+    # mode and starts an in-VM broker in every context. Off; the listener IT runs its own broker.
+    embedded:
+      enabled: false
+  autoconfigure:
+    # No datasource in this profile. Suites that need one clear this list and point the
+    # datasource at the Testcontainers Postgres.
+    exclude:
+      - org.springframework.boot.jdbc.autoconfigure.DataSourceAutoConfiguration
+      - org.springframework.boot.flyway.autoconfigure.FlywayAutoConfiguration
+
+management:
+  otlp:
+    metrics:
+      export:
+        # No collector during tests; keeps the exporter's shutdown warning out of the output.
+        enabled: false
+  endpoint:
+    health:
+      group:
+        readiness:
+          # `db` is absent with the datasource excluded, and naming an absent contributor fails
+          # the context.
+          include: readinessState

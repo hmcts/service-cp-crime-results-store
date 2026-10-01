@@ -1,9 +1,10 @@
-package uk.gov.hmcts.cp.integration;
+package uk.gov.hmcts.cp.resultsstore.integration;
 
 import jakarta.annotation.Resource;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -13,7 +14,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-@SuppressWarnings("PMD.UnitTestShouldIncludeAssert") // MockMvc andExpect() calls are assertions
+@ActiveProfiles("test")
 class ActuatorIntegrationTest {
 
     @Resource
@@ -21,7 +22,7 @@ class ActuatorIntegrationTest {
 
     @Test
     void actuator_info_should_have_build_fields() throws Exception {
-        final String name = "service-hmcts-crime-springboot-template";
+        final String name = "service-cp-crime-results-store";
         mockMvc.perform(get("/actuator/info"))
                 .andDo(print())
                 .andExpect(status().isOk())

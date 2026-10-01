@@ -1,0 +1,14 @@
+// Explicit so the bootJar name (gradle/jar.gradle) and CI's app-jar upload path never depend on
+// the checkout directory name.
+rootProject.name = 'service-cp-crime-results-store'
+
+// The CycloneDX SBOM task (run by the CodeQL workflow) needs plexus-xml on the build classpath to
+// read some dependencies' Maven metadata.
+buildscript {
+  repositories {
+    mavenCentral()
+  }
+  dependencies {
+    classpath 'org.codehaus.plexus:plexus-xml:4.2.0'
+  }
+}

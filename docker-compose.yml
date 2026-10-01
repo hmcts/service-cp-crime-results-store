@@ -1,3 +1,10 @@
+# Local development stack. Everything here is LOCAL ONLY: the credentials are development defaults,
+# committed so the stack starts with no .env file. Deployed environments take them from Key Vault.
+#
+#   docker compose up -d postgres artemis wiremock   # dependencies only, for ./gradlew bootRun
+#   docker compose up -d --build                     # the service in its container as well
+#
+# Build the jar first (./gradlew bootJar): the image copies build/libs/*.jar.
 services:
   app:
     build:
@@ -5,3 +12,73 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8082:8082"
+    environment:
+      SERVER_PORT: 8082
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/resultsstore
+      SPRING_DATASOURCE_USERNAME: resultsstore
+      SPRING_DATASOURCE_PASSWORD: resultsstore
+      ARTEMIS_BROKER_URL: tcp://artemis:61616
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+      # usersgroups is the WireMock stub below, so cp-auth-rules-filter runs as deployed.
+      CP_BASE_URL: http://wiremock:8080
+    depends_on:
+      # Flyway migrates on startup, so the database has to be there first. The broker does not
+      # gate startup; the listener container reconnects on its own.
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: resultsstore
+      POSTGRES_USER: resultsstore
+      POSTGRES_PASSWORD: resultsstore
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U resultsstore -d resultsstore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # The estate's shared `public.event` topic. The address is created up front because
+  # `--addresses` defaults to MULTICAST; an auto-created anycast address would hand each event to
+  # one subscriber instead of all of them. apache/activemq-artemis rather than the estate image,
+  # which lives in a private ACR. The console on 8161 shows the subscription and its backlog.
+  artemis:
+    image: apache/activemq-artemis:2.42.0-alpine
+    ports:
+      - "61616:61616"
+      - "8161:8161"
+    environment:
+      ARTEMIS_USER: admin
+      ARTEMIS_PASSWORD: admin
+      ANONYMOUS_LOGIN: "false"
+      # --http-host / --relax-jolokia are the image defaults, repeated because EXTRA_ARGS replaces
+      # them; the console is unreachable without them.
+      EXTRA_ARGS: "--http-host 0.0.0.0 --relax-jolokia --addresses public.event"
+    healthcheck:
+      test: ["CMD-SHELL", "/var/lib/artemis-instance/bin/artemis check node --up --user admin --password admin || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+  # Stands in for usersgroups (docker/wiremock/mappings/identity-stub.json).
+  wiremock:
+    image: wiremock/wiremock:3.13.2
+    ports:
+      - "8089:8080"
+    volumes:
+      - ./docker/wiremock:/home/wiremock:ro
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://localhost:8080/__admin/health || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  postgres-data:

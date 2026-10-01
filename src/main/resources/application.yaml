@@ -1,9 +1,97 @@
 spring:
   application:
-    name: service-UPDATE-TO-BE-NAME-OF-SERVICE
+    name: service-cp-crime-results-store
+
+  # The store. Local development defaults matching the `postgres` service in docker-compose.yml;
+  # the password is never defaulted here. docker-compose sets SPRING_DATASOURCE_PASSWORD, and
+  # deployed environments supply all three from Key Vault through the Secrets Store CSI driver.
+  datasource:
+    url: jdbc:postgresql://localhost:5432/resultsstore
+    username: resultsstore
+    hikari:
+      # No connection is opened during context refresh, so the pool itself never blocks startup.
+      initialization-fail-timeout: -1
+      data-source-properties:
+        # A database that dies without closing its connections would otherwise hang the health
+        # probe. Seconds, per the PostgreSQL JDBC driver.
+        socketTimeout: 30
+
+  flyway:
+    # Migrates on startup, so the application needs the database to start.
+    enabled: true
+
+  # The Artemis connection behind the `public.event` subscription. Bindings only: the broker URL and
+  # credentials come from Key Vault in deployed environments, and docker-compose sets them locally.
+  artemis:
+    broker-url: ${ARTEMIS_BROKER_URL:}
+    user: ${ARTEMIS_USER:}
+    password: ${ARTEMIS_PASSWORD:}
+
+  jms:
+    # `public.event` is a topic; a queue-shaped container would receive nothing from it.
+    pub-sub-domain: true
+    # Durable, so events published while every pod is down are delivered afterwards.
+    subscription-durable: true
+    # Deliberately no `client-id`: the subscription is shared (PublicEventsConfig), keyed by its
+    # name alone, and a client id shared by every replica would make the broker refuse the second.
 
 server:
   port: ${SERVER_PORT:8082}
+
+resultsstore:
+  publicevents:
+    # Starts the subscription's listener container. Off only in the `test` profile.
+    enabled: ${RESULTSSTORE_PUBLICEVENTS_ENABLED:true}
+    # The estate's shared public-event topic.
+    topic: public.event
+    # The shared durable subscription's name, and with no client id its whole identity on the
+    # broker. Changing it, or the selector below, abandons the existing subscription and its backlog.
+    subscription: resultsstore-service.sdg
+    # Applied by the broker, so only hearing-resulted events reach this service.
+    selector: "CPPNAME = 'public.events.hearing.hearing-resulted'"
+
+# cp-auth-rules-filter. On by default; the `test` profile turns it off where a suite does not
+# exercise it. The library reads the literal string `true`.
+authz:
+  http:
+    enabled: ${AUTHZ_HTTP_ENABLED:true}
+    # The caller is named by the CJSCPPUID header, never in the path.
+    identity-url-template: ${CP_BASE_URL:http://localhost:8080}/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions
+    user-id-header: "CJSCPPUID"
+    # Written by ActionHeaderFilter, never taken from the caller for a mapped path.
+    action-header: "CPP-ACTION"
+    accept-header: "application/vnd.usersgroups.get-logged-in-user-permissions+json"
+    drools-classpath-pattern: "classpath:/acl/**/*.drl"
+    # The library default recompiles the rules on every request.
+    reload-on-each-request: ${AUTHZ_RELOAD_RULES:false}
+    # False so paths with no action (actuator, unmapped paths) are answered normally rather than
+    # refused 400 for having no action.
+    action-required: false
+    # Default deny: an action no rule allows is refused, and so is everything if the DRL fails to
+    # compile.
+    deny-when-no-rules: true
+    # Setting this replaces the library's own list. `/actuator` must be listed or the probes answer
+    # 401 and the pod is restarted for ever; `/error` because a refusal forwards there.
+    exclude-path-prefixes:
+      - "/actuator"
+      - "/error"
+
+audit:
+  http:
+    enabled: ${HTTP_AUDIT_ENABLED:true}
+    # Resolved as a suffix glob over the whole classpath, so the name must be unique to this service:
+    # `openapi.yaml` would also match any `*openapi.yaml` a dependency ships.
+    openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}
+    # The library default is true; response bodies must not reach the audit topic.
+    include-payload-body: false
+
+# The audit transport. False by default because the library switches itself on when it is on the
+# classpath and then requires `cp.audit.hosts` and `cp.audit.port`, which a local run does not
+# have. Environments that serve the read API set CP_AUDIT_ENABLED=true with hosts, port and
+# credentials from Key Vault.
+cp:
+  audit:
+    enabled: ${CP_AUDIT_ENABLED:false}
 
 azure:
   application-insights:
@@ -19,6 +107,16 @@ management:
     health:
       probes:
         enabled: true   # enables liveness / readiness groups
+      group:
+        readiness:
+          # The store gates readiness. The broker never does: a pod cannot heal a broker by
+          # restarting, and a broker blip must not take every replica out of service.
+          include: readinessState,db
+  health:
+    jms:
+      # Boot's JMS indicator goes DOWN whenever the broker is unreachable, which would put the
+      # whole service DOWN; see the readiness note above.
+      enabled: false
 
 logging:
   level:

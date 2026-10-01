@@ -1,0 +1,23 @@
+{
+  "request": {
+    "method": "GET",
+    "urlPath": "/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "groups": [
+        {
+          "groupId": "grp-1",
+          "groupName": "System Users",
+          "prosecutingAuthority": null
+        }
+      ],
+      "switchableRoles": [],
+      "permissions": []
+    }
+  }
+}
