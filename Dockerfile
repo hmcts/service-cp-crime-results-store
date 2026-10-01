@@ -5,9 +5,10 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE:-eclipse-temurin:25-jre}
 
-# install curl for debugging
+# install curl for debugging; upgrade base packages so fixed base-image advisories are patched at build time and the Trivy gate passes
 RUN apt-get update \
-    && apt-get install -y curl \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # run as non-root ... group and user "app"
