@@ -130,6 +130,23 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     (failFast), `update_closing_a_two_share_cycle_should_be_refused`: `Expecting code to raise a throwable.`
     GREEN: `FlywayMigrationIT` 107 tests, 0 failures (root 2, `event_receipt` 29, `hearing_share and its
     children` 71, identity edges 5).
+  - Gate-3 decision (guards narrowed): the `share_defendant` guard and the key-details / projection part of
+    the `hearing_share` guard were an implementer addition, not a spec requirement, and would block the
+    sweep's own re-extraction on a version bump (T012 replaces defendant rows and key-details columns).
+    Immutability of defendant rows, and which share columns change when, is enforced by the application
+    under the hearing-day lock, as the constitution says; the database guards are defence in depth for the
+    columns no code path may ever change. `share_defendant` now has no guard trigger (update and delete
+    accepted); `hearing_share_projection_guard` is gone; `hearing_share_fixed_columns_guard` covers only
+    `share_id`, `hearing_id`, `hearing_day`, `shared_at`, both shared days, `stored_at`, `stored_seq`,
+    `payload_sha256` and `enrichment_applied` (no longer `arrived_out_of_order` or `expires_at`, which
+    `hearing_share_expires_unset_ck` still holds empty). The payload guard, the share and day delete guards
+    and the day row guard are unchanged; no insert guard. data-model.md's V3 and rule tables follow.
+    `assertAccepted` now fails as an assertion when the statement throws. RED (tests before V3 changed):
+    `./gradlew test --tests '*FlywayMigrationIT$HearingShare'`: 7 completed, 1 failed (failFast),
+    `delete_of_a_defendant_row_should_be_accepted`: `Expecting code not to raise a throwable but caught
+    "…DataIntegrityViolationException: … ERROR: share_defendant_delete_guard: share_defendant rows are never
+    changed by DELETE"`. GREEN: `FlywayMigrationIT` 113 tests, 0 failures (root 2, `event_receipt` 29,
+    `hearing_share and its children` 73, identity edges 9).
 
 - [X] T003 [P] [US1] [US2] [US3] Test first: `ShareIdentityParserTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParserTest.java, `ShareIdTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdTest.java, `PayloadChecksumTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksumTest.java, `SharedDaysTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDaysTest.java, `NonShareReasonTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReasonTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParser.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdentity.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareId.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksum.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDays.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ReceiptStatus.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReason.java; delete src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelope.java and src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelopeTest.java (the current listener moves to the parser in the same commit so the build stays green)
   - Cases: parser returns `Share` for a valid body and `NotShare(reason)` for each of `not_json`, `not_object`, `nul_character`, `missing_/invalid_hearing_id`, `missing_/invalid_hearing_day`, `missing_/invalid_shared_time` (research R7, R8); the three raw identity strings kept as sent; share id golden vectors including `…706Z` vs `…7060Z` giving different ids and the fixed namespace `3f6c2a4e-8d1b-4f0a-9c57-1e2b7d9a4c60`; SHA-256 hex over UTF-8 (empty, ASCII, multi-byte); London and UTC days either side of both clock changes; each `NonShareReason` maps to its status and metric tag.

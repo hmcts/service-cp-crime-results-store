@@ -238,31 +238,18 @@ BEGIN
     RETURN NEW;
 END $$;
 
--- The share: is_latest, predecessor_share_id and day_youth_seen change freely; the key details and
--- projection_* only while the row is FAILED (the sweep); nothing else.
+-- The share: its identity, shared days, store clocks, checksum and enrichment flag never change.
+-- Defence in depth for columns no code path may change; which other columns change, and when, is
+-- the application's rule under the hearing-day lock (the chain, the day's youth flag; the key details
+-- and projection_* by the sweep, which re-extracts on a version bump).
 CREATE FUNCTION hearing_share_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (NEW.share_id, NEW.hearing_id, NEW.hearing_day, NEW.shared_at, NEW.shared_day_london,
-        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.arrived_out_of_order,
-        NEW.enrichment_applied, NEW.expires_at)
+        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.enrichment_applied)
             IS DISTINCT FROM
        (OLD.share_id, OLD.hearing_id, OLD.hearing_day, OLD.shared_at, OLD.shared_day_london,
-        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.arrived_out_of_order,
-        OLD.enrichment_applied, OLD.expires_at) THEN
+        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.enrichment_applied) THEN
         RAISE EXCEPTION 'hearing_share_fixed_columns_guard: a share''s facts never change'
-            USING ERRCODE = 'restrict_violation';
-    END IF;
-    IF OLD.projection_status <> 'FAILED'
-       AND (NEW.is_reshare, NEW.court_centre_id, NEW.court_room_id, NEW.lja_code, NEW.jurisdiction_type,
-            NEW.is_sjp, NEW.is_group_proceedings, NEW.youth_court_id, NEW.any_subject_is_youth,
-            NEW.projection_status, NEW.projection_reason, NEW.projection_version, NEW.projection_attempts,
-            NEW.projected_at)
-            IS DISTINCT FROM
-           (OLD.is_reshare, OLD.court_centre_id, OLD.court_room_id, OLD.lja_code, OLD.jurisdiction_type,
-            OLD.is_sjp, OLD.is_group_proceedings, OLD.youth_court_id, OLD.any_subject_is_youth,
-            OLD.projection_status, OLD.projection_reason, OLD.projection_version, OLD.projection_attempts,
-            OLD.projected_at) THEN
-        RAISE EXCEPTION 'hearing_share_projection_guard: key details and projection change only while FAILED'
             USING ERRCODE = 'restrict_violation';
     END IF;
     RETURN NEW;
@@ -318,12 +305,10 @@ CREATE CONSTRAINT TRIGGER hearing_share_latest_check_tg
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
--- The payload and the defendant index are insert-only.
+-- The payload is insert-only. share_defendant has no guard: the sweep replaces a share's rows when
+-- it re-extracts, and their immutability otherwise is the application's, under the hearing-day lock.
 CREATE TRIGGER hearing_share_payload_guard_tg
     BEFORE UPDATE OR DELETE ON hearing_share_payload
-    FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
-CREATE TRIGGER share_defendant_guard_tg
-    BEFORE UPDATE OR DELETE ON share_defendant
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
 ```
 
@@ -341,8 +326,8 @@ CREATE TRIGGER share_defendant_guard_tg
 | the share a day row names as latest has `is_latest` | `hearing_day_head_latest_check` (constraint triggers, deferred to commit) |
 | a predecessor was shared earlier than its successor, so the chain cannot loop | `hearing_share_predecessor_guard` |
 | a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
-| a share's facts never change; its key details and `projection_*` change only while it is `FAILED`; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`, `hearing_share_projection_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
-| no share or day row is deleted; payload and defendant rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
+| a share's identity, shared days, `stored_at`, `stored_seq`, checksum and `enrichment_applied` never change; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
+| no share or day row is deleted; payload rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
 | `expires_at` stays empty | `hearing_share_expires_unset_ck` (a later retention spec drops it) |
 | V2 refuses a non-empty V1 table | the `DO` block |
 
@@ -376,7 +361,8 @@ separate table so chain updates never rewrite the large value. Never updated.
 
 One row per (share, case, defendant), with the master defendant id. Ids only. Repeats in one
 payload are merged; the same defendant on two cases gives two rows. Written by the store
-transaction, or by the sweep for a row whose extraction had failed. Never updated.
+transaction, or replaced by the sweep when it re-extracts a row. No database guard: the
+application keeps them unchanged otherwise, under the hearing-day lock.
 
 ## What may change after insert (FR-044)
 
@@ -390,10 +376,13 @@ transaction, or by the sweep for a row whose extraction had failed. Never update
 | `hearing_share` | `is_reshare`, `court_centre_id`, `court_room_id`, `lja_code`, `jurisdiction_type`, `is_sjp`, `is_group_proceedings`, `youth_court_id`, `any_subject_is_youth` | sweep only | under the day lock, row still `FAILED` |
 | `hearing_share` | `projection_status`, `projection_reason`, `projection_version`, `projection_attempts`, `projected_at` | sweep only | under the day lock, row still `FAILED` |
 
-Nothing else is ever updated. `hearing_share_payload` and `share_defendant` are insert-only; no
-row is deleted in 001. The guard triggers in V2 and V3 enforce this table (SQLSTATE 23001,
-`restrict_violation`, naming the guard); the receipt's key, identity and `first_received_at` never
-change. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
+Nothing else is ever updated, and `hearing_share_payload` is insert-only; the sweep replaces a
+re-extracted share's `share_defendant` rows. The application enforces this table under the
+hearing-day lock (constitution I). The guard triggers in V2 and V3 (SQLSTATE 23001,
+`restrict_violation`, naming the guard) are defence in depth for the columns no code path may ever
+change: the receipt's key, identity, `first_received_at` and settled end state; a share's identity,
+shared days, store clocks, checksum and `enrichment_applied`; a day row's key and first store; no
+share, day or payload row deleted, no payload updated. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
 (R19).
 
 ## State machines

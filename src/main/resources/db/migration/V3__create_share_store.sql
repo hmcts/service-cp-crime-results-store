@@ -128,31 +128,18 @@ BEGIN
     RETURN NEW;
 END $$;
 
--- The share: is_latest, predecessor_share_id and day_youth_seen change freely; the key details and
--- projection_* only while the row is FAILED (the sweep); nothing else.
+-- The share: its identity, shared days, store clocks, checksum and enrichment flag never change.
+-- Defence in depth for columns no code path may change; which other columns change, and when, is
+-- the application's rule under the hearing-day lock (the chain, the day's youth flag; the key details
+-- and projection_* by the sweep, which re-extracts on a version bump).
 CREATE FUNCTION hearing_share_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (NEW.share_id, NEW.hearing_id, NEW.hearing_day, NEW.shared_at, NEW.shared_day_london,
-        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.arrived_out_of_order,
-        NEW.enrichment_applied, NEW.expires_at)
+        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.enrichment_applied)
             IS DISTINCT FROM
        (OLD.share_id, OLD.hearing_id, OLD.hearing_day, OLD.shared_at, OLD.shared_day_london,
-        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.arrived_out_of_order,
-        OLD.enrichment_applied, OLD.expires_at) THEN
+        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.enrichment_applied) THEN
         RAISE EXCEPTION 'hearing_share_fixed_columns_guard: a share''s facts never change'
-            USING ERRCODE = 'restrict_violation';
-    END IF;
-    IF OLD.projection_status <> 'FAILED'
-       AND (NEW.is_reshare, NEW.court_centre_id, NEW.court_room_id, NEW.lja_code, NEW.jurisdiction_type,
-            NEW.is_sjp, NEW.is_group_proceedings, NEW.youth_court_id, NEW.any_subject_is_youth,
-            NEW.projection_status, NEW.projection_reason, NEW.projection_version, NEW.projection_attempts,
-            NEW.projected_at)
-            IS DISTINCT FROM
-           (OLD.is_reshare, OLD.court_centre_id, OLD.court_room_id, OLD.lja_code, OLD.jurisdiction_type,
-            OLD.is_sjp, OLD.is_group_proceedings, OLD.youth_court_id, OLD.any_subject_is_youth,
-            OLD.projection_status, OLD.projection_reason, OLD.projection_version, OLD.projection_attempts,
-            OLD.projected_at) THEN
-        RAISE EXCEPTION 'hearing_share_projection_guard: key details and projection change only while FAILED'
             USING ERRCODE = 'restrict_violation';
     END IF;
     RETURN NEW;
@@ -208,10 +195,8 @@ CREATE CONSTRAINT TRIGGER hearing_share_latest_check_tg
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
--- The payload and the defendant index are insert-only.
+-- The payload is insert-only. share_defendant has no guard: the sweep replaces a share's rows when
+-- it re-extracts, and their immutability otherwise is the application's, under the hearing-day lock.
 CREATE TRIGGER hearing_share_payload_guard_tg
     BEFORE UPDATE OR DELETE ON hearing_share_payload
-    FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
-CREATE TRIGGER share_defendant_guard_tg
-    BEFORE UPDATE OR DELETE ON share_defendant
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();

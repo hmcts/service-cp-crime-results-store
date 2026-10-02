@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.SQLException;
@@ -12,6 +13,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
@@ -728,7 +730,6 @@ class FlywayMigrationIT {
             "shared_day_utc = DATE '2026-10-03'",
             "stored_at = clock_timestamp()",
             "payload_sha256 = repeat('a', 64)",
-            "arrived_out_of_order = TRUE",
             "enrichment_applied = TRUE"
         })
         void update_of_a_share_s_fixed_columns_should_be_refused(final String assignment) {
@@ -749,19 +750,23 @@ class FlywayMigrationIT {
             assertThat(shareRow(shareId)).containsEntry("is_latest", true);
         }
 
+        /** The sweep re-extracts on a version bump, so an OK share's key details and projection may change. */
         @ParameterizedTest(name = "SET {0}")
         @ValueSource(strings = {
             "lja_code = '9999'",
             "any_subject_is_youth = TRUE",
             "projection_version = 2",
             "projection_attempts = 2",
-            "projected_at = clock_timestamp()"
+            "projected_at = clock_timestamp()",
+            "projection_status = 'FAILED', projection_reason = 'WRONG_TYPE:hearing.isSJPHearing'",
+            "arrived_out_of_order = TRUE",
+            "expires_at = NULL"
         })
-        void update_of_an_ok_share_s_key_details_or_projection_should_be_refused(final String assignment) {
+        void update_of_an_ok_share_s_key_details_projection_or_arrival_flag_should_be_accepted(
+                final String assignment) {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
 
-            assertRefused(RESTRICT_VIOLATION, "hearing_share_projection_guard",
-                    "UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
+            assertAccepted("UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
         }
 
         @Test
@@ -804,23 +809,25 @@ class FlywayMigrationIT {
                     "DELETE FROM hearing_share_payload WHERE share_id = '" + shareId + "'");
         }
 
+        /**
+         * The sweep replaces a share's defendant rows when it re-extracts; their immutability is the
+         * application's, under the hearing-day lock, not a database guard.
+         */
         @Test
-        void update_of_a_defendant_row_should_be_refused() {
+        void update_of_a_defendant_row_should_be_accepted() {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
             jdbc.sql(defendant(shareId)).update();
 
-            assertRefused(RESTRICT_VIOLATION, "share_defendant_update_guard",
-                    "UPDATE share_defendant SET master_defendant_id = gen_random_uuid() WHERE share_id = '"
-                            + shareId + "'");
+            assertAccepted("UPDATE share_defendant SET master_defendant_id = 'e1e1e1e1-0000-4000-8000-000000000001' "
+                    + "WHERE share_id = '" + shareId + "'");
         }
 
         @Test
-        void delete_of_a_defendant_row_should_be_refused() {
+        void delete_of_a_defendant_row_should_be_accepted() {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
             jdbc.sql(defendant(shareId)).update();
 
-            assertRefused(RESTRICT_VIOLATION, "share_defendant_delete_guard",
-                    "DELETE FROM share_defendant WHERE share_id = '" + shareId + "'");
+            assertAccepted("DELETE FROM share_defendant WHERE share_id = '" + shareId + "'");
         }
 
         @ParameterizedTest(name = "SET {0}")
@@ -1129,7 +1136,10 @@ class FlywayMigrationIT {
     }
 
     private void assertAccepted(final String sql) {
-        assertThat(jdbc.sql(sql).update()).as("rows written").isOne();
+        final AtomicInteger written = new AtomicInteger();
+        assertThatCode(() -> written.set(jdbc.sql(sql).update())).as("accepted: %s", sql)
+                .doesNotThrowAnyException();
+        assertThat(written.get()).as("rows written").isOne();
     }
 
     /** The insert with one more column and its value put first. */
