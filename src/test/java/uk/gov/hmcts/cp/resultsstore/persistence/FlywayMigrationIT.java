@@ -1,12 +1,12 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
@@ -40,6 +40,9 @@ class FlywayMigrationIT {
     /** SQLSTATE of a UNIQUE or PRIMARY KEY violation. */
     private static final String UNIQUE_VIOLATION = "23505";
 
+    /** SQLSTATE of a FOREIGN KEY violation. */
+    private static final String FOREIGN_KEY_VIOLATION = "23503";
+
     /** SQLSTATE PostgreSQL gives for a value written to a GENERATED ALWAYS identity column. */
     private static final String GENERATED_ALWAYS = "428C9";
 
@@ -48,6 +51,12 @@ class FlywayMigrationIT {
     private static final String HEARING_DAY = "2026-10-02";
 
     private static final String SHARED_AT = "2026-10-02T14:19:50.706Z";
+
+    /** The same instant as {@link #SHARED_AT} spelt with four fraction digits: a different share id. */
+    private static final String SHARED_AT_FOUR_DIGITS = "2026-10-02T14:19:50.7060Z";
+
+    /** The longest reason a bounded column holds. */
+    private static final String REASON_120 = "R".repeat(120);
 
     @Autowired
     private JdbcClient jdbc;
@@ -116,13 +125,59 @@ class FlywayMigrationIT {
 
         @Test
         void insert_of_a_received_receipt_without_settled_at_should_be_accepted() {
-            assertAccepted(receipt("'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL"));
+            final String messageId = messageId();
+            final UUID hearingId = UUID.randomUUID();
+
+            assertAccepted(receipt(messageId, "'RECEIVED'", whole(hearingId), "NULL", "NULL", "NULL", "NULL"));
+
+            assertThat(receiptRow(messageId)).containsAllEntriesOf(Map.of(
+                    "status", "RECEIVED", "hearing_id", hearingId.toString(), "hearing_day", HEARING_DAY,
+                    "shared_at_matches", true, "settled", false, "attempts", 1, "has_text", false));
         }
 
         @Test
         void insert_of_a_no_identity_receipt_with_part_of_the_identity_should_be_accepted() {
-            assertAccepted(receipt("'NO_IDENTITY'", "'" + UUID.randomUUID() + "', NULL, NULL", "NULL",
+            final String messageId = messageId();
+            final UUID hearingId = UUID.randomUUID();
+
+            assertAccepted(receipt(messageId, "'NO_IDENTITY'", "'" + hearingId + "', NULL, NULL", "NULL",
                     "clock_timestamp()", "'MISSING_HEARING_DAY'", "'{\"hearing\":{}}'"));
+
+            final Map<String, Object> row = receiptRow(messageId);
+            assertThat(row).containsAllEntriesOf(Map.of(
+                    "status", "NO_IDENTITY", "hearing_id", hearingId.toString(), "settled", true,
+                    "reason", "MISSING_HEARING_DAY", "message_text", "{\"hearing\":{}}"));
+            assertThat(row.get("hearing_day")).isNull();
+            assertThat(row.get("shared_at_matches")).isNull();
+        }
+
+        @Test
+        void insert_of_a_reason_of_the_longest_length_should_be_accepted() {
+            final String messageId = messageId();
+
+            assertAccepted(receipt(messageId, "'UNREADABLE'", "NULL", "NULL", "clock_timestamp()",
+                    "'" + REASON_120 + "'", "'x'"));
+
+            assertThat(receiptRow(messageId)).containsEntry("reason", REASON_120);
+        }
+
+        @Test
+        void insert_of_a_reason_past_its_bound_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "event_receipt_reason_length_ck",
+                    receipt("'UNREADABLE'", "NULL", "NULL", "clock_timestamp()", "'" + REASON_120 + "R'", "'x'"));
+        }
+
+        @Test
+        void insert_of_zero_attempts_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "event_receipt_attempts_ck",
+                    withColumn(receipt("'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL"), "attempts", "0"));
+        }
+
+        @Test
+        void insert_of_a_negative_delivery_count_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "event_receipt_delivery_count_ck",
+                    withColumn(receipt("'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL"), "delivery_count",
+                            "-1"));
         }
 
         @Test
@@ -146,25 +201,49 @@ class FlywayMigrationIT {
 
         @Test
         void insert_of_a_second_receipt_for_one_message_id_should_be_refused() {
-            final String messageId = "ID:" + UUID.randomUUID();
+            final String messageId = messageId();
             final String insert = "INSERT INTO event_receipt (message_id, status, hearing_id, hearing_day, "
                     + "shared_at) VALUES ('" + messageId + "', 'RECEIVED', " + whole() + ")";
             assertAccepted(insert);
+            assertThat(receiptRow(messageId)).containsEntry("status", "RECEIVED");
 
             assertRefused(UNIQUE_VIOLATION, "event_receipt_pk", insert);
         }
 
         private String receipt(final String status, final String identity, final String shareId,
                 final String settledAt, final String reason, final String messageText) {
+            return receipt(messageId(), status, identity, shareId, settledAt, reason, messageText);
+        }
+
+        private String receipt(final String messageId, final String status, final String identity,
+                final String shareId, final String settledAt, final String reason, final String messageText) {
             final String identityValues = "NULL".equals(identity) ? "NULL, NULL, NULL" : identity;
             return "INSERT INTO event_receipt (message_id, status, hearing_id, hearing_day, shared_at, "
-                    + "share_id, settled_at, reason, message_text) VALUES ('ID:" + UUID.randomUUID() + "', "
+                    + "share_id, settled_at, reason, message_text) VALUES ('" + messageId + "', "
                     + status + ", " + identityValues + ", " + shareId + ", " + settledAt + ", " + reason
                     + ", " + messageText + ")";
         }
 
         private String whole() {
-            return "'" + UUID.randomUUID() + "', DATE '" + HEARING_DAY + "', TIMESTAMPTZ '" + SHARED_AT + "'";
+            return whole(UUID.randomUUID());
+        }
+
+        private String whole(final UUID hearingId) {
+            return "'" + hearingId + "', DATE '" + HEARING_DAY + "', TIMESTAMPTZ '" + SHARED_AT + "'";
+        }
+
+        private String messageId() {
+            return "ID:" + UUID.randomUUID();
+        }
+
+        private Map<String, Object> receiptRow(final String messageId) {
+            return jdbc.sql("SELECT status, hearing_id::text AS hearing_id, hearing_day::text AS hearing_day, "
+                            + "shared_at = TIMESTAMPTZ '" + SHARED_AT + "' AS shared_at_matches, "
+                            + "settled_at IS NOT NULL AS settled, attempts, reason, message_text, "
+                            + "message_text IS NOT NULL AS has_text FROM event_receipt WHERE message_id = :m")
+                    .param("m", messageId)
+                    .query()
+                    .singleRow();
         }
     }
 
@@ -185,8 +264,17 @@ class FlywayMigrationIT {
 
         @Test
         void insert_of_a_share_with_its_whole_row_should_be_accepted() {
-            assertAccepted(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'",
-                    "'OK'", "NULL", "NULL"));
+            final UUID shareId = UUID.randomUUID();
+
+            assertAccepted(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "'2577'"));
+
+            final Map<String, Object> row = shareRow(shareId);
+            assertThat(row).containsAllEntriesOf(Map.of(
+                    "hearing_id", hearingId.toString(), "hearing_day", HEARING_DAY, "shared_at_matches", true,
+                    "payload_sha256", SHA256, "lja_code", "2577", "is_latest", false,
+                    "projection_status", "OK", "projection_version", 1, "projection_attempts", 1,
+                    "has_stored_seq", true));
+            assertThat(row.get("projection_reason")).isNull();
         }
 
         @Test
@@ -208,6 +296,48 @@ class FlywayMigrationIT {
 
             assertRefused(UNIQUE_VIOLATION, "hearing_share_identity_uk",
                     share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL"));
+        }
+
+        @Test
+        void insert_of_the_same_instant_spelt_differently_should_insert_no_row() {
+            final UUID first = UUID.randomUUID();
+            jdbc.sql(share(first, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")).update();
+
+            final int inserted = jdbc.sql(share(UUID.randomUUID(), SHARED_AT_FOUR_DIGITS, "FALSE",
+                            "'" + SHA256 + "'", "'OK'", "NULL", "NULL")
+                    + " ON CONFLICT (hearing_id, hearing_day, shared_at) DO NOTHING").update();
+
+            assertThat(inserted).isZero();
+            assertThat(shareIdsOfTheDay()).containsExactly(first.toString());
+        }
+
+        @Test
+        void insert_of_the_same_instant_spelt_differently_without_on_conflict_should_be_refused() {
+            jdbc.sql(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL"))
+                    .update();
+
+            assertRefused(UNIQUE_VIOLATION, "hearing_share_identity_uk",
+                    share(UUID.randomUUID(), SHARED_AT_FOUR_DIGITS, "FALSE", "'" + SHA256 + "'", "'OK'",
+                            "NULL", "NULL"));
+        }
+
+        @Test
+        void insert_of_a_latest_share_on_each_day_of_one_hearing_should_be_accepted() {
+            jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, DATE '2026-10-03')")
+                    .param("h", hearingId)
+                    .update();
+            final UUID dayOne = UUID.randomUUID();
+            final UUID dayTwo = UUID.randomUUID();
+
+            assertAccepted(share(dayOne, SHARED_AT, "TRUE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL"));
+            assertAccepted(share(dayTwo, SHARED_AT, "TRUE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")
+                    .replace("DATE '" + HEARING_DAY + "', TIMESTAMPTZ", "DATE '2026-10-03', TIMESTAMPTZ"));
+
+            assertThat(jdbc.sql("SELECT hearing_day::text FROM hearing_share WHERE hearing_id = :h AND is_latest "
+                            + "ORDER BY hearing_day")
+                    .param("h", hearingId)
+                    .query(String.class)
+                    .list()).containsExactly(HEARING_DAY, "2026-10-03");
         }
 
         @Test
@@ -249,8 +379,83 @@ class FlywayMigrationIT {
 
         @Test
         void insert_of_a_failed_share_with_its_reason_should_be_accepted() {
-            assertAccepted(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'FAILED'",
+            final UUID shareId = UUID.randomUUID();
+
+            assertAccepted(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'FAILED'",
                     "'WRONG_TYPE:hearing.isSJPHearing'", "NULL"));
+
+            assertThat(shareRow(shareId)).containsAllEntriesOf(Map.of(
+                    "projection_status", "FAILED", "projection_reason", "WRONG_TYPE:hearing.isSJPHearing"));
+        }
+
+        @Test
+        void insert_of_a_failed_share_with_a_reason_of_the_longest_length_should_be_accepted() {
+            final UUID shareId = UUID.randomUUID();
+
+            assertAccepted(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'FAILED'",
+                    "'" + REASON_120 + "'", "NULL"));
+
+            assertThat(shareRow(shareId)).containsEntry("projection_reason", REASON_120);
+        }
+
+        @Test
+        void insert_of_a_failed_share_with_a_reason_past_its_bound_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "hearing_share_projection_reason_length_ck",
+                    share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'FAILED'",
+                            "'" + REASON_120 + "R'", "NULL"));
+        }
+
+        @Test
+        void insert_of_projection_version_zero_should_be_refused() {
+            final String insert = share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'",
+                    "NULL", "NULL");
+
+            assertRefused(CHECK_VIOLATION, "hearing_share_projection_version_ck",
+                    insert.substring(0, insert.length() - ", 1)".length()) + ", 0)");
+        }
+
+        @Test
+        void insert_of_zero_projection_attempts_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "hearing_share_projection_attempts_ck",
+                    withColumn(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                            "NULL"), "projection_attempts", "0"));
+        }
+
+        @Test
+        void insert_of_a_share_that_is_its_own_predecessor_should_be_refused() {
+            final UUID shareId = UUID.randomUUID();
+
+            assertRefused(CHECK_VIOLATION, "hearing_share_not_own_predecessor_ck",
+                    withColumn(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL"),
+                            "predecessor_share_id", "'" + shareId + "'"));
+        }
+
+        @Test
+        void insert_of_a_share_whose_predecessor_is_unknown_should_be_refused() {
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_share_predecessor_fk",
+                    withColumn(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                            "NULL"), "predecessor_share_id", "'" + UUID.randomUUID() + "'"));
+        }
+
+        @Test
+        void insert_of_a_share_for_a_day_with_no_day_row_should_be_refused() {
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_share_day_fk",
+                    share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")
+                            .replace("'" + hearingId + "'", "'" + UUID.randomUUID() + "'"));
+        }
+
+        @Test
+        void insert_of_a_payload_for_an_unknown_share_should_be_refused() {
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_share_payload_share_fk",
+                    "INSERT INTO hearing_share_payload (share_id, payload_text, text_bytes) VALUES ('"
+                            + UUID.randomUUID() + "', '{}', 2)");
+        }
+
+        @Test
+        void insert_of_a_defendant_for_an_unknown_share_should_be_refused() {
+            assertRefused(FOREIGN_KEY_VIOLATION, "share_defendant_share_fk",
+                    "INSERT INTO share_defendant (share_id, case_id, defendant_id) VALUES ('" + UUID.randomUUID()
+                            + "', 'c1c1c1c1-0000-4000-8000-000000000001', 'd1d1d1d1-0000-4000-8000-000000000001')");
         }
 
         @Test
@@ -290,6 +495,14 @@ class FlywayMigrationIT {
 
             assertAccepted("INSERT INTO hearing_share_payload (share_id, payload_text, text_bytes, payload_json) "
                     + "VALUES ('" + shareId + "', '{\"a\":\"\\u0000\"}', 14, NULL)");
+
+            final Map<String, Object> row = jdbc.sql("SELECT payload_text, text_bytes, payload_json IS NULL AS "
+                            + "no_parsed_copy FROM hearing_share_payload WHERE share_id = :s")
+                    .param("s", shareId)
+                    .query()
+                    .singleRow();
+            assertThat(row).containsAllEntriesOf(Map.of(
+                    "payload_text", "{\"a\":\"\\u0000\"}", "text_bytes", 14, "no_parsed_copy", true));
         }
 
         @Test
@@ -322,6 +535,12 @@ class FlywayMigrationIT {
 
             assertAccepted("INSERT INTO share_defendant (share_id, case_id, defendant_id) VALUES ('"
                     + shareId + "', 'c2c2c2c2-0000-4000-8000-000000000002', 'd1d1d1d1-0000-4000-8000-000000000001')");
+
+            assertThat(jdbc.sql("SELECT case_id::text FROM share_defendant WHERE share_id = :s ORDER BY case_id")
+                    .param("s", shareId)
+                    .query(String.class)
+                    .list()).containsExactly("c1c1c1c1-0000-4000-8000-000000000001",
+                            "c2c2c2c2-0000-4000-8000-000000000002");
         }
 
         @Test
@@ -332,6 +551,47 @@ class FlywayMigrationIT {
             assertRefused(CHECK_VIOLATION, "hearing_day_head_latest_ck",
                     "UPDATE hearing_day_head SET latest_share_id = '" + shareId + "' WHERE hearing_id = '"
                             + hearingId + "'");
+        }
+
+        @Test
+        void update_of_a_day_row_to_a_positive_count_with_no_latest_share_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "hearing_day_head_latest_ck",
+                    "UPDATE hearing_day_head SET share_count = 1 WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        @Test
+        void update_of_a_day_row_to_a_negative_count_should_be_refused() {
+            final UUID shareId = UUID.randomUUID();
+            jdbc.sql(share(shareId, SHARED_AT, "TRUE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")).update();
+
+            assertRefused(CHECK_VIOLATION, "hearing_day_head_count_ck",
+                    "UPDATE hearing_day_head SET latest_share_id = '" + shareId + "', share_count = -1 "
+                            + "WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        @Test
+        void update_of_a_day_row_to_an_unknown_latest_share_should_be_refused() {
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_day_head_latest_fk",
+                    "UPDATE hearing_day_head SET latest_share_id = '" + UUID.randomUUID() + "', share_count = 1 "
+                            + "WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        private List<String> shareIdsOfTheDay() {
+            return jdbc.sql("SELECT share_id::text FROM hearing_share WHERE hearing_id = :h")
+                    .param("h", hearingId)
+                    .query(String.class)
+                    .list();
+        }
+
+        private Map<String, Object> shareRow(final UUID shareId) {
+            return jdbc.sql("SELECT hearing_id::text AS hearing_id, hearing_day::text AS hearing_day, "
+                            + "shared_at = TIMESTAMPTZ '" + SHARED_AT + "' AS shared_at_matches, payload_sha256, "
+                            + "lja_code, is_latest, projection_status, projection_reason, projection_version, "
+                            + "projection_attempts, stored_seq IS NOT NULL AS has_stored_seq "
+                            + "FROM hearing_share WHERE share_id = :s")
+                    .param("s", shareId)
+                    .query()
+                    .singleRow();
         }
 
         private String share(final UUID shareId, final String sharedAt, final String latest,
@@ -352,7 +612,12 @@ class FlywayMigrationIT {
     }
 
     private void assertAccepted(final String sql) {
-        assertThatCode(() -> jdbc.sql(sql).update()).doesNotThrowAnyException();
+        assertThat(jdbc.sql(sql).update()).as("rows written").isOne();
+    }
+
+    /** The insert with one more column and its value put first. */
+    private static String withColumn(final String insert, final String column, final String value) {
+        return insert.replaceFirst("\\(", "(" + column + ", ").replace("VALUES (", "VALUES (" + value + ", ");
     }
 
     private void assertRefused(final String sqlState, final String constraint, final String sql) {
