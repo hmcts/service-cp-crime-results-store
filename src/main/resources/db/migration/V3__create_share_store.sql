@@ -52,8 +52,6 @@ CREATE TABLE hearing_share (
     CONSTRAINT hearing_share_stored_seq_uk UNIQUE (stored_seq),
     -- the target of the same-day foreign keys below
     CONSTRAINT hearing_share_day_share_uk UNIQUE (hearing_id, hearing_day, share_id),
-    -- the target of event_receipt_share_fk: a settled receipt names a share of its own identity
-    CONSTRAINT hearing_share_identity_share_uk UNIQUE (hearing_id, hearing_day, shared_at, share_id),
     CONSTRAINT hearing_share_day_fk FOREIGN KEY (hearing_id, hearing_day)
         REFERENCES hearing_day_head (hearing_id, hearing_day),
     -- the predecessor is a share of the same day (and an earlier one: hearing_share_predecessor_guard)
@@ -82,12 +80,6 @@ CREATE TABLE hearing_share (
 ALTER TABLE hearing_day_head
     ADD CONSTRAINT hearing_day_head_latest_fk FOREIGN KEY (hearing_id, hearing_day, latest_share_id)
         REFERENCES hearing_share (hearing_id, hearing_day, share_id);
-
--- A STORED or DUPLICATE receipt names a stored share with the receipt's own identity (V2's CHECKs make
--- all four columns present then; a receipt with any of them NULL is not checked).
-ALTER TABLE event_receipt
-    ADD CONSTRAINT event_receipt_share_fk FOREIGN KEY (hearing_id, hearing_day, shared_at, share_id)
-        REFERENCES hearing_share (hearing_id, hearing_day, shared_at, share_id);
 
 -- At most one latest share per hearing day. Not deferrable: clear the old latest first.
 CREATE UNIQUE INDEX hearing_share_one_latest_ux
