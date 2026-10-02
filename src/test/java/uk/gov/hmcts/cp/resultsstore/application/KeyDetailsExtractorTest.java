@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 import java.util.List;
@@ -52,6 +53,8 @@ class KeyDetailsExtractorTest {
     private static final String DEFENDANT_2 = "d2d2d2d2-0000-4000-8000-000000000002";
 
     private static final String MASTER_1 = "e1e1e1e1-0000-4000-8000-000000000001";
+
+    private static final String MASTER_2 = "e2e2e2e2-0000-4000-8000-000000000002";
 
     /** A marker planted in bad values: a failure reason must never carry it. */
     private static final String MARKER = "PAYLOAD-TEXT-MARKER";
@@ -134,6 +137,30 @@ class KeyDetailsExtractorTest {
                     extracted -> assertThat(COLUMN.get(path).apply(extracted.keyDetails())).isNull());
         }
 
+        @ParameterizedTest(name = "{0} = {1}")
+        @CsvSource({
+            "hearing.courtCentre,      '\"x\"', hearing.courtCentre.id",
+            "hearing.courtCentre,      42,      hearing.courtCentre.roomId",
+            "hearing.courtCentre.lja,  '[]',    hearing.courtCentre.lja.ljaCode",
+            "hearing.youthCourt,       42,      hearing.youthCourt.youthCourtId",
+            "hearing.youthCourt,       '[]',    hearing.youthCourt.youthCourtId"
+        })
+        void extract_with_an_optional_parent_that_is_not_an_object_should_read_it_as_absent(final String parent,
+                final String value, final String path) {
+            final Projection projection = extractor.extract(with(parent, value));
+
+            assertThat(projection).isInstanceOfSatisfying(Extracted.class,
+                    extracted -> assertThat(COLUMN.get(path).apply(extracted.keyDetails())).isNull());
+        }
+
+        @ParameterizedTest(name = "youthCourtDefendantIds = {0}")
+        @ValueSource(strings = {"\"" + MARKER + "\"", "42", "[42, null]", "{}", "null", ABSENT})
+        void extract_should_not_validate_youth_court_defendant_ids(final String value) {
+            final Projection projection = extractor.extract(with("hearing.youthCourtDefendantIds", value));
+
+            assertThat(projection).isEqualTo(extractor.extract(tree(FULL)));
+        }
+
         @Test
         void extract_should_record_the_jurisdiction_as_stated() {
             final Projection projection = extractor.extract(with("hearing.jurisdictionType", "\"NOT_A_KNOWN_ONE\""));
@@ -186,6 +213,19 @@ class KeyDetailsExtractorTest {
                     [{"id": "%1$s", "defendants": [{"id": "%2$s"}, {"id": "%2$s", "masterDefendantId": "%3$s"}]},
                      {"id": "%1$s", "defendants": [{"id": "%2$s", "masterDefendantId": "%3$s"}]}]
                     """.formatted(CASE_1, DEFENDANT_1, MASTER_1)));
+
+            assertThat(projection).isInstanceOfSatisfying(Extracted.class,
+                    extracted -> assertThat(extracted.defendants()).containsExactly(
+                            new DefendantRef(UUID.fromString(CASE_1), UUID.fromString(DEFENDANT_1),
+                                    UUID.fromString(MASTER_1))));
+        }
+
+        @Test
+        void extract_of_a_repeated_defendant_should_keep_the_first_stated_master_defendant_id() {
+            final Projection projection = extractor.extract(cases("""
+                    [{"id": "%1$s", "defendants": [{"id": "%2$s", "masterDefendantId": "%3$s"},
+                                                   {"id": "%2$s", "masterDefendantId": "%4$s"}]}]
+                    """.formatted(CASE_1, DEFENDANT_1, MASTER_1, MASTER_2)));
 
             assertThat(projection).isInstanceOfSatisfying(Extracted.class,
                     extracted -> assertThat(extracted.defendants()).containsExactly(
@@ -335,6 +375,31 @@ class KeyDetailsExtractorTest {
         }
 
         @Test
+        void extract_should_cut_an_unexpected_reason_to_its_limit() {
+            final JsonNode exploding = mock(JsonNode.class, invocation -> {
+                throw new AnExceptionWhoseSimpleNameIsLongEnoughThatTheUnexpectedReasonBuiltFromItMustBeCutToTheOneHundredAndTwentyCharacterLimit(MARKER);
+            });
+
+            final Projection projection = extractor.extract(exploding);
+
+            assertThat(projection).isInstanceOfSatisfying(Failed.class, failed -> {
+                assertThat(failed.kind()).isEqualTo(ExtractionFailureKind.UNEXPECTED);
+                assertThat(failed.reason()).hasSize(120)
+                        .isEqualTo(("UNEXPECTED:" + AnExceptionWhoseSimpleNameIsLongEnoughThatTheUnexpectedReasonBuiltFromItMustBeCutToTheOneHundredAndTwentyCharacterLimit.class.getSimpleName()).substring(0, 120));
+            });
+        }
+
+        @Test
+        void extract_should_let_an_error_escape() {
+            final StackOverflowError error = new StackOverflowError(MARKER);
+            final JsonNode exploding = mock(JsonNode.class, invocation -> {
+                throw error;
+            });
+
+            assertThatThrownBy(() -> extractor.extract(exploding)).isSameAs(error);
+        }
+
+        @Test
         void extract_of_a_failure_should_leave_no_key_details_or_defendants() {
             final Projection projection = extractor.extract(with("hearing.isSJPHearing", "\"yes\""));
 
@@ -434,5 +499,15 @@ class KeyDetailsExtractorTest {
 
     private static boolean isIndex(final String segment) {
         return segment.chars().allMatch(Character::isDigit);
+    }
+
+    /** A runtime exception whose simple name alone takes an unexpected reason past its limit. */
+    private static final class AnExceptionWhoseSimpleNameIsLongEnoughThatTheUnexpectedReasonBuiltFromItMustBeCutToTheOneHundredAndTwentyCharacterLimit extends IllegalStateException {
+
+        private static final long serialVersionUID = 1L;
+
+        private AnExceptionWhoseSimpleNameIsLongEnoughThatTheUnexpectedReasonBuiltFromItMustBeCutToTheOneHundredAndTwentyCharacterLimit(final String message) {
+            super(message);
+        }
     }
 }

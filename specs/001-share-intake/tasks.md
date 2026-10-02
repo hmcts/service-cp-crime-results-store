@@ -137,6 +137,13 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     reads as absent, leaving its key details empty; only the fields in data-model's validation table are
     type-checked. A repeated (case, defendant) keeps the first stated `masterDefendantId`. An anonymous
     exception class is named by its binary name without the package, bounded to 120 characters.
+  - Gate-1 additions (tests only, pinning behaviour already in place): an unexpected reason cut to exactly
+    120 characters; an `Error` (here `StackOverflowError`) escapes `extract`; an optional parent that is not
+    an object reads as absent; `youthCourtDefendantIds` of any shape is not validated; a repeated (case,
+    defendant) keeps the first stated master even when a later one states another. Each was green on first
+    run; the first two were proved to bite by mutation: dropping the cut gives `Expected size: 120 but was:
+    130`, and widening the catch to `Throwable` gives `Expecting code to raise a throwable.`
+    `KeyDetailsExtractorTest` 94 tests, 0 failures.
 
 **Checkpoint**: phase-gate run 1 ends with code-reviewer, qa, spec-validator and Codex at PASS.
 
