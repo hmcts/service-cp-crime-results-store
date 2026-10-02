@@ -132,6 +132,20 @@ class ShareIdentityParserTest {
                     .isNotEqualTo(((Share) second).identity().shareId());
         }
 
+        @ParameterizedTest(name = "sharedTime = {0}")
+        @CsvSource(delimiter = '|', value = {
+            "2026-10-02t14:19:50.706z      | 2026-10-02T14:19:50.706Z",
+            "2026-10-02T15:19:50+01:00     | 2026-10-02T14:19:50Z",
+            "2026-10-02T14:19:50.7-00:00   | 2026-10-02T14:19:50.700Z"
+        })
+        void read_with_an_rfc_3339_shared_time_should_give_the_share(final String value, final String instant) {
+            final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + value + "\""));
+
+            assertThat(reading).isInstanceOfSatisfying(Share.class,
+                    share -> assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant)));
+        }
+
         @ParameterizedTest(name = "wrapping {index}")
         @ValueSource(strings = {" %s \n", "\n%s", "%s\r\n"})
         void read_of_a_valid_body_with_surrounding_whitespace_should_give_the_same_share(final String wrapping) {
@@ -245,7 +259,10 @@ class ShareIdentityParserTest {
         @ParameterizedTest(name = "sharedTime = {0}")
         @ValueSource(strings = {"2026-10-02T14:19:50.706", "2026-10-02", "yesterday", "2026-10-02T25:19:50Z", "",
             "+999999999-01-01T00:00:00Z", "-0001-01-01T00:00:00Z", "+2026-10-02T14:19:50.706Z",
-            "+10000-01-01T00:00:00Z"})
+            "+10000-01-01T00:00:00Z", "2026-10-02T14:19Z", "2026-10-02T15:19+01:00", "2026-10-02T14:19:50.706+0100",
+            "2026-10-02T14:19:50.706+01", "2026-10-02T14:19:50.706+01:00:00", "2026-10-02T14:19:50.Z",
+            "2026-10-02 14:19:50.706Z", "2026-10-02T14:19:50,706Z", "2026-10-02T14:19:50.706"
+                + "\uFF10Z"})
         void read_with_a_shared_time_that_is_not_a_date_time_with_offset_should_be_invalid_shared_time(
                 final String value) {
             final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",

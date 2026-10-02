@@ -204,8 +204,11 @@ Forms:
 - **UUID**: must match `^[0-9a-fA-F]{8}-([0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$` before
   `UUID.fromString`, because `UUID.fromString` accepts short forms such as `1-1-1-1-1`.
 - **`hearingDay`**: `LocalDate.parse` (ISO `yyyy-MM-dd`, strict).
-- **`sharedTime`**: `OffsetDateTime.parse` with `ISO_OFFSET_DATE_TIME`, then `toInstant()`. An
-  RFC 3339 date-time needs an offset, so a value without one is `INVALID_SHARED_TIME`.
+- **`sharedTime`**: must first match RFC 3339 `date-time` lexically (seconds required, a fraction
+  has at least one digit, offset `Z` or `±hh:mm`, `T` / `Z` in either case, ASCII digits), then
+  `OffsetDateTime.parse` with `ISO_OFFSET_DATE_TIME` and `toInstant()`. ISO parsing alone takes
+  forms the event schema does not (`14:19Z` without seconds, `+01`, `+0100`, `+01:00:00`), so
+  those, and a value with no offset, are `INVALID_SHARED_TIME`.
 - **Year (both dates)**: exactly four ASCII digits, no sign, as the event schema's `yyyy` and RFC
   3339's `date-fullyear`. Java's ISO parsing also takes signed and longer years (`+999999999`) that
   PostgreSQL cannot hold, so those are invalid. Every four-digit year, 0000 to 9999, with any offset

@@ -39,6 +39,15 @@ public class ShareIdentityParser {
      */
     private static final Pattern FOUR_DIGIT_YEAR = Pattern.compile("^[0-9]{4}-");
 
+    /**
+     * The event schema's {@code date-time}: RFC 3339 {@code date-time}, so seconds and a {@code Z} or
+     * {@code ±hh:mm} offset are required, the fraction (if any) has a digit, and {@code T} and {@code Z} may
+     * be lower case. ISO parsing alone also takes a time without seconds and offsets such as {@code +01},
+     * {@code +0100} or {@code +01:00:00}. ASCII digits only, so the four-digit-year rule holds here too.
+     */
+    private static final Pattern RFC_3339_DATE_TIME = Pattern.compile(
+            "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$");
+
     private final ObjectReader reader;
 
     /**
@@ -139,13 +148,13 @@ public class ShareIdentityParser {
     }
 
     /**
-     * The shared time as an instant, truncated to the microsecond: PostgreSQL's {@code timestamptz}
+     * The shared time, if it is an RFC 3339 date-time, as an instant truncated to the microsecond: PostgreSQL's {@code timestamptz}
      * keeps no finer, so {@code shared_at} and the shared days are what is stored. Times that differ
      * only past the sixth fraction digit are one instant; the share id still hashes the string as sent.
      */
     private static Optional<Instant> instant(final String raw) {
         Optional<Instant> instant = Optional.empty();
-        if (raw != null && FOUR_DIGIT_YEAR.matcher(raw).find()) {
+        if (raw != null && RFC_3339_DATE_TIME.matcher(raw).matches()) {
             try {
                 instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
                         .truncatedTo(ChronoUnit.MICROS));

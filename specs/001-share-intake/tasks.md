@@ -256,6 +256,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     GREEN: `ShareIdentityParserTest` 76 tests, `FlywayMigrationIT` identity edges 9 tests (7, 8 and 9
     fraction digits, and `23:59:59.9999999Z`, read back as the truncated microsecond), 0 failures.
     For T016: record the truncation in research R8 and data-model's `shared_at` row.
+  - Gate-4 fix (strict RFC 3339 shared time): `ISO_OFFSET_DATE_TIME` takes forms broader than the event
+    schema's RFC 3339 `date-time` (no seconds, `+01`, `+0100`, `+01:00:00`, an empty fraction `50.Z`). The
+    parser now matches `RFC_3339_DATE_TIME` (ASCII digits, four-digit year, seconds required, `Z`/`z` or
+    `±hh:mm`) before parsing; lower-case `t`/`z` stay accepted, as RFC 3339 allows. Research R8's
+    `sharedTime` bullet updated. RED (test before the parser changed):
+    `./gradlew test --tests '*ShareIdentityParserTest'`: failures include
+    `read_with_a_shared_time_that_is_not_a_date_time_with_offset_should_be_invalid_shared_time` for
+    `"2026-10-02T14:19Z"`, `"2026-10-02T15:19+01:00"`, `"…706+01"`, `"…706+01:00:00"`, `"…50.Z"`:
+    `expected: NotShare[reason=INVALID_SHARED_TIME, …]` but a `Share` was read. GREEN: `ShareIdentityParserTest`
+    88 tests, 0 failures; `FlywayMigrationIT$IdentityEdges` 9, 0 failures.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.
