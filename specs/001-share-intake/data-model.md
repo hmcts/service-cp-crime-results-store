@@ -318,8 +318,8 @@ Then the youth recompute (research R15), then the receipt `STORED`.
 |---|---|---|
 | body | a `TextMessage`, no raw U+0000, valid JSON with nothing after it, an object | receipt `UNREADABLE` with code |
 | `hearing.id` | a string in canonical UUID form | receipt `NO_IDENTITY`, `MISSING_HEARING_ID` / `INVALID_HEARING_ID` |
-| `hearingDay` | a string, ISO `yyyy-MM-dd` | `MISSING_HEARING_DAY` / `INVALID_HEARING_DAY` |
-| `sharedTime` | a string, ISO date-time with offset | `MISSING_SHARED_TIME` / `INVALID_SHARED_TIME` |
+| `hearingDay` | a string, ISO `yyyy-MM-dd` with a four ASCII-digit unsigned year (0000 to 9999) | `MISSING_HEARING_DAY` / `INVALID_HEARING_DAY` |
+| `sharedTime` | a string, ISO date-time with offset and a four ASCII-digit unsigned year (0000 to 9999); any offset. Every such instant fits `timestamptz` (proved through JDBC by `FlywayMigrationIT`) | `MISSING_SHARED_TIME` / `INVALID_SHARED_TIME` |
 | `hearing.courtCentre.id`, `.roomId`, `hearing.youthCourt.youthCourtId` | absent/null → NULL; else canonical UUID string | `projection_status = FAILED`, `INVALID_UUID:<path>` or `WRONG_TYPE:<path>` |
 | `hearing.courtCentre.lja.ljaCode`, `hearing.jurisdictionType` | absent/null → NULL; else a string | `WRONG_TYPE:<path>` |
 | `hearing.isSJPHearing`, `hearing.isGroupProceedings`, `isReshare` | absent/null → NULL; else a boolean | `WRONG_TYPE:<path>` |

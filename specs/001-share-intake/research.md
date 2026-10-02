@@ -206,6 +206,11 @@ Forms:
 - **`hearingDay`**: `LocalDate.parse` (ISO `yyyy-MM-dd`, strict).
 - **`sharedTime`**: `OffsetDateTime.parse` with `ISO_OFFSET_DATE_TIME`, then `toInstant()`. An
   RFC 3339 date-time needs an offset, so a value without one is `INVALID_SHARED_TIME`.
+- **Year (both dates)**: exactly four ASCII digits, no sign, as the event schema's `yyyy` and RFC
+  3339's `date-fullyear`. Java's ISO parsing also takes signed and longer years (`+999999999`) that
+  PostgreSQL cannot hold, so those are invalid. Every four-digit year, 0000 to 9999, with any offset
+  is accepted: the instants it can name run from year -1 to year 10000 UTC, well inside
+  `timestamptz` (4713 BC to 294276 AD); `FlywayMigrationIT` proves the extremes through JDBC.
 
 **Rationale.** FR-007 to FR-009. Trailing content must be refused here because PostgreSQL's
 `jsonb` would refuse it later, inside the store transaction, and that would loop the message to

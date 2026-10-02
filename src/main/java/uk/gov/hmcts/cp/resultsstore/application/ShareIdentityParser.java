@@ -31,18 +31,12 @@ public class ShareIdentityParser {
 
     /**
      * The wire's {@code yyyy-}: four ASCII digits and no sign. ISO parsing alone also takes signed and
-     * longer years that PostgreSQL's {@code date} and {@code timestamptz} cannot hold.
+     * longer years that PostgreSQL's {@code date} and {@code timestamptz} cannot hold. Every
+     * four-digit year, 0000 to 9999, is accepted with any offset: the instant it names (from year -1
+     * to year 10000 in UTC) lies well inside PostgreSQL's range, which {@code FlywayMigrationIT}
+     * proves through the JDBC binding.
      */
     private static final Pattern FOUR_DIGIT_YEAR = Pattern.compile("^[0-9]{4}-");
-
-    /** The first day a four-digit year can name; year 0000 is refused with the longer years. */
-    private static final LocalDate FIRST_DAY = LocalDate.of(1, 1, 1);
-
-    /** The first instant of year 0001 (UTC); an offset may not carry a time before it. */
-    private static final Instant FIRST_INSTANT = Instant.parse("0001-01-01T00:00:00Z");
-
-    /** The first instant after year 9999 (UTC); an offset may not carry a time onto it or past it. */
-    private static final Instant END_INSTANT = Instant.parse("+10000-01-01T00:00:00Z");
 
     private final ObjectReader reader;
 
@@ -134,8 +128,7 @@ public class ShareIdentityParser {
         Optional<LocalDate> date = Optional.empty();
         if (raw != null && FOUR_DIGIT_YEAR.matcher(raw).find()) {
             try {
-                date = Optional.of(LocalDate.parse(raw, DateTimeFormatter.ISO_LOCAL_DATE))
-                        .filter(day -> !day.isBefore(FIRST_DAY));
+                date = Optional.of(LocalDate.parse(raw, DateTimeFormatter.ISO_LOCAL_DATE));
             } catch (final DateTimeParseException invalid) {
                 // A recorded outcome: the receipt says the hearing day is invalid.
                 date = Optional.empty();
@@ -148,8 +141,7 @@ public class ShareIdentityParser {
         Optional<Instant> instant = Optional.empty();
         if (raw != null && FOUR_DIGIT_YEAR.matcher(raw).find()) {
             try {
-                instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant())
-                        .filter(at -> !at.isBefore(FIRST_INSTANT) && at.isBefore(END_INSTANT));
+                instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant());
             } catch (final DateTimeParseException invalid) {
                 // A recorded outcome: the receipt says the shared time is invalid.
                 instant = Optional.empty();

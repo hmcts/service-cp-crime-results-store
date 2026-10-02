@@ -128,6 +128,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     `hearingDay = "+999999999-01-01"`: `expected: NotShare[reason=INVALID_HEARING_DAY, …]` but was a `Share`.
     GREEN: `ShareIdentityParserTest` 65 tests, 0 failures. A further test (R8) proves a six-character
     `\u0000` escape still reads as a share (66 tests).
+  - Gate-2 fix (year range, replaces the UTC bounds above): the only rule is now the schema's four
+    ASCII-digit unsigned year, 0000 to 9999, with any offset. Every such value is storable: PostgreSQL's
+    `date` and `timestamptz` reach 4713 BC to 294276 AD, and the furthest instants a four-digit year can
+    name (`0000-01-01T00:00:00+18:00` = year -1 UTC, `9999-12-31T23:59:59.999999-18:00` = year 10000 UTC)
+    are proved through the JDBC binding by `FlywayMigrationIT` "identity values at the edges" (parse, bind
+    as `LocalDate` / `OffsetDateTime` at UTC, compare the epoch day and epoch microseconds read back).
+    T008 binds with these `java.time` types. RED: `./gradlew test --tests '*ShareIdentityParserTest' --tests
+    '*FlywayMigrationIT'`: 26 completed, 5 failed (failFast), e.g. `sharedTime = "9999-12-31T23:30:00-01:00"`:
+    `AssertionError: Expecting actual: NotShare[reason=INVALID_SHARED_TIME, …] to be an instance of: Share`.
+    GREEN: `ShareIdentityParserTest` 68 tests, `FlywayMigrationIT` 54 tests (5 new edge round trips), 0 failures.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

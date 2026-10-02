@@ -4,6 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.SQLException;
+import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -15,12 +19,20 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
+import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
+import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
+import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
+import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
@@ -602,6 +614,68 @@ class FlywayMigrationIT {
                     + hearingId + "', DATE '" + HEARING_DAY + "', TIMESTAMPTZ '" + sharedAt + "', DATE '"
                     + HEARING_DAY + "', DATE '" + HEARING_DAY + "', " + checksum + ", " + ljaCode + ", "
                     + latest + ", FALSE, " + status + ", " + reason + ", 1)";
+        }
+    }
+
+    @Nested
+    @DisplayName("identity values at the edges of the four-digit years")
+    class IdentityEdges {
+
+        private final ShareIdentityParser parser = new ShareIdentityParser(JsonMapper.builder().build());
+
+        /**
+         * Every identity the parser accepts must be storable: the values go through the JDBC binding
+         * the store uses (java.time types) and come back as the same day count and epoch instant.
+         */
+        @ParameterizedTest(name = "hearingDay = {0}, sharedTime = {1}")
+        @CsvSource(delimiter = '|', value = {
+            "0000-01-01 | 0000-01-01T00:00:00+18:00",
+            "0000-12-31 | 0001-01-01T00:30:00+01:00",
+            "0001-01-01 | 0001-01-01T00:00:00Z",
+            "9999-12-31 | 9999-12-31T23:30:00-01:00",
+            "9999-12-31 | 9999-12-31T23:59:59.999999-18:00"
+        })
+        void a_parsed_identity_should_be_stored_and_read_back_unchanged(final String hearingDay,
+                final String sharedTime) {
+            final Reading reading = parser.read("{\"hearing\": {\"id\": \"" + UUID.randomUUID()
+                    + "\"}, \"hearingDay\": \"" + hearingDay + "\", \"sharedTime\": \"" + sharedTime + "\"}");
+            assertThat(reading).as("parser reading").isInstanceOf(Share.class);
+            final ShareIdentity identity = ((Share) reading).identity();
+            final SharedDays days = SharedDays.from(identity.sharedAt());
+
+            jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, :d)")
+                    .param("h", identity.hearingId())
+                    .param("d", identity.hearingDay())
+                    .update();
+            assertThat(jdbc.sql("INSERT INTO hearing_share (share_id, hearing_id, hearing_day, shared_at, "
+                            + "shared_day_london, shared_day_utc, payload_sha256, is_latest, arrived_out_of_order, "
+                            + "projection_status, projection_version) VALUES (:s, :h, :d, :at, :london, :utc, '"
+                            + SHA256 + "', FALSE, FALSE, 'OK', 1)")
+                    .param("s", identity.shareId())
+                    .param("h", identity.hearingId())
+                    .param("d", identity.hearingDay())
+                    .param("at", identity.sharedAt().atOffset(ZoneOffset.UTC))
+                    .param("london", days.london())
+                    .param("utc", days.utc())
+                    .update()).as("rows written").isOne();
+
+            final Map<String, Object> row = jdbc.sql("SELECT hearing_day - DATE '1970-01-01' AS day, "
+                            + "shared_day_london - DATE '1970-01-01' AS london, "
+                            + "shared_day_utc - DATE '1970-01-01' AS utc, "
+                            + "(extract(epoch FROM shared_at) * 1000000)::bigint AS micros "
+                            + "FROM hearing_share WHERE share_id = :s")
+                    .param("s", identity.shareId())
+                    .query()
+                    .singleRow();
+            assertThat(row).containsAllEntriesOf(Map.of(
+                    "day", Math.toIntExact(identity.hearingDay().toEpochDay()),
+                    "london", Math.toIntExact(days.london().toEpochDay()),
+                    "utc", Math.toIntExact(days.utc().toEpochDay()),
+                    "micros", ChronoUnit.MICROS.between(Instant.EPOCH, identity.sharedAt())));
+            assertThat(jdbc.sql("SELECT shared_at FROM hearing_share WHERE share_id = :s")
+                    .param("s", identity.shareId())
+                    .query((rs, rowNum) -> rs.getObject(1, OffsetDateTime.class).toInstant())
+                    .single()).as("shared_at read back").isEqualTo(identity.sharedAt());
         }
     }
 
