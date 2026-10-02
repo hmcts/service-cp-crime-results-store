@@ -361,12 +361,25 @@ the listener with its pause and settings. Depends on phase 1.
 **Independent test**: `JdbcReceiptStoreIT` proves the receipt rules on Postgres; `IntakeServiceTest`
 proves the flow with mocked ports; the listener and configuration tests prove the JMS edge.
 
-- [ ] T005 [US2] [US3] [US6] Test first: `JdbcReceiptStoreIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcReceiptStoreIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcReceiptStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/EventReceipts.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ReceiptState.java
+- [X] T005 [US2] [US3] [US6] Test first: `JdbcReceiptStoreIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcReceiptStoreIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcReceiptStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/EventReceipts.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ReceiptState.java
   - Cases: first arrival → `RECEIVED`, attempts 1; a redelivery → attempts + 1, status unchanged, `delivery_count` and `last_received_at` updated; a non-share goes straight to `UNREADABLE` / `NO_IDENTITY` with reason, text and `settled_at`; an end state never changes on a later arrival; `RETURNING` always gives the current status and `inserted`; `markStored` / `markDuplicate` act only from `RECEIVED`; a null `JMSMessageID` is keyed `sha256:<checksum>`.
   - Covers: FR-002–FR-005, FR-008, FR-009.
   - Done when: `JdbcReceiptStoreIT` green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (the port, `ReceiptState`, `Arrival` and `JdbcReceiptStore` with placeholder
+    bodies), `./gradlew test --tests '*JdbcReceiptStoreIT'`: 2 tests completed, 1 failed (failFast),
+    `message_that_is_not_text_should_be_unreadable_as_not_a_text_message`: `AssertionFailedError: expected:
+    UNREADABLE but was: null`.
+  - GREEN: `JdbcReceiptStoreIT` 16 tests, 0 failures (a share 7, a non-share 5, no message id 4);
+    `ArrivalTest` 4 tests (added after green, pins the mapping without Spring).
+  - Notes: the delivery as the receipt sees it is `application/Arrival.java` (one file beyond the list):
+    message id, delivery count, text and the parser's `Reading`; it gives the key (`sha256:<hex>` of the text,
+    or of the empty string, when the id is null), the first-arrival status, the identity parts, the reason
+    code and the text kept (none for a share or for `NUL_CHARACTER`). `recordArrival` runs in its own
+    transaction (a `TransactionOperations` given to the store, so the port's caller never holds one) and
+    returns `ReceiptState(messageId, status, shareId, attempts, inserted)`, `inserted` from `xmax = 0`.
+    The identity columns are written on insert only. `markStored` / `markDuplicate` are on the adapter, not
+    the port: the store transaction (T008) calls them inside its own transaction; they return whether a
+    `RECEIVED` receipt was marked.
 
 - [ ] T006 [US1] [US2] [US3] [US6] Test first: `IntakeServiceTest` (mocked ports, no Spring) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/IntakeServiceTest.java, `IntakeOutcomeTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcomeTest.java, `IntakeFailureCauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCauseTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeService.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeCommand.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeObserver.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (port, `store` only; sweep methods come in T012), src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreRequest.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/RetryableIntakeException.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcome.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCause.java
   - Cases: a non-share is recorded on its receipt and the store is never called; a redelivery whose receipt is settled short-circuits to `ALREADY_SETTLED`; stored path and duplicate path; extraction runs before the store call and a `Failed` projection still stores; receipt and store failures propagate as `RetryableIntakeException` and are counted once; the observer is called only after the template returns; `IntakeFailureCause.fromSqlState` maps `55P03`, `57014`, other, non-database; every outcome has its tag; single-exit shape (`OnlyOneReturn`).
