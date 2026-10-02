@@ -163,6 +163,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     run; the first two were proved to bite by mutation: dropping the cut gives `Expected size: 120 but was:
     130`, and widening the catch to `Throwable` gives `Expecting code to raise a throwable.`
     `KeyDetailsExtractorTest` 94 tests, 0 failures.
+  - Gate-2 fix (escaped NUL in a string key detail): `ljaCode` or `jurisdictionType` holding U+0000 (sent as
+    the six-character escape) would reach a `text` column PostgreSQL refuses, failing T008's insert on every
+    delivery. New kind `ExtractionFailureKind.NUL_CHARACTER` (metric tag `nul_character`, contracts/metrics.md):
+    such a value fails the projection with `NUL_CHARACTER:<path>`; research R8 and data-model's validation
+    table record it. A string with an escaped backslash before `u0000` is plain text and still `OK`.
+    RED (the enum constant added first as a seam): `./gradlew test --tests '*KeyDetailsExtractorTest'`: failed
+    at `extract_with_a_string_key_detail_holding_an_escaped_nul_should_fail_naming_the_path
+    ["hearing.courtCentre.lja.ljaCode"]`: `AssertionError: Expecting actual: Extracted[…] to be an instance
+    of: Failed`. GREEN: `KeyDetailsExtractorTest` 99 tests, 0 failures. The parents row (absent, null or not
+    an object → no key details, `OK`) is now in data-model's validation table, recording decision (b).
 
 **Checkpoint**: phase-gate run 1 ends with code-reviewer, qa, spec-validator and Codex at PASS.
 

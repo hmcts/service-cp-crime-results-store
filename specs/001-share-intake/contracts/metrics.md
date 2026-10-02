@@ -23,7 +23,7 @@ Rules (FR-040, Principle XI):
 | `resultsstore.intake.failed` | `stage` = `receipt` \| `store`; `cause` = `lock_timeout` \| `statement_timeout` \| `database` \| `other` | an intake attempt throws (after the rollback, before the pause) | FR-038 |
 | `resultsstore.intake.message.id.missing` | — | a message had no `JMSMessageID` | FR-005 |
 | `resultsstore.intake.parsed.copy.skipped` | — | a payload's parsed copy was left empty (`\u0000` or unpaired surrogate) | FR-015 |
-| `resultsstore.extraction.failed` | `stage` = `intake` \| `sweep`; `kind` = `missing` \| `wrong_type` \| `invalid_uuid` \| `unexpected` | key details could not be read (after the commit that records it) | FR-032 |
+| `resultsstore.extraction.failed` | `stage` = `intake` \| `sweep`; `kind` = `missing` \| `wrong_type` \| `invalid_uuid` \| `nul_character` \| `unexpected` | key details could not be read (after the commit that records it) | FR-032 |
 | `resultsstore.sweep.rows` | `outcome` = `fixed` \| `failed_again` \| `skipped` \| `error` | the sweep finishes one row (`skipped`: another pod changed it first; `error`: the row's transaction threw) | FR-037, FR-038 |
 
 `cause` comes from the SQLSTATE: `55P03` → `lock_timeout`; `57014` → `statement_timeout`; any

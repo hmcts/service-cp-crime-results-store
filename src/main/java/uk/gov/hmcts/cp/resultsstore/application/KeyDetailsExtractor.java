@@ -32,6 +32,8 @@ public class KeyDetailsExtractor {
 
     private static final String SEPARATOR = ":";
 
+    private static final char NUL = '\u0000';
+
     private static final String HEARING = "hearing";
 
     private static final String COURT_CENTRE = "courtCentre";
@@ -100,8 +102,8 @@ public class KeyDetailsExtractor {
         final KeyDetails keyDetails = new KeyDetails(
                 optionalUuid(courtCentre.path(ID), P_COURT_CENTRE_ID),
                 optionalUuid(courtCentre.path("roomId"), P_ROOM_ID),
-                optionalString(courtCentre.path("lja").path("ljaCode"), P_LJA_CODE),
-                optionalString(hearing.path("jurisdictionType"), P_JURISDICTION),
+                storableString(courtCentre.path("lja").path("ljaCode"), P_LJA_CODE),
+                storableString(hearing.path("jurisdictionType"), P_JURISDICTION),
                 optionalBoolean(hearing.path("isSJPHearing"), P_SJP),
                 optionalBoolean(hearing.path("isGroupProceedings"), P_GROUP),
                 optionalUuid(hearing.path("youthCourt").path("youthCourtId"), P_YOUTH_COURT_ID),
@@ -176,6 +178,18 @@ public class KeyDetailsExtractor {
                 throw new FieldProblem(ExtractionFailureKind.WRONG_TYPE, path);
             }
             value = node.stringValue();
+        }
+        return value;
+    }
+
+    /**
+     * An optional string bound for a {@code text} column, which cannot hold U+0000 (research R8):
+     * such a value fails the extraction so the share is stored {@code FAILED}, not refused.
+     */
+    private static String storableString(final JsonNode node, final String path) {
+        final String value = optionalString(node, path);
+        if (value != null && value.indexOf(NUL) >= 0) {
+            throw new FieldProblem(ExtractionFailureKind.NUL_CHARACTER, path);
         }
         return value;
     }

@@ -237,6 +237,13 @@ binding to a typed model (the technical rules forbid it).
   cannot fail. This is a narrow addition to FR-008 ("with the message text"): the text cannot be
   stored, and storing a changed copy would misrepresent it.
 - `payload_json` is filled with `CAST(:payload AS jsonb)` in the payload insert.
+- **Escaped `\u0000` inside a string key detail** (`hearing.courtCentre.lja.ljaCode`,
+  `hearing.jurisdictionType`): the parsed value holds U+0000, which the `text` key-detail column
+  cannot hold, so the insert would fail on every delivery. The extractor fails the projection with
+  `NUL_CHARACTER:<path>` (kind `nul_character`), so the share is stored `FAILED` with empty key
+  details and is acknowledged. The id fields need canonical UUIDs, so a NUL there is already
+  `INVALID_UUID`. The sweep does not retry it (the payload never changes), unless the extractor
+  version is raised.
 
 **Rationale.** Never refuse to store (Principle V). Without the pre-check, one such payload would
 fail the store transaction on every delivery and end on the dead-letter queue.

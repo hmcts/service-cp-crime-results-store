@@ -169,6 +169,19 @@ class KeyDetailsExtractorTest {
                     extracted -> assertThat(extracted.keyDetails().jurisdictionType()).isEqualTo("NOT_A_KNOWN_ONE"));
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"hearing.courtCentre.lja.ljaCode", "hearing.jurisdictionType"})
+        void extract_of_a_string_holding_an_escaped_backslash_before_u0000_should_keep_it_as_text(
+                final String path) {
+            final String escapedBackslash = "\\\\" + "u0000";
+
+            final Projection projection = extractor.extract(with(path, "\"a" + escapedBackslash + "\""));
+
+            assertThat(projection).isInstanceOfSatisfying(Extracted.class,
+                    extracted -> assertThat(COLUMN.get(path).apply(extracted.keyDetails()))
+                            .isEqualTo("a\\" + "u0000"));
+        }
+
         @ParameterizedTest(name = "prosecutionCases = {0}")
         @ValueSource(strings = {ABSENT, "null", "[]"})
         void extract_without_prosecution_cases_should_give_no_defendants_and_unknown_youth(final String value) {
@@ -330,6 +343,16 @@ class KeyDetailsExtractorTest {
         void extract_with_an_id_that_is_not_a_canonical_uuid_should_fail_naming_the_path(final String path) {
             assertFailed(extractor.extract(with(path, "\"" + MARKER + "\"")), ExtractionFailureKind.INVALID_UUID,
                     withoutPositions(path));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"hearing.courtCentre.lja.ljaCode", "hearing.jurisdictionType"})
+        void extract_with_a_string_key_detail_holding_an_escaped_nul_should_fail_naming_the_path(
+                final String path) {
+            final String sixCharacterEscape = "\\" + "u0000";
+
+            assertFailed(extractor.extract(with(path, "\"" + MARKER + sixCharacterEscape + "\"")),
+                    ExtractionFailureKind.NUL_CHARACTER, path);
         }
 
         @ParameterizedTest(name = "{0} = {1}")
