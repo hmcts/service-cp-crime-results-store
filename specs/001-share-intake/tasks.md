@@ -343,6 +343,11 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     --tests '*KeyDetailsExtractorTest'`: 104 completed, 4 failed, e.g. `"hearing.courtCentre.lja.ljaCode"
     = "\uD800"`: `AssertionError: Expecting actual: Extracted[keyDetails=KeyDetails[…, ljaCode=?, …]] to
     be an instance of: Failed`. GREEN: `KeyDetailsExtractorTest` 104 tests, 0 failures.
+  - Ruling (comments say what is true): `KeyDetailsExtractor`'s comments no longer say extraction "never
+    throws" or that a failed share "is stored and the sweep retries it". They now say it catches
+    `RuntimeException` and returns `Failed`, an `Error` escapes (already pinned by the `StackOverflowError`
+    case), and a share whose store transaction fails is redelivered by the broker, not retried by the sweep.
+    Comment-only, so no RED run; `KeyDetailsExtractorTest` still green in the full gate.
 
 **Checkpoint**: phase-gate run 1 ends with code-reviewer, qa, spec-validator and Codex at PASS.
 

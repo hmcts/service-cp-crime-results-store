@@ -16,7 +16,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 
 /**
  * Reads the key details and the defendant index from a share's payload (FR-018, FR-019, FR-026,
- * FR-029 to FR-031). Pure and in memory; it never throws.
+ * FR-029 to FR-031). Pure and in memory. It catches {@link RuntimeException} and returns
+ * {@link Projection.Failed}; an {@link Error} escapes.
  *
  * <p>A field of the wrong type, an id that is not a canonical UUID, or a missing required id fails
  * the whole extraction with a reason naming the field's path (array positions left out), so the
@@ -78,8 +79,8 @@ public class KeyDetailsExtractor {
      * @param body the parsed payload
      * @return the key details, or why they could not be read
      */
-    // Extraction must never fail the share (FR-030, Principle V): any RuntimeException becomes a
-    // recorded UNEXPECTED outcome, which the sweep retries. Throwable and Error are never caught.
+    // A RuntimeException must not fail the share (FR-030, Principle V): it becomes a Failed
+    // UNEXPECTED projection. Error and other Throwables are not caught and escape to the caller.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public Projection extract(final JsonNode body) {
         Projection projection;
@@ -88,7 +89,9 @@ public class KeyDetailsExtractor {
         } catch (final FieldProblem problem) {
             projection = new Projection.Failed(problem.reason(), problem.kind());
         } catch (final RuntimeException unexpected) {
-            // A recorded outcome: the share is stored FAILED and the sweep retries it.
+            // Returned as Failed. If the store transaction then commits, the share is stored FAILED
+            // and the sweep may re-extract it (FR-033); if that transaction fails, nothing is
+            // stored and the broker redelivers the message.
             projection = new Projection.Failed(
                     bounded(ExtractionFailureKind.UNEXPECTED.name() + SEPARATOR + className(unexpected)),
                     ExtractionFailureKind.UNEXPECTED);
