@@ -28,6 +28,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
@@ -76,6 +77,9 @@ class FlywayMigrationIT {
 
     @Autowired
     private JdbcClient jdbc;
+
+    @Autowired
+    private TransactionTemplate transaction;
 
     @DynamicPropertySource
     static void store(final DynamicPropertyRegistry registry) {
@@ -836,6 +840,117 @@ class FlywayMigrationIT {
                     "DELETE FROM hearing_day_head WHERE hearing_id = '" + hearingId + "'");
         }
 
+        @Test
+        void update_of_a_day_row_to_a_share_that_is_not_latest_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertRefused(CHECK_VIOLATION, "hearing_day_head_latest_is_latest_guard",
+                    "UPDATE hearing_day_head SET latest_share_id = '" + shareId + "', share_count = 1 "
+                            + "WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        @Test
+        void update_of_a_day_row_to_the_latest_share_of_another_day_should_be_refused() {
+            jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, DATE '2026-10-03')")
+                    .param("h", hearingId)
+                    .update();
+            final UUID otherDay = UUID.randomUUID();
+            jdbc.sql(share(otherDay, SHARED_AT, "TRUE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")
+                    .replace("DATE '" + HEARING_DAY + "', TIMESTAMPTZ", "DATE '2026-10-03', TIMESTAMPTZ")).update();
+
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_day_head_latest_fk",
+                    "UPDATE hearing_day_head SET latest_share_id = '" + otherDay + "', share_count = 1 "
+                            + "WHERE hearing_id = '" + hearingId + "' AND hearing_day = DATE '" + HEARING_DAY + "'");
+        }
+
+        @Test
+        void update_of_a_day_row_to_its_latest_share_should_be_accepted() {
+            final UUID shareId = storedShare(SHARED_AT, "TRUE");
+
+            assertAccepted("UPDATE hearing_day_head SET latest_share_id = '" + shareId + "', share_count = 1 "
+                    + "WHERE hearing_id = '" + hearingId + "'");
+
+            assertThat(latestOfTheDay()).isEqualTo(shareId.toString());
+        }
+
+        @Test
+        void update_clearing_the_latest_flag_of_the_share_the_day_row_names_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "TRUE");
+            jdbc.sql("UPDATE hearing_day_head SET latest_share_id = '" + shareId + "', share_count = 1 "
+                    + "WHERE hearing_id = '" + hearingId + "'").update();
+
+            assertRefused(CHECK_VIOLATION, "hearing_day_head_latest_is_latest_guard",
+                    "UPDATE hearing_share SET is_latest = FALSE WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void a_newer_share_taking_over_as_latest_in_one_transaction_should_be_accepted() {
+            final UUID older = storedShare(SHARED_AT, "TRUE");
+            jdbc.sql("UPDATE hearing_day_head SET latest_share_id = '" + older + "', share_count = 1 "
+                    + "WHERE hearing_id = '" + hearingId + "'").update();
+            final UUID newer = storedShare("2026-10-02T15:00:00.000Z", "FALSE");
+
+            transaction.executeWithoutResult(status -> {
+                jdbc.sql("UPDATE hearing_share SET is_latest = FALSE WHERE share_id = '" + older + "'").update();
+                jdbc.sql("UPDATE hearing_share SET is_latest = TRUE, predecessor_share_id = '" + older
+                        + "' WHERE share_id = '" + newer + "'").update();
+                jdbc.sql("UPDATE hearing_day_head SET latest_share_id = '" + newer + "', share_count = 2 "
+                        + "WHERE hearing_id = '" + hearingId + "'").update();
+            });
+
+            assertThat(latestOfTheDay()).isEqualTo(newer.toString());
+        }
+
+        @Test
+        void insert_of_a_share_whose_predecessor_is_on_another_day_should_be_refused() {
+            jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, DATE '2026-10-01')")
+                    .param("h", hearingId)
+                    .update();
+            final UUID otherDay = UUID.randomUUID();
+            jdbc.sql(share(otherDay, "2026-10-01T14:19:50.706Z", "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                    "NULL").replace("DATE '" + HEARING_DAY + "', TIMESTAMPTZ", "DATE '2026-10-01', TIMESTAMPTZ"))
+                    .update();
+
+            assertRefused(FOREIGN_KEY_VIOLATION, "hearing_share_predecessor_fk",
+                    withColumn(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                            "NULL"), "predecessor_share_id", "'" + otherDay + "'"));
+        }
+
+        @Test
+        void insert_of_a_share_whose_predecessor_was_shared_later_should_be_refused() {
+            final UUID later = storedShare("2026-10-02T15:00:00.000Z", "FALSE");
+
+            assertRefused(CHECK_VIOLATION, "hearing_share_predecessor_earlier_guard",
+                    withColumn(share(UUID.randomUUID(), SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                            "NULL"), "predecessor_share_id", "'" + later + "'"));
+        }
+
+        @Test
+        void update_closing_a_two_share_cycle_should_be_refused() {
+            final UUID first = storedShare(SHARED_AT, "FALSE");
+            final UUID second = UUID.randomUUID();
+            jdbc.sql(withColumn(share(second, "2026-10-02T15:00:00.000Z", "FALSE", "'" + SHA256 + "'", "'OK'",
+                    "NULL", "NULL"), "predecessor_share_id", "'" + first + "'")).update();
+
+            assertRefused(CHECK_VIOLATION, "hearing_share_predecessor_earlier_guard",
+                    "UPDATE hearing_share SET predecessor_share_id = '" + second + "' WHERE share_id = '" + first
+                            + "'");
+        }
+
+        @Test
+        void insert_of_a_share_whose_predecessor_is_an_earlier_share_of_the_day_should_be_accepted() {
+            final UUID earlier = storedShare(SHARED_AT, "FALSE");
+            final UUID shareId = UUID.randomUUID();
+
+            assertAccepted(withColumn(share(shareId, "2026-10-02T15:00:00.000Z", "FALSE", "'" + SHA256 + "'",
+                    "'OK'", "NULL", "NULL"), "predecessor_share_id", "'" + earlier + "'"));
+
+            assertThat(jdbc.sql("SELECT predecessor_share_id::text FROM hearing_share WHERE share_id = :s")
+                    .param("s", shareId)
+                    .query(String.class)
+                    .single()).isEqualTo(earlier.toString());
+        }
+
         private UUID storedShare(final String sharedAt, final String latest) {
             final UUID shareId = UUID.randomUUID();
             jdbc.sql(share(shareId, sharedAt, latest, "'" + SHA256 + "'", "'OK'", "NULL", "NULL")).update();
@@ -850,6 +965,14 @@ class FlywayMigrationIT {
         private String defendant(final UUID shareId) {
             return "INSERT INTO share_defendant (share_id, case_id, defendant_id) VALUES ('" + shareId
                     + "', 'c1c1c1c1-0000-4000-8000-000000000001', 'd1d1d1d1-0000-4000-8000-000000000001')";
+        }
+
+        private String latestOfTheDay() {
+            return jdbc.sql("SELECT latest_share_id::text FROM hearing_day_head WHERE hearing_id = :h "
+                            + "AND hearing_day = DATE '" + HEARING_DAY + "'")
+                    .param("h", hearingId)
+                    .query(String.class)
+                    .single();
         }
 
         private Map<String, Object> clocks(final UUID shareId) {

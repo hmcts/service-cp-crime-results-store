@@ -160,10 +160,13 @@ CREATE TABLE hearing_share (
     CONSTRAINT hearing_share_pk PRIMARY KEY (share_id),
     CONSTRAINT hearing_share_identity_uk UNIQUE (hearing_id, hearing_day, shared_at),
     CONSTRAINT hearing_share_stored_seq_uk UNIQUE (stored_seq),
+    -- the target of the same-day foreign keys below
+    CONSTRAINT hearing_share_day_share_uk UNIQUE (hearing_id, hearing_day, share_id),
     CONSTRAINT hearing_share_day_fk FOREIGN KEY (hearing_id, hearing_day)
         REFERENCES hearing_day_head (hearing_id, hearing_day),
-    CONSTRAINT hearing_share_predecessor_fk FOREIGN KEY (predecessor_share_id)
-        REFERENCES hearing_share (share_id),
+    -- the predecessor is a share of the same day (and an earlier one: hearing_share_predecessor_guard)
+    CONSTRAINT hearing_share_predecessor_fk FOREIGN KEY (hearing_id, hearing_day, predecessor_share_id)
+        REFERENCES hearing_share (hearing_id, hearing_day, share_id),
     CONSTRAINT hearing_share_not_own_predecessor_ck
         CHECK (predecessor_share_id IS NULL OR predecessor_share_id <> share_id),
     CONSTRAINT hearing_share_sha256_ck CHECK (payload_sha256 ~ '^[0-9a-f]{64}$'),
@@ -183,9 +186,10 @@ CREATE TABLE hearing_share (
     CONSTRAINT hearing_share_expires_unset_ck CHECK (expires_at IS NULL)
 );
 
+-- the latest share is a share of the same day (and is_latest: hearing_day_head_latest_check)
 ALTER TABLE hearing_day_head
-    ADD CONSTRAINT hearing_day_head_latest_fk FOREIGN KEY (latest_share_id)
-        REFERENCES hearing_share (share_id);
+    ADD CONSTRAINT hearing_day_head_latest_fk FOREIGN KEY (hearing_id, hearing_day, latest_share_id)
+        REFERENCES hearing_share (hearing_id, hearing_day, share_id);
 
 -- At most one latest share per hearing day. Not deferrable: clear the old latest first.
 CREATE UNIQUE INDEX hearing_share_one_latest_ux
@@ -264,19 +268,55 @@ BEGIN
     RETURN NEW;
 END $$;
 
+-- The predecessor was shared earlier, so the chain can never loop.
+CREATE FUNCTION hearing_share_predecessor_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.predecessor_share_id IS NOT NULL
+       AND EXISTS (SELECT 1 FROM hearing_share p
+                   WHERE p.share_id = NEW.predecessor_share_id AND p.shared_at >= NEW.shared_at) THEN
+        RAISE EXCEPTION 'hearing_share_predecessor_earlier_guard: a predecessor is shared before its successor'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+
+-- The share a day row names as latest has is_latest. Checked at commit, because the store
+-- transaction clears the old latest before it moves the day row on.
+CREATE FUNCTION hearing_day_head_latest_check() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM hearing_day_head h
+               JOIN hearing_share s ON s.share_id = h.latest_share_id
+               WHERE h.hearing_id = NEW.hearing_id AND h.hearing_day = NEW.hearing_day AND NOT s.is_latest) THEN
+        RAISE EXCEPTION 'hearing_day_head_latest_is_latest_guard: a day row names a share that is not latest'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END $$;
+
 CREATE TRIGGER hearing_day_head_guard_tg
     BEFORE UPDATE ON hearing_day_head
     FOR EACH ROW EXECUTE FUNCTION hearing_day_head_guard();
 CREATE TRIGGER hearing_day_head_delete_guard_tg
     BEFORE DELETE ON hearing_day_head
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
+CREATE CONSTRAINT TRIGGER hearing_day_head_latest_check_tg
+    AFTER INSERT OR UPDATE OF latest_share_id ON hearing_day_head
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
 CREATE TRIGGER hearing_share_guard_tg
     BEFORE UPDATE ON hearing_share
     FOR EACH ROW EXECUTE FUNCTION hearing_share_guard();
+CREATE TRIGGER hearing_share_predecessor_guard_tg
+    BEFORE INSERT OR UPDATE OF predecessor_share_id ON hearing_share
+    FOR EACH ROW EXECUTE FUNCTION hearing_share_predecessor_guard();
 CREATE TRIGGER hearing_share_delete_guard_tg
     BEFORE DELETE ON hearing_share
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
+CREATE CONSTRAINT TRIGGER hearing_share_latest_check_tg
+    AFTER UPDATE OF is_latest ON hearing_share
+    DEFERRABLE INITIALLY DEFERRED
+    FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
 -- The payload and the defendant index are insert-only.
 CREATE TRIGGER hearing_share_payload_guard_tg
@@ -297,6 +337,9 @@ CREATE TRIGGER share_defendant_guard_tg
 | message text only on non-share receipts | `event_receipt_text_only_for_non_share_ck` |
 | a `FAILED` row has a reason | `hearing_share_projection_reason_ck` |
 | `stored_seq` cannot be set by the caller | `GENERATED ALWAYS AS IDENTITY` (an explicit value is refused without `OVERRIDING SYSTEM VALUE`) |
+| a day row's latest share and a share's predecessor belong to the same day | `hearing_day_head_latest_fk`, `hearing_share_predecessor_fk` (composite, onto `hearing_share_day_share_uk`) |
+| the share a day row names as latest has `is_latest` | `hearing_day_head_latest_check` (constraint triggers, deferred to commit) |
+| a predecessor was shared earlier than its successor, so the chain cannot loop | `hearing_share_predecessor_guard` |
 | a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
 | a share's facts never change; its key details and `projection_*` change only while it is `FAILED`; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`, `hearing_share_projection_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
 | no share or day row is deleted; payload and defendant rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
