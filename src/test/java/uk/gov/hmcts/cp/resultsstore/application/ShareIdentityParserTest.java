@@ -89,6 +89,20 @@ class ShareIdentityParserTest {
             assertThat(reading).isInstanceOfSatisfying(Share.class,
                     share -> assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant)));
         }
+
+        @Test
+        void read_of_an_escaped_nul_should_give_the_share() {
+            final String sixCharacterEscape = "\\" + "u0000";
+            final String text = body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + SHARED_TIME + "\"").replace("\"isReshare\"", "\"note\": \"a" + sixCharacterEscape
+                    + "b\", \"isReshare\"");
+
+            final Reading reading = parser.read(text);
+
+            assertThat(text).doesNotContain(String.valueOf((char) 0)).contains(sixCharacterEscape);
+            assertThat(reading).isInstanceOfSatisfying(Share.class,
+                    share -> assertThat(share.body().path("note").stringValue()).isEqualTo("a" + (char) 0 + "b"));
+        }
     }
 
     @Nested
