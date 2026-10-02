@@ -1,6 +1,9 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -13,6 +16,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectReader;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
@@ -190,6 +196,18 @@ class ShareIdentityParserTest {
                     "\"" + SHARED_TIME + "\"").replace("\"isReshare\"", "\"is\u0000Reshare\"");
 
             assertThat(parser.read(text)).isEqualTo(notShare(NonShareReason.NUL_CHARACTER));
+        }
+
+        @Test
+        void read_should_let_an_error_other_than_a_jackson_one_escape() {
+            final IllegalStateException thrown = new IllegalStateException("reader broken");
+            final ObjectMapper mapper = mock(ObjectMapper.class);
+            final ObjectReader reader = mock(ObjectReader.class);
+            when(mapper.reader()).thenReturn(reader);
+            when(reader.with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)).thenReturn(reader);
+            when(reader.readTree("{}")).thenThrow(thrown);
+
+            assertThatThrownBy(() -> new ShareIdentityParser(mapper).read("{}")).isSameAs(thrown);
         }
 
         @ParameterizedTest
