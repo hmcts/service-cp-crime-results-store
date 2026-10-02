@@ -62,13 +62,17 @@ public class ShareIdentityParser {
     /**
      * Reads the message text.
      *
-     * @param text the text of a {@code TextMessage}, or {@code null} when the message was not one
+     * <p>A message that is not a {@code TextMessage} never reaches here: the listener records it as
+     * {@link NonShareReason#NOT_TEXT_MESSAGE}. A {@code TextMessage} with no text is an empty body and
+     * reads as {@link NonShareReason#NOT_JSON}, as blank text does.
+     *
+     * @param text the text of a {@code TextMessage}, {@code null} when it carries none
      * @return the share, or why it is not one
      */
     public Reading read(final String text) {
         final Reading reading;
         if (text == null) {
-            reading = NotShare.because(NonShareReason.NOT_TEXT_MESSAGE);
+            reading = NotShare.because(NonShareReason.NOT_JSON);
         } else if (text.indexOf(NUL) >= 0) {
             reading = NotShare.because(NonShareReason.NUL_CHARACTER);
         } else {

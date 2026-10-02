@@ -8,11 +8,11 @@ import java.util.Locale;
  */
 public enum NonShareReason {
 
-    /** The body is not a {@code TextMessage}. */
+    /** The message is not a {@code TextMessage}. A {@code TextMessage} with no text is {@link #NOT_JSON}. */
     NOT_TEXT_MESSAGE(ReceiptStatus.UNREADABLE),
     /** The text holds U+0000, which PostgreSQL cannot store in any {@code text} column. */
     NUL_CHARACTER(ReceiptStatus.UNREADABLE),
-    /** Not JSON, or JSON with content after the first value. */
+    /** Not JSON (including no text or blank text), or JSON with content after the first value. */
     NOT_JSON(ReceiptStatus.UNREADABLE),
     /** JSON, but not an object. */
     NOT_OBJECT(ReceiptStatus.UNREADABLE),

@@ -24,7 +24,7 @@ the existing subscription and its backlog (constitution IX). This feature does n
 | `JMSMessageID` | the receipt key. If null: `sha256:<SHA-256 hex of the text>` and a counter (research R3) |
 | `JMSXDeliveryCount` | stored as `delivery_count`; drives the capped pause, `min(2^n s, 30 s)` (research R14). Missing → 1 |
 | `CPPNAME` | used only by the broker's selector; equals `_metadata.name` |
-| message type | must be `TextMessage`; anything else is `UNREADABLE` (`NOT_TEXT_MESSAGE`) |
+| message type | must be `TextMessage`; anything else is `UNREADABLE` (`NOT_TEXT_MESSAGE`); a `TextMessage` with no text is `UNREADABLE` (`NOT_JSON`) |
 
 ## Body
 

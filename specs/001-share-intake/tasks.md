@@ -266,6 +266,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     `"2026-10-02T14:19Z"`, `"2026-10-02T15:19+01:00"`, `"…706+01"`, `"…706+01:00:00"`, `"…50.Z"`:
     `expected: NotShare[reason=INVALID_SHARED_TIME, …]` but a `Share` was read. GREEN: `ShareIdentityParserTest`
     88 tests, 0 failures; `FlywayMigrationIT$IdentityEdges` 9, 0 failures.
+  - Gate-4 fix (no text is not a wrong type): `read(null)` meant "not a `TextMessage`", but a `TextMessage`
+    may itself return null text, which was then recorded as `NOT_TEXT_MESSAGE`. The listener boundary now
+    keeps the two apart: a non-`TextMessage` is named `NOT_TEXT_MESSAGE` by the listener (and by T007's
+    rewrite), and the parser reads null text as an empty body, `NOT_JSON`, as it reads blank text. No new
+    reason code, so the metric tag set is unchanged. Research R7's table and contracts/inbound-event.md
+    say so. RED (tests before the parser changed): `./gradlew test --tests '*ShareIdentityParserTest'
+    --tests '*HearingResultedEventListenerTest'`: 3 completed, 1 failed (failFast),
+    `read_of_no_text_should_be_not_json`: `expected: NotShare[reason=NOT_JSON, …]` but `NOT_TEXT_MESSAGE`.
+    GREEN: `ShareIdentityParserTest` 88, `HearingResultedEventListenerTest` 6, `NonShareReasonTest` 11,
+    0 failures.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

@@ -12,6 +12,7 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.config.PublicEventsConfig;
+import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 
 /**
  * Receives {@code public.events.hearing.hearing-resulted} from the shared durable subscription.
@@ -43,8 +44,8 @@ public class HearingResultedEventListener {
         if (message instanceof TextMessage text) {
             receive(text);
         } else {
-            LOG.warn("Ignored a hearing-resulted message that is not a text message. messageId={}",
-                    message.getJMSMessageID());
+            LOG.warn("Ignored a hearing-resulted message that is not a share. messageId={} reason={}",
+                    message.getJMSMessageID(), NonShareReason.NOT_TEXT_MESSAGE);
         }
     }
 

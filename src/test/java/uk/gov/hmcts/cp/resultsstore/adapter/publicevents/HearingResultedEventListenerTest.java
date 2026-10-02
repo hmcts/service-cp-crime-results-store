@@ -83,7 +83,7 @@ class HearingResultedEventListenerTest {
     }
 
     @Test
-    void a_message_that_is_not_text_should_be_acknowledged_with_a_warning() throws JMSException {
+    void a_message_that_is_not_text_should_be_acknowledged_with_a_warning_naming_the_reason() throws JMSException {
         final BytesMessage message = mock(BytesMessage.class);
         when(message.getJMSMessageID()).thenReturn("ID:1");
 
@@ -91,7 +91,17 @@ class HearingResultedEventListenerTest {
 
         assertThat(log.events()).singleElement().satisfies(event -> {
             assertThat(event.getLevel()).isEqualTo(Level.WARN);
-            assertThat(event.getFormattedMessage()).contains("messageId=ID:1");
+            assertThat(event.getFormattedMessage()).contains("messageId=ID:1", "reason=NOT_TEXT_MESSAGE");
+        });
+    }
+
+    @Test
+    void a_text_message_with_no_text_should_be_acknowledged_with_a_warning_naming_not_json() throws JMSException {
+        listener.onHearingResulted(text(null));
+
+        assertThat(log.events()).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("messageId=ID:1", "reason=NOT_JSON");
         });
     }
 

@@ -178,9 +178,10 @@ class ShareIdentityParserTest {
     @DisplayName("an unreadable body")
     class Unreadable {
 
+        /** A TextMessage may carry no text at all: an empty body, read like blank text, not a wrong type. */
         @Test
-        void read_of_no_text_should_be_not_a_text_message() {
-            assertThat(parser.read(null)).isEqualTo(notShare(NonShareReason.NOT_TEXT_MESSAGE));
+        void read_of_no_text_should_be_not_json() {
+            assertThat(parser.read(null)).isEqualTo(notShare(NonShareReason.NOT_JSON));
         }
 
         @Test

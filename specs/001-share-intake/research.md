@@ -189,6 +189,7 @@ default is. Outcomes:
 | Input | Receipt status | Reason code |
 |---|---|---|
 | not a `TextMessage` | `UNREADABLE` | `NOT_TEXT_MESSAGE` |
+| a `TextMessage` with no text (`getText()` is null) | `UNREADABLE` | `NOT_JSON` |
 | text contains the character U+0000 | `UNREADABLE` | `NUL_CHARACTER` (text not kept, see R8) |
 | not JSON, or trailing content | `UNREADABLE` | `NOT_JSON` |
 | JSON but not an object | `UNREADABLE` | `NOT_OBJECT` |
