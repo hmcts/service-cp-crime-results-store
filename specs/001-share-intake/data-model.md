@@ -330,10 +330,13 @@ CREATE CONSTRAINT TRIGGER hearing_share_latest_check_tg
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
--- The payload is insert-only. share_defendant has no guard: the sweep replaces a share's rows when
--- it re-extracts, and their immutability otherwise is the application's, under the hearing-day lock.
+-- The payload and the defendant index are insert-only. The sweep inserts defendant rows only for a
+-- FAILED share, which has none (plan.md, constitution I).
 CREATE TRIGGER hearing_share_payload_guard_tg
     BEFORE UPDATE OR DELETE ON hearing_share_payload
+    FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
+CREATE TRIGGER share_defendant_guard_tg
+    BEFORE UPDATE OR DELETE ON share_defendant
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
 ```
 
@@ -353,7 +356,7 @@ CREATE TRIGGER hearing_share_payload_guard_tg
 | a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
 | a share's identity, shared days, `stored_at`, `stored_seq`, checksum, `arrived_out_of_order` and `enrichment_applied` never change; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
 | a share's key details and `projection_*` change only while it is `FAILED` (the sweep, FR-033) | `hearing_share_guard` (`hearing_share_projection_guard`) |
-| no share or day row is deleted; payload rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
+| no share or day row is deleted; payload and defendant rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
 | `expires_at` stays empty | `hearing_share_expires_unset_ck` (a later retention spec drops it) |
 | V2 refuses a non-empty V1 table | the `DO` block |
 
@@ -387,8 +390,8 @@ separate table so chain updates never rewrite the large value. Never updated.
 
 One row per (share, case, defendant), with the master defendant id. Ids only. Repeats in one
 payload are merged; the same defendant on two cases gives two rows. Written by the store
-transaction, or replaced by the sweep when it re-extracts a row. No database guard: the
-application keeps them unchanged otherwise, under the hearing-day lock.
+transaction, or inserted by the sweep for a row that had failed extraction (and so has none).
+Insert-only: `share_defendant_guard_tg` refuses any update or delete.
 
 ## What may change after insert (FR-044)
 
@@ -402,14 +405,14 @@ application keeps them unchanged otherwise, under the hearing-day lock.
 | `hearing_share` | `is_reshare`, `court_centre_id`, `court_room_id`, `lja_code`, `jurisdiction_type`, `is_sjp`, `is_group_proceedings`, `youth_court_id`, `any_subject_is_youth` | sweep only | under the day lock, row still `FAILED` |
 | `hearing_share` | `projection_status`, `projection_reason`, `projection_version`, `projection_attempts`, `projected_at` | sweep only | under the day lock, row still `FAILED` |
 
-Nothing else is ever updated, and `hearing_share_payload` is insert-only; the sweep replaces a
-re-extracted share's `share_defendant` rows. The application enforces this table under the
+Nothing else is ever updated, and `hearing_share_payload` and `share_defendant` are insert-only;
+the sweep inserts a re-extracted share's `share_defendant` rows (a `FAILED` share has none). The application enforces this table under the
 hearing-day lock (constitution I). The guard triggers in V2 and V3 (SQLSTATE 23001,
 `restrict_violation`, naming the guard) are defence in depth for the columns no code path may ever
 change: the receipt's key, identity, `first_received_at` and settled end state; a share's identity,
 shared days, store clocks, checksum, `arrived_out_of_order` and `enrichment_applied`, and an `OK`
 share's key details and `projection_*`; a day row's key and first store; no
-share, day or payload row deleted, no payload updated. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
+share, day, payload or defendant row deleted, no payload or defendant row updated. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
 (R19).
 
 ## State machines

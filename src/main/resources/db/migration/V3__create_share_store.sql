@@ -220,8 +220,11 @@ CREATE CONSTRAINT TRIGGER hearing_share_latest_check_tg
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION hearing_day_head_latest_check();
 
--- The payload is insert-only. share_defendant has no guard: the sweep replaces a share's rows when
--- it re-extracts, and their immutability otherwise is the application's, under the hearing-day lock.
+-- The payload and the defendant index are insert-only. The sweep inserts defendant rows only for a
+-- FAILED share, which has none (plan.md, constitution I).
 CREATE TRIGGER hearing_share_payload_guard_tg
     BEFORE UPDATE OR DELETE ON hearing_share_payload
+    FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
+CREATE TRIGGER share_defendant_guard_tg
+    BEFORE UPDATE OR DELETE ON share_defendant
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();

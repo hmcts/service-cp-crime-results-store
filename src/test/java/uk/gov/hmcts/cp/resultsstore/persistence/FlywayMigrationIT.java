@@ -845,25 +845,24 @@ class FlywayMigrationIT {
                     "DELETE FROM hearing_share_payload WHERE share_id = '" + shareId + "'");
         }
 
-        /**
-         * The sweep replaces a share's defendant rows when it re-extracts; their immutability is the
-         * application's, under the hearing-day lock, not a database guard.
-         */
+        /** Defendant rows are insert-only: the sweep only inserts them, for a FAILED share that has none. */
         @Test
-        void update_of_a_defendant_row_should_be_accepted() {
+        void update_of_a_defendant_row_should_be_refused() {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
             jdbc.sql(defendant(shareId)).update();
 
-            assertAccepted("UPDATE share_defendant SET master_defendant_id = 'e1e1e1e1-0000-4000-8000-000000000001' "
-                    + "WHERE share_id = '" + shareId + "'");
+            assertRefused(RESTRICT_VIOLATION, "share_defendant_update_guard",
+                    "UPDATE share_defendant SET master_defendant_id = 'e1e1e1e1-0000-4000-8000-000000000001' "
+                            + "WHERE share_id = '" + shareId + "'");
         }
 
         @Test
-        void delete_of_a_defendant_row_should_be_accepted() {
+        void delete_of_a_defendant_row_should_be_refused() {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
             jdbc.sql(defendant(shareId)).update();
 
-            assertAccepted("DELETE FROM share_defendant WHERE share_id = '" + shareId + "'");
+            assertRefused(RESTRICT_VIOLATION, "share_defendant_delete_guard",
+                    "DELETE FROM share_defendant WHERE share_id = '" + shareId + "'");
         }
 
         @ParameterizedTest(name = "SET {0}")
