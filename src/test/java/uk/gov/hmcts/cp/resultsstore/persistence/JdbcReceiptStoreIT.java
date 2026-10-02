@@ -1,13 +1,18 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.sql.Connection;
 import java.sql.Date;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.util.Map;
 import java.util.UUID;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -25,7 +30,10 @@ import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.Arrival;
 import uk.gov.hmcts.cp.resultsstore.application.ReceiptState;
+import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.ReceiptStatus;
@@ -53,6 +61,9 @@ class JdbcReceiptStoreIT {
 
     @Autowired
     private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private DataSource dataSource;
 
     private JdbcReceiptStore store;
 
@@ -295,6 +306,37 @@ class JdbcReceiptStoreIT {
 
             assertThat(state.messageId()).isEqualTo("sha256:" + PayloadChecksum.sha256Hex(""));
             assertThat(state.status()).isEqualTo(ReceiptStatus.UNREADABLE);
+        }
+    }
+
+    @Nested
+    @DisplayName("a failure")
+    class AFailure {
+
+        @Test
+        void arrival_blocked_past_the_receipt_timeout_should_fail_retryable_as_a_statement_timeout()
+                throws SQLException {
+            store.recordArrival(arrival(messageId, 1, share()));
+            final TransactionTemplate oneSecond = new TransactionTemplate(transactionManager);
+            oneSecond.setTimeout(1);
+            final JdbcReceiptStore bounded = new JdbcReceiptStore(jdbc, oneSecond);
+
+            try (Connection holder = dataSource.getConnection()) {
+                holder.setAutoCommit(false);
+                try (PreparedStatement lock = holder.prepareStatement(
+                        "SELECT 1 FROM event_receipt WHERE message_id = ? FOR UPDATE")) {
+                    lock.setString(1, messageId);
+                    lock.executeQuery().close();
+                }
+
+                assertThatThrownBy(() -> bounded.recordArrival(arrival(messageId, 2, share())))
+                        .isInstanceOfSatisfying(RetryableIntakeException.class, failure -> {
+                            assertThat(failure.getStage()).isEqualTo(IntakeStage.RECEIPT);
+                            assertThat(failure.getFailureCause()).isEqualTo(IntakeFailureCause.STATEMENT_TIMEOUT);
+                        });
+                holder.rollback();
+            }
+            assertThat(row(messageId)).as("the timed-out delivery left nothing").containsEntry("attempts", 1);
         }
     }
 

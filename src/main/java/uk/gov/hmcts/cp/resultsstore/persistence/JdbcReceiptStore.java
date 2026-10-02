@@ -3,11 +3,14 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.support.TransactionOperations;
 import uk.gov.hmcts.cp.resultsstore.application.Arrival;
 import uk.gov.hmcts.cp.resultsstore.application.EventReceipts;
 import uk.gov.hmcts.cp.resultsstore.application.ReceiptState;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.ReceiptStatus;
 
 /**
@@ -67,8 +70,22 @@ public class JdbcReceiptStore implements EventReceipts {
         this.receiptTransaction = receiptTransaction;
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @throws uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException when the transaction fails,
+     *         classified by its SQLSTATE; nothing is written
+     */
     @Override
     public ReceiptState recordArrival(final Arrival arrival) {
+        try {
+            return upsert(arrival);
+        } catch (final DataAccessException | TransactionException failure) {
+            throw RetryableFailures.classify(IntakeStage.RECEIPT, failure);
+        }
+    }
+
+    private ReceiptState upsert(final Arrival arrival) {
         return receiptTransaction.execute(status -> jdbc.sql(RECORD_ARRIVAL)
                 .param(MESSAGE_ID, arrival.key())
                 .param(STATUS, arrival.status().name())

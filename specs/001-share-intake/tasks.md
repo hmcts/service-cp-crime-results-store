@@ -381,12 +381,37 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     the port: the store transaction (T008) calls them inside its own transaction; they return whether a
     `RECEIVED` receipt was marked.
 
-- [ ] T006 [US1] [US2] [US3] [US6] Test first: `IntakeServiceTest` (mocked ports, no Spring) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/IntakeServiceTest.java, `IntakeOutcomeTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcomeTest.java, `IntakeFailureCauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCauseTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeService.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeCommand.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeObserver.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (port, `store` only; sweep methods come in T012), src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreRequest.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/RetryableIntakeException.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcome.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCause.java
+- [X] T006 [US1] [US2] [US3] [US6] Test first: `IntakeServiceTest` (mocked ports, no Spring) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/IntakeServiceTest.java, `IntakeOutcomeTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcomeTest.java, `IntakeFailureCauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCauseTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeService.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeCommand.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeObserver.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (port, `store` only; sweep methods come in T012), src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreRequest.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreResult.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/RetryableIntakeException.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeOutcome.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/IntakeFailureCause.java
   - Cases: a non-share is recorded on its receipt and the store is never called; a redelivery whose receipt is settled short-circuits to `ALREADY_SETTLED`; stored path and duplicate path; extraction runs before the store call and a `Failed` projection still stores; receipt and store failures propagate as `RetryableIntakeException` and are counted once; the observer is called only after the template returns; `IntakeFailureCause.fromSqlState` maps `55P03`, `57014`, other, non-database; every outcome has its tag; single-exit shape (`OnlyOneReturn`).
   - Covers: FR-004, FR-006, FR-010, FR-021, FR-040.
   - Done when: the three test classes green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (the types, `receive` returning a placeholder result, `fromSqlState`
+    returning `OTHER`, tags empty, the classifier returning `OTHER`), each class run on its own:
+    `./gradlew test --tests '*IntakeServiceTest'`: 3 completed, 2 failed (failFast), e.g.
+    `receipt_failure_should_propagate_counted_once_and_never_store`: `AssertionError: Expecting code to raise a
+    throwable.`; `--tests '*IntakeFailureCauseTest'`: 7 completed, 5 failed, e.g. `sqlState = "55P03"`:
+    `AssertionFailedError: expected: LOCK_TIMEOUT but was: OTHER`; `--tests '*RetryableFailuresTest'`:
+    7 completed, 7 failed, e.g. `expected: STATEMENT_TIMEOUT but was: OTHER`; `--tests '*JdbcReceiptStoreIT'`:
+    14 completed, 1 failed, `arrival_blocked_past_the_receipt_timeout_should_fail_retryable_as_a_statement_timeout`:
+    `Expecting actual throwable to be an instance of: RetryableIntakeException but was: QueryTimeoutException`.
+  - GREEN: `IntakeServiceTest` 16 tests (a non-share 4, a share 10, a failure 2), `IntakeOutcomeTest` 4,
+    `IntakeFailureCauseTest` 12 (with the stage tags), `RetryableFailuresTest` 7, `JdbcReceiptStoreIT` 17,
+    0 failures.
+  - Notes: the ports own their transactions, so "after the template returns" is "after the port call
+    returns" (proved with `InOrder`); `application/` imports no Spring transaction type. The adapters classify
+    a `DataAccessException` or `TransactionException` by the first SQLSTATE in its cause chain
+    (`persistence/RetryableFailures.java`, with `RetryableFailuresTest`; no SQLSTATE → `DATABASE`) and throw
+    `RetryableIntakeException(stage, cause)`; `JdbcReceiptStore.recordArrival` does so now (T008 uses the same
+    for the store). The stage tag is `domain/IntakeStage.java` (`receipt` / `store`). `fromSqlState(null)` is
+    `OTHER` (non-database). Files beyond the list: `IntakeStage`, `RetryableFailures` and its test, and the
+    `JdbcReceiptStore` / `JdbcReceiptStoreIT` change. The service catches only `RetryableIntakeException`;
+    anything else escapes uncounted and the container still rolls back. `IntakeCommand` carries a fourth
+    component, `textMessage`, so a non-`TextMessage` stays `NOT_TEXT_MESSAGE` (contracts/inbound-event.md)
+    while a `TextMessage` with null text reads as `NOT_JSON`; built with `ofText` / `ofNotText`. Extraction
+    runs on the store path (after the receipt, before the store transaction, FR-021), so a settled redelivery
+    is not extracted. The lag is clamped at zero in the service. `StoreResult.Stored` carries
+    `parsedCopySkipped` for T008. A non-share whose receipt was not inserted by this delivery is
+    `ALREADY_SETTLED` and not counted again.
 
 - [ ] T007 [US1] [US6] [US7] Test first: `HearingResultedEventListenerTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerTest.java, `RedeliveryPauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPauseTest.java, `PublicEventsConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/PublicEventsConfigTest.java, `ConfigurationValidationTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, and the subscription-shape update of src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListener.java (rewrite), src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPause.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/Sleeper.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java, src/main/resources/application.yaml, src/test/resources/application-test.yaml
   - Cases: the listener builds `IntakeCommand(messageId, deliveryCount, text|null)` and a non-text body becomes a null text; MDC holds message id, share id and hearing id and is cleared in `finally`; on `RetryableIntakeException` it pauses then rethrows; logs hold ids only; pause is `min(2^deliveryCount s, cap)`, off when disabled, and an interrupt restores the flag and rethrows; the container factory is transacted, has no JMS transaction manager, shared durable subscription, concurrency 1; every rule in contracts/configuration.md refuses a bad value at start; the subscription name, topic and selector are unchanged; the context-load tests still start without a datasource (wiring note).
