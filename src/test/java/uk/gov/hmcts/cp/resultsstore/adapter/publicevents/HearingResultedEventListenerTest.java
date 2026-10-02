@@ -5,7 +5,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
-import ch.qos.logback.classic.spi.ILoggingEvent;
 import jakarta.jms.BytesMessage;
 import jakarta.jms.JMSException;
 import jakarta.jms.TextMessage;
@@ -35,30 +34,52 @@ class HearingResultedEventListenerTest {
     @Test
     void a_hearing_resulted_event_should_be_logged_at_info_with_its_identity() throws JMSException {
         listener.onHearingResulted(text("""
-                {"hearing": {"id": "a1b2"}, "hearingDay": "2026-09-30",
+                {"hearing": {"id": "6f1f0c3e-2b7a-4c3e-9a51-2f7d1c0e8a11"}, "hearingDay": "2026-09-30",
                  "sharedTime": "2026-09-30T15:04:05.000Z", "hearing_detail": "not logged"}"""));
 
         assertThat(log.events()).singleElement().satisfies(event -> {
             assertThat(event.getLevel()).isEqualTo(Level.INFO);
             assertThat(event.getFormattedMessage())
-                    .contains("hearingId=a1b2", "hearingDay=2026-09-30",
+                    .contains("hearingId=6f1f0c3e-2b7a-4c3e-9a51-2f7d1c0e8a11", "hearingDay=2026-09-30",
                             "sharedTime=2026-09-30T15:04:05.000Z")
                     .doesNotContain("not logged");
         });
     }
 
     @Test
-    void a_body_that_is_not_json_should_be_acknowledged_with_a_warning() throws JMSException {
+    void a_body_that_is_not_json_should_be_acknowledged_with_a_warning_naming_the_reason() throws JMSException {
         listener.onHearingResulted(text("not json"));
 
-        assertThat(log.events()).singleElement().extracting(ILoggingEvent::getLevel).isEqualTo(Level.WARN);
+        assertThat(log.events()).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("messageId=ID:1", "reason=NOT_JSON");
+        });
     }
 
     @Test
-    void a_body_that_is_not_an_object_should_be_acknowledged_with_a_warning() throws JMSException {
+    void a_body_that_is_not_an_object_should_be_acknowledged_with_a_warning_naming_the_reason()
+            throws JMSException {
         listener.onHearingResulted(text("\"just a string\""));
 
-        assertThat(log.events()).singleElement().extracting(ILoggingEvent::getLevel).isEqualTo(Level.WARN);
+        assertThat(log.events()).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage()).contains("reason=NOT_OBJECT");
+        });
+    }
+
+    @Test
+    void a_body_without_its_identity_should_be_acknowledged_with_a_warning_naming_the_reason()
+            throws JMSException {
+        listener.onHearingResulted(text("""
+                {"hearing": {"id": "a1b2"}, "hearingDay": "2026-09-30",
+                 "sharedTime": "2026-09-30T15:04:05.000Z", "hearing_detail": "not logged"}"""));
+
+        assertThat(log.events()).singleElement().satisfies(event -> {
+            assertThat(event.getLevel()).isEqualTo(Level.WARN);
+            assertThat(event.getFormattedMessage())
+                    .contains("reason=INVALID_HEARING_ID")
+                    .doesNotContain("a1b2", "not logged");
+        });
     }
 
     @Test
