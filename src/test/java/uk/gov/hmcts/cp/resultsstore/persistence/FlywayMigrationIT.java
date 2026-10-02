@@ -675,6 +675,197 @@ class FlywayMigrationIT {
                             + "WHERE hearing_id = '" + hearingId + "'");
         }
 
+        @Test
+        void insert_of_a_second_day_row_for_one_hearing_day_should_be_refused() {
+            assertRefused(UNIQUE_VIOLATION, "hearing_day_head_pk",
+                    "INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES ('" + hearingId + "', DATE '"
+                            + HEARING_DAY + "')");
+        }
+
+        @Test
+        void insert_of_a_second_share_with_one_share_id_should_be_refused() {
+            final UUID shareId = UUID.randomUUID();
+            jdbc.sql(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL", "NULL")).update();
+
+            assertRefused(UNIQUE_VIOLATION, "hearing_share_pk",
+                    share(shareId, "2026-10-02T15:00:00.000Z", "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                            "NULL"));
+        }
+
+        @Test
+        void insert_of_a_second_payload_for_one_share_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+            jdbc.sql(payload(shareId)).update();
+
+            assertRefused(UNIQUE_VIOLATION, "hearing_share_payload_pk", payload(shareId));
+        }
+
+        @Test
+        void insert_of_two_shares_should_give_a_rising_stored_seq_and_a_database_clock_stored_at() {
+            final Instant before = databaseNow();
+            final UUID first = storedShare(SHARED_AT, "FALSE");
+            final UUID second = storedShare("2026-10-02T15:00:00.000Z", "FALSE");
+            final Instant after = databaseNow();
+
+            final Map<String, Object> firstRow = clocks(first);
+            final Map<String, Object> secondRow = clocks(second);
+            assertThat((Long) secondRow.get("stored_seq")).isGreaterThan((Long) firstRow.get("stored_seq"));
+            assertThat(List.of(firstRow.get("stored_at"), secondRow.get("stored_at")))
+                    .allSatisfy(storedAt -> assertThat(((OffsetDateTime) storedAt).toInstant())
+                            .isBetween(before, after));
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "share_id = gen_random_uuid()",
+            "hearing_day = DATE '2026-10-03'",
+            "shared_at = shared_at + INTERVAL '1 second'",
+            "shared_day_london = DATE '2026-10-03'",
+            "shared_day_utc = DATE '2026-10-03'",
+            "stored_at = clock_timestamp()",
+            "payload_sha256 = repeat('a', 64)",
+            "arrived_out_of_order = TRUE",
+            "enrichment_applied = TRUE"
+        })
+        void update_of_a_share_s_fixed_columns_should_be_refused(final String assignment) {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_fixed_columns_guard",
+                    "UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void update_of_an_ok_share_s_chain_and_day_youth_flag_should_be_accepted() {
+            final UUID earlier = storedShare(SHARED_AT, "FALSE");
+            final UUID shareId = storedShare("2026-10-02T15:00:00.000Z", "FALSE");
+
+            assertAccepted("UPDATE hearing_share SET is_latest = TRUE, predecessor_share_id = '" + earlier
+                    + "', day_youth_seen = TRUE WHERE share_id = '" + shareId + "'");
+
+            assertThat(shareRow(shareId)).containsEntry("is_latest", true);
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "lja_code = '9999'",
+            "any_subject_is_youth = TRUE",
+            "projection_version = 2",
+            "projection_attempts = 2",
+            "projected_at = clock_timestamp()"
+        })
+        void update_of_an_ok_share_s_key_details_or_projection_should_be_refused(final String assignment) {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_projection_guard",
+                    "UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void update_of_a_failed_share_to_its_extracted_key_details_should_be_accepted() {
+            final UUID shareId = UUID.randomUUID();
+            jdbc.sql(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'FAILED'",
+                    "'WRONG_TYPE:hearing.isSJPHearing'", "NULL")).update();
+
+            assertAccepted("UPDATE hearing_share SET lja_code = '2577', projection_status = 'OK', "
+                    + "projection_reason = NULL, projection_version = 2, projection_attempts = 2, "
+                    + "projected_at = clock_timestamp() WHERE share_id = '" + shareId + "'");
+
+            assertThat(shareRow(shareId)).containsAllEntriesOf(Map.of(
+                    "lja_code", "2577", "projection_status", "OK", "projection_version", 2));
+        }
+
+        @Test
+        void delete_of_a_share_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_delete_guard",
+                    "DELETE FROM hearing_share WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void update_of_a_payload_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+            jdbc.sql(payload(shareId)).update();
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_payload_update_guard",
+                    "UPDATE hearing_share_payload SET payload_json = NULL WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void delete_of_a_payload_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+            jdbc.sql(payload(shareId)).update();
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_payload_delete_guard",
+                    "DELETE FROM hearing_share_payload WHERE share_id = '" + shareId + "'");
+        }
+
+        @Test
+        void update_of_a_defendant_row_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+            jdbc.sql(defendant(shareId)).update();
+
+            assertRefused(RESTRICT_VIOLATION, "share_defendant_update_guard",
+                    "UPDATE share_defendant SET master_defendant_id = gen_random_uuid() WHERE share_id = '"
+                            + shareId + "'");
+        }
+
+        @Test
+        void delete_of_a_defendant_row_should_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+            jdbc.sql(defendant(shareId)).update();
+
+            assertRefused(RESTRICT_VIOLATION, "share_defendant_delete_guard",
+                    "DELETE FROM share_defendant WHERE share_id = '" + shareId + "'");
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "hearing_id = gen_random_uuid()",
+            "hearing_day = DATE '2026-10-03'",
+            "first_stored_at = clock_timestamp()"
+        })
+        void update_of_a_day_row_s_fixed_columns_should_be_refused(final String assignment) {
+            assertRefused(RESTRICT_VIOLATION, "hearing_day_head_fixed_columns_guard",
+                    "UPDATE hearing_day_head SET " + assignment + " WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        @Test
+        void delete_of_a_day_row_should_be_refused() {
+            assertRefused(RESTRICT_VIOLATION, "hearing_day_head_delete_guard",
+                    "DELETE FROM hearing_day_head WHERE hearing_id = '" + hearingId + "'");
+        }
+
+        private UUID storedShare(final String sharedAt, final String latest) {
+            final UUID shareId = UUID.randomUUID();
+            jdbc.sql(share(shareId, sharedAt, latest, "'" + SHA256 + "'", "'OK'", "NULL", "NULL")).update();
+            return shareId;
+        }
+
+        private String payload(final UUID shareId) {
+            return "INSERT INTO hearing_share_payload (share_id, payload_text, text_bytes, payload_json) VALUES ('"
+                    + shareId + "', '{}', 2, '{}'::jsonb)";
+        }
+
+        private String defendant(final UUID shareId) {
+            return "INSERT INTO share_defendant (share_id, case_id, defendant_id) VALUES ('" + shareId
+                    + "', 'c1c1c1c1-0000-4000-8000-000000000001', 'd1d1d1d1-0000-4000-8000-000000000001')";
+        }
+
+        private Map<String, Object> clocks(final UUID shareId) {
+            return jdbc.sql("SELECT stored_seq, stored_at FROM hearing_share WHERE share_id = :s")
+                    .param("s", shareId)
+                    .query((rs, rowNum) -> Map.<String, Object>of("stored_seq", rs.getLong(1),
+                            "stored_at", rs.getObject(2, OffsetDateTime.class)))
+                    .single();
+        }
+
+        private Instant databaseNow() {
+            return jdbc.sql("SELECT clock_timestamp()")
+                    .query((rs, rowNum) -> rs.getObject(1, OffsetDateTime.class).toInstant())
+                    .single();
+        }
+
         private List<String> shareIdsOfTheDay() {
             return jdbc.sql("SELECT share_id::text FROM hearing_share WHERE hearing_id = :h")
                     .param("h", hearingId)
