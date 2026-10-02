@@ -169,6 +169,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     9 completed, 1 failed, `SET "arrived_out_of_order = TRUE"`: `Expecting code to raise a throwable.`
     GREEN: `FlywayMigrationIT` 117 tests, 0 failures (root 2, `event_receipt` 29, `hearing_share and its
     children` 77, identity edges 9).
+  - Gate-4 fix (projection guard restored): the Gate-3 reason for dropping it (it "would block the sweep's own
+    re-extraction on a version bump") contradicts FR-033 (the sweep selects `FAILED` rows only) and the
+    data-model state machine (`OK` is final in 001; marking rows for a rerun is spec 004). So
+    `hearing_share_projection_guard` is back: the key-detail and `projection_*` columns change only while
+    `OLD.projection_status = 'FAILED'`; an `OK` share can neither be rewritten nor moved back to `FAILED`.
+    The Gate-3 note above is superseded for this column group. RED (test before V3 changed):
+    `./gradlew test --tests '*FlywayMigrationIT$HearingShare.update_of_an_ok_share_s_key_details_or_projection_should_be_refused'`:
+    2 completed, 1 failed (failFast), `SET "lja_code = '9999'"`: `Expecting code to raise a throwable.`
+    GREEN: `FlywayMigrationIT` 116 tests, 0 failures (root 2, `event_receipt` 29, `hearing_share and its
+    children` 76, identity edges 9).
 
 - [X] T003 [P] [US1] [US2] [US3] Test first: `ShareIdentityParserTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParserTest.java, `ShareIdTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdTest.java, `PayloadChecksumTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksumTest.java, `SharedDaysTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDaysTest.java, `NonShareReasonTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReasonTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParser.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdentity.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareId.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksum.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDays.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ReceiptStatus.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReason.java; delete src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelope.java and src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelopeTest.java (the current listener moves to the parser in the same commit so the build stays green)
   - Cases: parser returns `Share` for a valid body and `NotShare(reason)` for each of `not_json`, `not_object`, `nul_character`, `missing_/invalid_hearing_id`, `missing_/invalid_hearing_day`, `missing_/invalid_shared_time` (research R7, R8); the three raw identity strings kept as sent; share id golden vectors including `…706Z` vs `…7060Z` giving different ids and the fixed namespace `3f6c2a4e-8d1b-4f0a-9c57-1e2b7d9a4c60`; SHA-256 hex over UTF-8 (empty, ASCII, multi-byte); London and UTC days either side of both clock changes; each `NonShareReason` maps to its status and metric tag.

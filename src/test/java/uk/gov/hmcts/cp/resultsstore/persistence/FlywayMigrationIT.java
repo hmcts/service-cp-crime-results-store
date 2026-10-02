@@ -788,7 +788,7 @@ class FlywayMigrationIT {
                     .single()).isEqualTo(earlier.toString());
         }
 
-        /** The sweep re-extracts on a version bump, so an OK share's key details and projection may change. */
+        /** The sweep re-extracts FAILED rows only (FR-033): an OK share's key details and projection are final. */
         @ParameterizedTest(name = "SET {0}")
         @ValueSource(strings = {
             "lja_code = '9999'",
@@ -796,14 +796,13 @@ class FlywayMigrationIT {
             "projection_version = 2",
             "projection_attempts = 2",
             "projected_at = clock_timestamp()",
-            "projection_status = 'FAILED', projection_reason = 'WRONG_TYPE:hearing.isSJPHearing'",
-            "expires_at = NULL"
+            "projection_status = 'FAILED', projection_reason = 'WRONG_TYPE:hearing.isSJPHearing'"
         })
-        void update_of_an_ok_share_s_key_details_or_projection_should_be_accepted(
-                final String assignment) {
+        void update_of_an_ok_share_s_key_details_or_projection_should_be_refused(final String assignment) {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
 
-            assertAccepted("UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_projection_guard",
+                    "UPDATE hearing_share SET " + assignment + " WHERE share_id = '" + shareId + "'");
         }
 
         @Test

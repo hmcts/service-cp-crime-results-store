@@ -129,10 +129,9 @@ BEGIN
 END $$;
 
 -- The share: its identity, shared days, store clocks, checksum, arrival flag and enrichment flag never
--- change (spec Key Entities: arrived_out_of_order is fixed at insert).
--- Defence in depth for columns no code path may change; which other columns change, and when, is
--- the application's rule under the hearing-day lock (the chain, the day's youth flag; the key details
--- and projection_* by the sweep, which re-extracts on a version bump).
+-- change (spec Key Entities: arrived_out_of_order is fixed at insert). The key details and projection_*
+-- change only while the row is FAILED: the sweep selects FAILED rows only (FR-033) and OK is final in
+-- 001. The chain and the day's youth flag change under the hearing-day lock, the application's rule.
 CREATE FUNCTION hearing_share_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (NEW.share_id, NEW.hearing_id, NEW.hearing_day, NEW.shared_at, NEW.shared_day_london,
@@ -143,6 +142,19 @@ BEGIN
         OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.arrived_out_of_order,
         OLD.enrichment_applied) THEN
         RAISE EXCEPTION 'hearing_share_fixed_columns_guard: a share''s facts never change'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF OLD.projection_status <> 'FAILED'
+       AND (NEW.is_reshare, NEW.court_centre_id, NEW.court_room_id, NEW.lja_code, NEW.jurisdiction_type,
+            NEW.is_sjp, NEW.is_group_proceedings, NEW.youth_court_id, NEW.any_subject_is_youth,
+            NEW.projection_status, NEW.projection_reason, NEW.projection_version, NEW.projection_attempts,
+            NEW.projected_at)
+            IS DISTINCT FROM
+           (OLD.is_reshare, OLD.court_centre_id, OLD.court_room_id, OLD.lja_code, OLD.jurisdiction_type,
+            OLD.is_sjp, OLD.is_group_proceedings, OLD.youth_court_id, OLD.any_subject_is_youth,
+            OLD.projection_status, OLD.projection_reason, OLD.projection_version, OLD.projection_attempts,
+            OLD.projected_at) THEN
+        RAISE EXCEPTION 'hearing_share_projection_guard: key details and projection change only while FAILED'
             USING ERRCODE = 'restrict_violation';
     END IF;
     RETURN NEW;
