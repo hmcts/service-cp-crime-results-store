@@ -183,15 +183,33 @@ public class KeyDetailsExtractor {
     }
 
     /**
-     * An optional string bound for a {@code text} column, which cannot hold U+0000 (research R8):
-     * such a value fails the extraction so the share is stored {@code FAILED}, not refused.
+     * An optional string bound for a {@code text} column, which cannot hold U+0000 or an unpaired
+     * UTF-16 surrogate (research R8): such a value fails the extraction so the share is stored
+     * {@code FAILED}, not refused.
      */
     private static String storableString(final JsonNode node, final String path) {
         final String value = optionalString(node, path);
-        if (value != null && value.indexOf(NUL) >= 0) {
-            throw new FieldProblem(ExtractionFailureKind.NUL_CHARACTER, path);
+        if (value != null && !isStorable(value)) {
+            throw new FieldProblem(ExtractionFailureKind.UNSTORABLE_TEXT, path);
         }
         return value;
+    }
+
+    /** No U+0000, and every surrogate is half of a high-then-low pair. */
+    private static boolean isStorable(final String value) {
+        boolean storable = value.indexOf(NUL) < 0;
+        int index = 0;
+        while (storable && index < value.length()) {
+            final char current = value.charAt(index);
+            if (Character.isHighSurrogate(current) && index + 1 < value.length()
+                    && Character.isLowSurrogate(value.charAt(index + 1))) {
+                index += 2;
+            } else {
+                storable = !Character.isSurrogate(current);
+                index++;
+            }
+        }
+        return storable;
     }
 
     private static Boolean optionalBoolean(final JsonNode node, final String path) {

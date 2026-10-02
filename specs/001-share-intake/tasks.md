@@ -220,6 +220,14 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     ["hearing.courtCentre.lja.ljaCode"]`: `AssertionError: Expecting actual: Extracted[…] to be an instance
     of: Failed`. GREEN: `KeyDetailsExtractorTest` 99 tests, 0 failures. The parents row (absent, null or not
     an object → no key details, `OK`) is now in data-model's validation table, recording decision (b).
+  - Gate-3 fix (unpaired surrogates): a lone UTF-16 surrogate (sent as `\uD800`) in `ljaCode` or
+    `jurisdictionType` is as unstorable in a `text` column as U+0000. The same check now refuses both;
+    `ExtractionFailureKind.NUL_CHARACTER` is renamed `UNSTORABLE_TEXT` (reason `UNSTORABLE_TEXT:<path>`,
+    metric tag `unstorable_text`; contracts/metrics.md, data-model's validation table and research R8
+    updated). A valid surrogate pair is kept. RED (the rename landed first as the seam): `./gradlew test
+    --tests '*KeyDetailsExtractorTest'`: 104 completed, 4 failed, e.g. `"hearing.courtCentre.lja.ljaCode"
+    = "\uD800"`: `AssertionError: Expecting actual: Extracted[keyDetails=KeyDetails[…, ljaCode=?, …]] to
+    be an instance of: Failed`. GREEN: `KeyDetailsExtractorTest` 104 tests, 0 failures.
 
 **Checkpoint**: phase-gate run 1 ends with code-reviewer, qa, spec-validator and Codex at PASS.
 

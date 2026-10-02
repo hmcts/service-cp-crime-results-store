@@ -469,7 +469,7 @@ Then the youth recompute (research R15), then the receipt `STORED`.
 | `sharedTime` | a string, ISO date-time with offset and a four ASCII-digit unsigned year (0000 to 9999); any offset. Every such instant fits `timestamptz` (proved through JDBC by `FlywayMigrationIT`) | `MISSING_SHARED_TIME` / `INVALID_SHARED_TIME` |
 | `hearing.courtCentre.id`, `.roomId`, `hearing.youthCourt.youthCourtId` | absent/null → NULL; else canonical UUID string | `projection_status = FAILED`, `INVALID_UUID:<path>` or `WRONG_TYPE:<path>` |
 | `hearing.courtCentre`, `hearing.courtCentre.lja`, `hearing.youthCourt` (parents) | absent, null or not an object → its key details are NULL; not an extraction failure | — (`OK`) |
-| `hearing.courtCentre.lja.ljaCode`, `hearing.jurisdictionType` | absent/null → NULL; else a string with no U+0000 (a `text` column cannot hold it, research R8) | `WRONG_TYPE:<path>` / `NUL_CHARACTER:<path>` |
+| `hearing.courtCentre.lja.ljaCode`, `hearing.jurisdictionType` | absent/null → NULL; else a string with no U+0000 and no unpaired surrogate (a `text` column cannot hold either, research R8) | `WRONG_TYPE:<path>` / `UNSTORABLE_TEXT:<path>` |
 | `hearing.isSJPHearing`, `hearing.isGroupProceedings`, `isReshare` | absent/null → NULL; else a boolean | `WRONG_TYPE:<path>` |
 | `hearing.prosecutionCases` | absent/null → no defendants; else an array of objects | `WRONG_TYPE:<path>` |
 | `prosecutionCases[].id`, `.defendants[].id` | present, canonical UUID | `MISSING:<path>` / `INVALID_UUID:<path>` |

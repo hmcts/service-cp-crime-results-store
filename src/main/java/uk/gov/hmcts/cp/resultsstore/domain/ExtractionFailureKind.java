@@ -15,10 +15,10 @@ public enum ExtractionFailureKind {
     /** A string that should be an id is not a canonical UUID. */
     INVALID_UUID,
     /**
-     * A string key detail holds U+0000 (sent as the six-character JSON escape for it), which a
-     * PostgreSQL {@code text} column cannot hold (research R8).
+     * A string key detail holds text a PostgreSQL {@code text} column cannot hold: U+0000 (sent as
+     * the six-character JSON escape for it) or an unpaired UTF-16 surrogate (research R8).
      */
-    NUL_CHARACTER,
+    UNSTORABLE_TEXT,
     /** Anything else thrown while reading. */
     UNEXPECTED;
 

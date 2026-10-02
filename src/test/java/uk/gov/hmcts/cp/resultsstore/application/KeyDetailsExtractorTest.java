@@ -352,7 +352,30 @@ class KeyDetailsExtractorTest {
             final String sixCharacterEscape = "\\" + "u0000";
 
             assertFailed(extractor.extract(with(path, "\"" + MARKER + sixCharacterEscape + "\"")),
-                    ExtractionFailureKind.NUL_CHARACTER, path);
+                    ExtractionFailureKind.UNSTORABLE_TEXT, path);
+        }
+
+        @ParameterizedTest(name = "{0} = {1}")
+        @CsvSource({
+            "hearing.courtCentre.lja.ljaCode, \\uD800",
+            "hearing.courtCentre.lja.ljaCode, \\uDC00",
+            "hearing.courtCentre.lja.ljaCode, a\\uDBFFb",
+            "hearing.jurisdictionType,        \\uDFFF\\uD800"
+        })
+        void extract_with_a_string_key_detail_holding_an_unpaired_surrogate_should_fail_naming_the_path(
+                final String path, final String escapes) {
+            final Projection projection = extractor.extract(with(path, "\"" + escapes + "\""));
+
+            assertFailed(projection, ExtractionFailureKind.UNSTORABLE_TEXT, path);
+        }
+
+        @Test
+        void extract_with_a_string_key_detail_holding_a_surrogate_pair_should_keep_it() {
+            final Projection projection = extractor.extract(with("hearing.courtCentre.lja.ljaCode",
+                    "\"a\\uD83D\\uDE00b\""));
+
+            assertThat(projection).isInstanceOfSatisfying(Extracted.class,
+                    extracted -> assertThat(extracted.keyDetails().ljaCode()).isEqualTo("a\uD83D\uDE00b"));
         }
 
         @ParameterizedTest(name = "{0} = {1}")
