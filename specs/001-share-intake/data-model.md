@@ -78,6 +78,31 @@ CREATE TABLE event_receipt (
 CREATE INDEX event_receipt_open_ix ON event_receipt (first_received_at) WHERE status = 'RECEIVED';
 -- Receipts of one hearing day (spec 004's receipts endpoint; reconciliation by identity).
 CREATE INDEX event_receipt_hearing_day_ix ON event_receipt (hearing_id, hearing_day);
+
+-- FR-044: the key, the identity and the first arrival never change; the end-state columns change
+-- only on the move out of RECEIVED; after that only the delivery details (attempts,
+-- last_received_at, delivery_count) do. The CHECKs above hold each row's shape; this holds its history.
+CREATE FUNCTION event_receipt_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF (NEW.message_id, NEW.hearing_id, NEW.hearing_day, NEW.shared_at, NEW.first_received_at)
+            IS DISTINCT FROM
+       (OLD.message_id, OLD.hearing_id, OLD.hearing_day, OLD.shared_at, OLD.first_received_at) THEN
+        RAISE EXCEPTION 'event_receipt_fixed_columns_guard: a receipt''s key, identity and first arrival never change'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    IF OLD.status <> 'RECEIVED'
+       AND (NEW.status, NEW.reason, NEW.message_text, NEW.share_id, NEW.settled_at)
+            IS DISTINCT FROM
+           (OLD.status, OLD.reason, OLD.message_text, OLD.share_id, OLD.settled_at) THEN
+        RAISE EXCEPTION 'event_receipt_settled_guard: a settled receipt keeps its end state'
+            USING ERRCODE = 'restrict_violation';
+    END IF;
+    RETURN NEW;
+END $$;
+
+CREATE TRIGGER event_receipt_guard_tg
+    BEFORE UPDATE ON event_receipt
+    FOR EACH ROW EXECUTE FUNCTION event_receipt_guard();
 ```
 
 ## V3__create_share_store.sql
@@ -199,6 +224,7 @@ CREATE TABLE share_defendant (
 | message text only on non-share receipts | `event_receipt_text_only_for_non_share_ck` |
 | a `FAILED` row has a reason | `hearing_share_projection_reason_ck` |
 | `stored_seq` cannot be set by the caller | `GENERATED ALWAYS AS IDENTITY` (an explicit value is refused without `OVERRIDING SYSTEM VALUE`) |
+| a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
 | `expires_at` stays empty | `hearing_share_expires_unset_ck` (a later retention spec drops it) |
 | V2 refuses a non-empty V1 table | the `DO` block |
 
@@ -247,7 +273,8 @@ transaction, or by the sweep for a row whose extraction had failed. Never update
 | `hearing_share` | `projection_status`, `projection_reason`, `projection_version`, `projection_attempts`, `projected_at` | sweep only | under the day lock, row still `FAILED` |
 
 Nothing else is ever updated. `hearing_share_payload` and `share_defendant` are insert-only; no
-row is deleted in 001.
+row is deleted in 001. The receipt rows are enforced by `event_receipt_guard` (SQLSTATE 23001,
+`restrict_violation`); the receipt's key, identity and `first_received_at` never change.
 
 ## State machines
 

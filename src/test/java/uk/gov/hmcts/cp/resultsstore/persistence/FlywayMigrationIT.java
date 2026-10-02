@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -54,6 +55,9 @@ class FlywayMigrationIT {
 
     /** SQLSTATE of a FOREIGN KEY violation. */
     private static final String FOREIGN_KEY_VIOLATION = "23503";
+
+    /** SQLSTATE the schema's guard triggers raise for an update or delete they forbid. */
+    private static final String RESTRICT_VIOLATION = "23001";
 
     /** SQLSTATE PostgreSQL gives for a value written to a GENERATED ALWAYS identity column. */
     private static final String GENERATED_ALWAYS = "428C9";
@@ -220,6 +224,89 @@ class FlywayMigrationIT {
             assertThat(receiptRow(messageId)).containsEntry("status", "RECEIVED");
 
             assertRefused(UNIQUE_VIOLATION, "event_receipt_pk", insert);
+        }
+
+        @Test
+        void insert_of_a_received_receipt_with_a_share_id_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "event_receipt_share_id_ck",
+                    receipt("'RECEIVED'", whole(), "'" + UUID.randomUUID() + "'", "NULL", "NULL", "NULL"));
+        }
+
+        @Test
+        void insert_of_a_no_identity_receipt_with_a_share_id_should_be_refused() {
+            assertRefused(CHECK_VIOLATION, "event_receipt_share_id_ck",
+                    receipt("'NO_IDENTITY'", "NULL", "'" + UUID.randomUUID() + "'", "clock_timestamp()",
+                            "'MISSING_HEARING_ID'", "'{}'"));
+        }
+
+        @Test
+        void update_of_a_received_receipt_to_stored_should_be_accepted() {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL")).update();
+
+            assertAccepted("UPDATE event_receipt SET status = 'STORED', share_id = '" + UUID.randomUUID()
+                    + "', settled_at = clock_timestamp() WHERE message_id = '" + messageId + "'");
+
+            assertThat(receiptRow(messageId)).containsAllEntriesOf(Map.of("status", "STORED", "settled", true));
+        }
+
+        @Test
+        void update_of_a_settled_receipt_s_delivery_details_should_be_accepted() {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'UNREADABLE'", "NULL", "NULL", "clock_timestamp()", "'NOT_JSON'",
+                    "'x'")).update();
+
+            assertAccepted("UPDATE event_receipt SET attempts = attempts + 1, delivery_count = 2, "
+                    + "last_received_at = clock_timestamp() WHERE message_id = '" + messageId + "'");
+
+            assertThat(receiptRow(messageId)).containsAllEntriesOf(Map.of(
+                    "status", "UNREADABLE", "attempts", 2, "reason", "NOT_JSON"));
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "status = 'DUPLICATE'",
+            "share_id = gen_random_uuid()",
+            "settled_at = clock_timestamp() + INTERVAL '1 second'"
+        })
+        void update_of_a_stored_receipt_s_end_state_should_be_refused(final String assignment) {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'STORED'", whole(), "'" + UUID.randomUUID() + "'", "clock_timestamp()",
+                    "NULL", "NULL")).update();
+
+            assertRefused(RESTRICT_VIOLATION, "event_receipt_settled_guard",
+                    "UPDATE event_receipt SET " + assignment + " WHERE message_id = '" + messageId + "'");
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "status = 'NO_IDENTITY'",
+            "reason = 'NOT_OBJECT'",
+            "message_text = 'y'"
+        })
+        void update_of_a_non_share_receipt_s_end_state_should_be_refused(final String assignment) {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'UNREADABLE'", "NULL", "NULL", "clock_timestamp()", "'NOT_JSON'",
+                    "'x'")).update();
+
+            assertRefused(RESTRICT_VIOLATION, "event_receipt_settled_guard",
+                    "UPDATE event_receipt SET " + assignment + " WHERE message_id = '" + messageId + "'");
+        }
+
+        @ParameterizedTest(name = "SET {0}")
+        @ValueSource(strings = {
+            "message_id = 'ID:other'",
+            "hearing_id = gen_random_uuid()",
+            "hearing_day = DATE '2026-10-03'",
+            "shared_at = shared_at + INTERVAL '1 second'",
+            "first_received_at = clock_timestamp()"
+        })
+        void update_of_a_receipt_s_fixed_columns_should_be_refused(final String assignment) {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL")).update();
+
+            assertRefused(RESTRICT_VIOLATION, "event_receipt_fixed_columns_guard",
+                    "UPDATE event_receipt SET " + assignment + " WHERE message_id = '" + messageId + "'");
         }
 
         private String receipt(final String status, final String identity, final String shareId,
