@@ -763,6 +763,7 @@ class FlywayMigrationIT {
             "shared_day_utc = DATE '2026-10-03'",
             "stored_at = clock_timestamp()",
             "payload_sha256 = repeat('a', 64)",
+            "arrived_out_of_order = TRUE",
             "enrichment_applied = TRUE"
         })
         void update_of_a_share_s_fixed_columns_should_be_refused(final String assignment) {
@@ -796,10 +797,9 @@ class FlywayMigrationIT {
             "projection_attempts = 2",
             "projected_at = clock_timestamp()",
             "projection_status = 'FAILED', projection_reason = 'WRONG_TYPE:hearing.isSJPHearing'",
-            "arrived_out_of_order = TRUE",
             "expires_at = NULL"
         })
-        void update_of_an_ok_share_s_key_details_projection_or_arrival_flag_should_be_accepted(
+        void update_of_an_ok_share_s_key_details_or_projection_should_be_accepted(
                 final String assignment) {
             final UUID shareId = storedShare(SHARED_AT, "FALSE");
 

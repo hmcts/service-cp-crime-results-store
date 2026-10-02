@@ -238,17 +238,20 @@ BEGIN
     RETURN NEW;
 END $$;
 
--- The share: its identity, shared days, store clocks, checksum and enrichment flag never change.
+-- The share: its identity, shared days, store clocks, checksum, arrival flag and enrichment flag never
+-- change (spec Key Entities: arrived_out_of_order is fixed at insert).
 -- Defence in depth for columns no code path may change; which other columns change, and when, is
 -- the application's rule under the hearing-day lock (the chain, the day's youth flag; the key details
 -- and projection_* by the sweep, which re-extracts on a version bump).
 CREATE FUNCTION hearing_share_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (NEW.share_id, NEW.hearing_id, NEW.hearing_day, NEW.shared_at, NEW.shared_day_london,
-        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.enrichment_applied)
+        NEW.shared_day_utc, NEW.stored_at, NEW.stored_seq, NEW.payload_sha256, NEW.arrived_out_of_order,
+        NEW.enrichment_applied)
             IS DISTINCT FROM
        (OLD.share_id, OLD.hearing_id, OLD.hearing_day, OLD.shared_at, OLD.shared_day_london,
-        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.enrichment_applied) THEN
+        OLD.shared_day_utc, OLD.stored_at, OLD.stored_seq, OLD.payload_sha256, OLD.arrived_out_of_order,
+        OLD.enrichment_applied) THEN
         RAISE EXCEPTION 'hearing_share_fixed_columns_guard: a share''s facts never change'
             USING ERRCODE = 'restrict_violation';
     END IF;
@@ -336,7 +339,7 @@ CREATE TRIGGER hearing_share_payload_guard_tg
 | the share a day row names as latest has `is_latest`; a day with any share names its latest share (count at least 1) | `hearing_day_head_latest_check` (constraint triggers, deferred to commit: `hearing_day_head_latest_is_latest_guard`, `hearing_day_head_has_latest_guard`) |
 | a predecessor was shared earlier than its successor, so the chain cannot loop | `hearing_share_predecessor_guard` |
 | a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
-| a share's identity, shared days, `stored_at`, `stored_seq`, checksum and `enrichment_applied` never change; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
+| a share's identity, shared days, `stored_at`, `stored_seq`, checksum, `arrived_out_of_order` and `enrichment_applied` never change; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
 | no share or day row is deleted; payload rows are insert-only | `refuse_row_change` (`<table>_update_guard` / `<table>_delete_guard`) |
 | `expires_at` stays empty | `hearing_share_expires_unset_ck` (a later retention spec drops it) |
 | V2 refuses a non-empty V1 table | the `DO` block |
@@ -391,7 +394,7 @@ re-extracted share's `share_defendant` rows. The application enforces this table
 hearing-day lock (constitution I). The guard triggers in V2 and V3 (SQLSTATE 23001,
 `restrict_violation`, naming the guard) are defence in depth for the columns no code path may ever
 change: the receipt's key, identity, `first_received_at` and settled end state; a share's identity,
-shared days, store clocks, checksum and `enrichment_applied`; a day row's key and first store; no
+shared days, store clocks, checksum, `arrived_out_of_order` and `enrichment_applied`; a day row's key and first store; no
 share, day or payload row deleted, no payload updated. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
 (R19).
 
