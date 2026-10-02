@@ -168,6 +168,9 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     '*FlywayMigrationIT'`: 26 completed, 5 failed (failFast), e.g. `sharedTime = "9999-12-31T23:30:00-01:00"`:
     `AssertionError: Expecting actual: NotShare[reason=INVALID_SHARED_TIME, …] to be an instance of: Share`.
     GREEN: `ShareIdentityParserTest` 68 tests, `FlywayMigrationIT` 54 tests (5 new edge round trips), 0 failures.
+  - Gate-2 addition (test only): a valid body wrapped in surrounding whitespace (` … \n`, `\n…`, `…\r\n`)
+    still reads as the same share; `FAIL_ON_TRAILING_TOKENS` refuses content, not whitespace. Green on first
+    run (pins existing behaviour). `ShareIdentityParserTest` 71 tests.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

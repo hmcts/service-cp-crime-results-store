@@ -95,6 +95,19 @@ class ShareIdentityParserTest {
                     share -> assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant)));
         }
 
+        @ParameterizedTest(name = "wrapping {index}")
+        @ValueSource(strings = {" %s \n", "\n%s", "%s\r\n"})
+        void read_of_a_valid_body_with_surrounding_whitespace_should_give_the_same_share(final String wrapping) {
+            final String valid = body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + SHARED_TIME + "\"");
+
+            final Reading reading = parser.read(wrapping.formatted(valid));
+
+            assertThat(reading).isInstanceOfSatisfying(Share.class, share -> assertThat(share.identity())
+                    .isEqualTo(new ShareIdentity(UUID.fromString(HEARING_ID), LocalDate.parse(HEARING_DAY),
+                            Instant.parse(SHARED_TIME), HEARING_ID, HEARING_DAY, SHARED_TIME)));
+        }
+
         @Test
         void read_of_an_escaped_nul_should_give_the_share() {
             final String sixCharacterEscape = "\\" + "u0000";
