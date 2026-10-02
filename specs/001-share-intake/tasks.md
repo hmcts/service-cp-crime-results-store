@@ -112,12 +112,23 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     "missing / not a string"), and a blank body reads as `NOT_JSON`. The listener now logs a non-share's
     bounded reason instead of the parse exception's class.
 
-- [ ] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
+- [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.
   - Covers: FR-018, FR-019, FR-026, FR-029–FR-031.
   - Done when: `KeyDetailsExtractorTest` green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (the types, and `extract` returning `Failed("SEAM", UNEXPECTED)`),
+    `./gradlew test --tests '*KeyDetailsExtractorTest'`: 6 tests completed, 4 failed (failFast), e.g.
+    `failure_kind_should_have_its_lower_case_metric_tag [MISSING]`: `AssertionFailedError: expected: "missing"
+    but was: ""`; and `--tests '*KeyDetailsExtractorTest*full_payload*'`: 1 failed,
+    `AssertionFailedError: expected: Extracted[keyDetails=KeyDetails[courtCentreId=9d2e4f6a-…], …]
+    but was: Failed[reason=SEAM, kind=UNEXPECTED]`.
+  - GREEN: `KeyDetailsExtractorTest` 80 tests, 0 failures; the gate exits 0.
+  - Notes: PMD 7.22 reports `AvoidCatchingGenericException` (errorprone), not only design.xml as research
+    R17 assumed, so `extract` carries a site suppression with its reason (catch `RuntimeException` only, as
+    the task requires). An optional parent of the wrong type (for example `hearing.courtCentre` as a string)
+    reads as absent, leaving its key details empty; only the fields in data-model's validation table are
+    type-checked. A repeated (case, defendant) keeps the first stated `masterDefendantId`. An anonymous
+    exception class is named by its binary name without the package, bounded to 120 characters.
 
 **Checkpoint**: phase-gate run 1 ends with code-reviewer, qa, spec-validator and Codex at PASS.
 
