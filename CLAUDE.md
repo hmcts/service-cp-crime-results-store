@@ -95,6 +95,7 @@ a payload. Read-API rules admit "System Users". Audit runs on the audit library'
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan.
-No feature is in progress yet: the first feature spec will be `specs/001-.../`.
+shell commands, and other important information, read the current plan:
+`specs/001-share-intake/plan.md` (share intake, the write path), with its
+`research.md`, `data-model.md`, `contracts/` and `quickstart.md` beside it.
 <!-- SPECKIT END -->
