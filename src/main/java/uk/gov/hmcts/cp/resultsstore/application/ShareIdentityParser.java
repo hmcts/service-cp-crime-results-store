@@ -5,6 +5,7 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -137,11 +138,17 @@ public class ShareIdentityParser {
         return date;
     }
 
+    /**
+     * The shared time as an instant, truncated to the microsecond: PostgreSQL's {@code timestamptz}
+     * keeps no finer, so {@code shared_at} and the shared days are what is stored. Times that differ
+     * only past the sixth fraction digit are one instant; the share id still hashes the string as sent.
+     */
     private static Optional<Instant> instant(final String raw) {
         Optional<Instant> instant = Optional.empty();
         if (raw != null && FOUR_DIGIT_YEAR.matcher(raw).find()) {
             try {
-                instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant());
+                instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
+                        .truncatedTo(ChronoUnit.MICROS));
             } catch (final DateTimeParseException invalid) {
                 // A recorded outcome: the receipt says the shared time is invalid.
                 instant = Optional.empty();

@@ -1078,6 +1078,48 @@ class FlywayMigrationIT {
                     .query((rs, rowNum) -> rs.getObject(1, OffsetDateTime.class).toInstant())
                     .single()).as("shared_at read back").isEqualTo(identity.sharedAt());
         }
+
+        /**
+         * timestamptz keeps microseconds; the parser truncates a finer shared time to the microsecond
+         * before it becomes shared_at, so what is stored is what was parsed (research R8).
+         */
+        @ParameterizedTest(name = "sharedTime = {0}")
+        @CsvSource(delimiter = '|', value = {
+            "2026-10-02T14:19:50.1234567Z   | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T14:19:50.12345678Z  | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T14:19:50.123456789Z | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T23:59:59.9999999Z   | 2026-10-02T23:59:59.999999Z"
+        })
+        void a_shared_time_finer_than_microseconds_should_round_trip_as_its_truncated_microsecond(
+                final String sharedTime, final String stored) {
+            final Reading reading = parser.read("{\"hearing\": {\"id\": \"" + UUID.randomUUID()
+                    + "\"}, \"hearingDay\": \"" + HEARING_DAY + "\", \"sharedTime\": \"" + sharedTime + "\"}");
+            assertThat(reading).as("parser reading").isInstanceOf(Share.class);
+            final ShareIdentity identity = ((Share) reading).identity();
+            final SharedDays days = SharedDays.from(identity.sharedAt());
+
+            jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, :d)")
+                    .param("h", identity.hearingId())
+                    .param("d", identity.hearingDay())
+                    .update();
+            jdbc.sql("INSERT INTO hearing_share (share_id, hearing_id, hearing_day, shared_at, "
+                            + "shared_day_london, shared_day_utc, payload_sha256, is_latest, arrived_out_of_order, "
+                            + "projection_status, projection_version) VALUES (:s, :h, :d, :at, :london, :utc, '"
+                            + SHA256 + "', FALSE, FALSE, 'OK', 1)")
+                    .param("s", identity.shareId())
+                    .param("h", identity.hearingId())
+                    .param("d", identity.hearingDay())
+                    .param("at", identity.sharedAt().atOffset(ZoneOffset.UTC))
+                    .param("london", days.london())
+                    .param("utc", days.utc())
+                    .update();
+
+            assertThat(jdbc.sql("SELECT shared_at FROM hearing_share WHERE share_id = :s")
+                    .param("s", identity.shareId())
+                    .query((rs, rowNum) -> rs.getObject(1, OffsetDateTime.class).toInstant())
+                    .single()).as("shared_at read back").isEqualTo(identity.sharedAt())
+                    .isEqualTo(Instant.parse(stored));
+        }
     }
 
     private List<String> appliedVersions() {

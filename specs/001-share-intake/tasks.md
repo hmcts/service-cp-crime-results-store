@@ -171,6 +171,20 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
   - Gate-2 addition (test only): a valid body wrapped in surrounding whitespace (` … \n`, `\n…`, `…\r\n`)
     still reads as the same share; `FAIL_ON_TRAILING_TOKENS` refuses content, not whitespace. Green on first
     run (pins existing behaviour). `ShareIdentityParserTest` 71 tests.
+  - Gate-3 fix (sharedTime precision): `timestamptz` keeps microseconds but the parser accepted up to
+    nanoseconds, so a 7–9 digit fraction was rounded by the database and the stored `shared_at` (and a
+    day worked out in Java) could differ from the parsed one. The parser now truncates the instant to the
+    microsecond before it becomes `shared_at` and before `SharedDays` derives the London and UTC days;
+    the share id still hashes the string as sent (FR-011, FR-012). Two times that differ only past the
+    sixth digit are one `shared_at`, so one identity, with different share ids. RED: `./gradlew test
+    --tests '*ShareIdentityParserTest' --tests '*FlywayMigrationIT$IdentityEdges'`: 22 completed, 1 failed
+    (failFast), `read_of_two_shared_times_differing_only_past_the_sixth_digit_should_give_one_shared_at`:
+    `expected: 2026-10-02T14:19:50.123456Z but was: 2026-10-02T14:19:50.123456100Z`; and `--tests
+    '*FlywayMigrationIT$IdentityEdges'`: 2 completed, 2 failed, e.g. `sharedTime = "…50.1234567Z"`:
+    `expected: 2026-10-02T14:19:50.123456700Z but was: 2026-10-02T14:19:50.123457Z` (the database rounds).
+    GREEN: `ShareIdentityParserTest` 76 tests, `FlywayMigrationIT` identity edges 9 tests (7, 8 and 9
+    fraction digits, and `23:59:59.9999999Z`, read back as the truncated microsecond), 0 failures.
+    For T016: record the truncation in research R8 and data-model's `shared_at` row.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

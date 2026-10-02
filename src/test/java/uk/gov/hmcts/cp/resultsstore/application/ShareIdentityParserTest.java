@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
@@ -83,8 +84,8 @@ class ShareIdentityParserTest {
             "0001-01-01T00:30:00-01:00           | 0001-01-01T01:30:00Z",
             "9999-12-31T23:30:00-01:00           | +10000-01-01T00:30:00Z",
             "9999-12-31T23:59:59.999999-18:00    | +10000-01-01T17:59:59.999999Z",
-            "9999-12-31T23:59:59.999999999Z      | 9999-12-31T23:59:59.999999999Z",
-            "9999-12-31T23:59:59.999999999+01:00 | 9999-12-31T22:59:59.999999999Z"
+            "9999-12-31T23:59:59.999999999Z      | 9999-12-31T23:59:59.999999Z",
+            "9999-12-31T23:59:59.999999999+01:00 | 9999-12-31T22:59:59.999999Z"
         })
         void read_with_a_shared_time_at_either_end_of_the_four_digit_years_should_give_the_share(
                 final String value, final String instant) {
@@ -93,6 +94,42 @@ class ShareIdentityParserTest {
 
             assertThat(reading).isInstanceOfSatisfying(Share.class,
                     share -> assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant)));
+        }
+
+        @ParameterizedTest(name = "sharedTime = {0}")
+        @CsvSource(delimiter = '|', value = {
+            "2026-10-02T14:19:50.1234567Z      | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T14:19:50.12345678Z     | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T14:19:50.123456789Z    | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T15:19:50.999999999+01:00 | 2026-10-02T14:19:50.999999Z"
+        })
+        void read_with_a_shared_time_finer_than_microseconds_should_truncate_it_to_the_microsecond(
+                final String value, final String instant) {
+            final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + value + "\""));
+
+            assertThat(reading).isInstanceOfSatisfying(Share.class, share -> {
+                assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant));
+                assertThat(share.identity().rawSharedTime()).isEqualTo(value);
+                assertThat(share.identity().shareId()).isEqualTo(ShareId.from(HEARING_ID, HEARING_DAY, value));
+            });
+        }
+
+        @Test
+        void read_of_two_shared_times_differing_only_past_the_sixth_digit_should_give_one_shared_at() {
+            final String sevenDigits = "2026-10-02T14:19:50.1234561Z";
+            final String nineDigits = "2026-10-02T14:19:50.123456999Z";
+
+            final Reading first = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + sevenDigits + "\""));
+            final Reading second = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + nineDigits + "\""));
+
+            assertThat(List.of(first, second)).allSatisfy(reading -> assertThat(reading)
+                    .isInstanceOfSatisfying(Share.class, share -> assertThat(share.identity().sharedAt())
+                            .isEqualTo(Instant.parse("2026-10-02T14:19:50.123456Z"))));
+            assertThat(((Share) first).identity().shareId()).as("share ids hash the strings as sent")
+                    .isNotEqualTo(((Share) second).identity().shareId());
         }
 
         @ParameterizedTest(name = "wrapping {index}")
