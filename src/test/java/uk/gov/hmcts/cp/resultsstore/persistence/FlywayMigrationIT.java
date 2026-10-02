@@ -248,12 +248,50 @@ class FlywayMigrationIT {
         @Test
         void update_of_a_received_receipt_to_stored_should_be_accepted() {
             final String messageId = messageId();
-            jdbc.sql(receipt(messageId, "'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL")).update();
+            final UUID hearingId = UUID.randomUUID();
+            final UUID shareId = storedShare(hearingId);
+            jdbc.sql(receipt(messageId, "'RECEIVED'", whole(hearingId), "NULL", "NULL", "NULL", "NULL")).update();
 
-            assertAccepted("UPDATE event_receipt SET status = 'STORED', share_id = '" + UUID.randomUUID()
+            assertAccepted("UPDATE event_receipt SET status = 'STORED', share_id = '" + shareId
                     + "', settled_at = clock_timestamp() WHERE message_id = '" + messageId + "'");
 
             assertThat(receiptRow(messageId)).containsAllEntriesOf(Map.of("status", "STORED", "settled", true));
+        }
+
+        @Test
+        void update_of_a_received_receipt_to_stored_naming_an_unknown_share_should_be_refused() {
+            final String messageId = messageId();
+            jdbc.sql(receipt(messageId, "'RECEIVED'", whole(), "NULL", "NULL", "NULL", "NULL")).update();
+
+            assertRefused(FOREIGN_KEY_VIOLATION, "event_receipt_share_fk",
+                    "UPDATE event_receipt SET status = 'STORED', share_id = '" + UUID.randomUUID()
+                            + "', settled_at = clock_timestamp() WHERE message_id = '" + messageId + "'");
+        }
+
+        @ParameterizedTest(name = "status = {0}")
+        @ValueSource(strings = {"'STORED'", "'DUPLICATE'"})
+        void insert_of_a_receipt_naming_an_unknown_share_should_be_refused(final String status) {
+            assertRefused(FOREIGN_KEY_VIOLATION, "event_receipt_share_fk",
+                    receipt(status, whole(), "'" + UUID.randomUUID() + "'", "clock_timestamp()", "NULL", "NULL"));
+        }
+
+        @ParameterizedTest(name = "status = {0}")
+        @ValueSource(strings = {"'STORED'", "'DUPLICATE'"})
+        void insert_of_a_receipt_naming_a_share_of_another_identity_should_be_refused(final String status) {
+            final UUID otherHearingShare = storedShare(UUID.randomUUID());
+
+            assertRefused(FOREIGN_KEY_VIOLATION, "event_receipt_share_fk",
+                    receipt(status, whole(), "'" + otherHearingShare + "'", "clock_timestamp()", "NULL", "NULL"));
+        }
+
+        @ParameterizedTest(name = "status = {0}")
+        @ValueSource(strings = {"'STORED'", "'DUPLICATE'"})
+        void insert_of_a_receipt_naming_the_share_of_its_identity_should_be_accepted(final String status) {
+            final UUID hearingId = UUID.randomUUID();
+            final UUID shareId = storedShare(hearingId);
+
+            assertAccepted(receipt(status, whole(hearingId), "'" + shareId + "'", "clock_timestamp()", "NULL",
+                    "NULL"));
         }
 
         @Test
@@ -277,8 +315,9 @@ class FlywayMigrationIT {
         })
         void update_of_a_stored_receipt_s_end_state_should_be_refused(final String assignment) {
             final String messageId = messageId();
-            jdbc.sql(receipt(messageId, "'STORED'", whole(), "'" + UUID.randomUUID() + "'", "clock_timestamp()",
-                    "NULL", "NULL")).update();
+            final UUID hearingId = UUID.randomUUID();
+            jdbc.sql(receipt(messageId, "'STORED'", whole(hearingId), "'" + storedShare(hearingId) + "'",
+                    "clock_timestamp()", "NULL", "NULL")).update();
 
             assertRefused(RESTRICT_VIOLATION, "event_receipt_settled_guard",
                     "UPDATE event_receipt SET " + assignment + " WHERE message_id = '" + messageId + "'");
@@ -339,6 +378,28 @@ class FlywayMigrationIT {
 
         private String messageId() {
             return "ID:" + UUID.randomUUID();
+        }
+
+        /** A stored share with the identity {@link #whole(UUID)} names, its day complete, in one transaction. */
+        private UUID storedShare(final UUID hearingId) {
+            final UUID shareId = UUID.randomUUID();
+            transaction.executeWithoutResult(status -> {
+                jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:h, DATE '" + HEARING_DAY
+                        + "')").param("h", hearingId).update();
+                jdbc.sql("INSERT INTO hearing_share (share_id, hearing_id, hearing_day, shared_at, "
+                                + "shared_day_london, shared_day_utc, payload_sha256, is_latest, arrived_out_of_order, "
+                                + "projection_status, projection_version) VALUES (:s, :h, DATE '" + HEARING_DAY
+                                + "', TIMESTAMPTZ '" + SHARED_AT + "', DATE '" + HEARING_DAY + "', DATE '" + HEARING_DAY
+                                + "', '" + SHA256 + "', TRUE, FALSE, 'OK', 1)")
+                        .param("s", shareId)
+                        .param("h", hearingId)
+                        .update();
+                jdbc.sql("UPDATE hearing_day_head SET latest_share_id = :s, share_count = 1 WHERE hearing_id = :h")
+                        .param("s", shareId)
+                        .param("h", hearingId)
+                        .update();
+            });
+            return shareId;
         }
 
         private Map<String, Object> receiptRow(final String messageId) {

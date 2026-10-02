@@ -162,6 +162,8 @@ CREATE TABLE hearing_share (
     CONSTRAINT hearing_share_stored_seq_uk UNIQUE (stored_seq),
     -- the target of the same-day foreign keys below
     CONSTRAINT hearing_share_day_share_uk UNIQUE (hearing_id, hearing_day, share_id),
+    -- the target of event_receipt_share_fk: a settled receipt names a share of its own identity
+    CONSTRAINT hearing_share_identity_share_uk UNIQUE (hearing_id, hearing_day, shared_at, share_id),
     CONSTRAINT hearing_share_day_fk FOREIGN KEY (hearing_id, hearing_day)
         REFERENCES hearing_day_head (hearing_id, hearing_day),
     -- the predecessor is a share of the same day (and an earlier one: hearing_share_predecessor_guard)
@@ -190,6 +192,12 @@ CREATE TABLE hearing_share (
 ALTER TABLE hearing_day_head
     ADD CONSTRAINT hearing_day_head_latest_fk FOREIGN KEY (hearing_id, hearing_day, latest_share_id)
         REFERENCES hearing_share (hearing_id, hearing_day, share_id);
+
+-- A STORED or DUPLICATE receipt names a stored share with the receipt's own identity (V2's CHECKs make
+-- all four columns present then; a receipt with any of them NULL is not checked).
+ALTER TABLE event_receipt
+    ADD CONSTRAINT event_receipt_share_fk FOREIGN KEY (hearing_id, hearing_day, shared_at, share_id)
+        REFERENCES hearing_share (hearing_id, hearing_day, shared_at, share_id);
 
 -- At most one latest share per hearing day. Not deferrable: clear the old latest first.
 CREATE UNIQUE INDEX hearing_share_one_latest_ux
@@ -353,6 +361,7 @@ CREATE TRIGGER share_defendant_guard_tg
 | a day row's latest share and a share's predecessor belong to the same day | `hearing_day_head_latest_fk`, `hearing_share_predecessor_fk` (composite, onto `hearing_share_day_share_uk`) |
 | the share a day row names as latest has `is_latest`; a day with any share names its latest share (count at least 1) | `hearing_day_head_latest_check` (constraint triggers, deferred to commit: `hearing_day_head_latest_is_latest_guard`, `hearing_day_head_has_latest_guard`) |
 | a predecessor was shared earlier than its successor, so the chain cannot loop | `hearing_share_predecessor_guard` |
+| a `STORED` or `DUPLICATE` receipt names a stored share with the receipt's own identity | `event_receipt_share_fk` (composite, onto `hearing_share_identity_share_uk`) |
 | a settled receipt keeps its end state; a receipt's key, identity and first arrival never change | `event_receipt_guard` (`event_receipt_settled_guard`, `event_receipt_fixed_columns_guard`) |
 | a share's identity, shared days, `stored_at`, `stored_seq`, checksum, `arrived_out_of_order` and `enrichment_applied` never change; a day row's key and first store never change | `hearing_share_guard` (`hearing_share_fixed_columns_guard`), `hearing_day_head_guard` (`hearing_day_head_fixed_columns_guard`) |
 | a share's key details and `projection_*` change only while it is `FAILED` (the sweep, FR-033) | `hearing_share_guard` (`hearing_share_projection_guard`) |
@@ -413,7 +422,8 @@ change: the receipt's key, identity, `first_received_at` and settled end state; 
 shared days, store clocks, checksum, `arrived_out_of_order` and `enrichment_applied`, and an `OK`
 share's key details and `projection_*`; a day row's key and first store; no
 share, day, payload or defendant row deleted, no payload or defendant row updated. Row triggers do not fire on `TRUNCATE`, so test suites still empty the tables that way
-(R19).
+(R19); `event_receipt_share_fk` means `hearing_share` is truncated in the same statement as
+`event_receipt` (or with `CASCADE`).
 
 ## State machines
 
