@@ -24,6 +24,7 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
+import uk.gov.hmcts.cp.resultsstore.domain.ReceiptStatus;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareId;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
 
@@ -107,7 +108,11 @@ class ShareIdentityParserTest {
             "2026-10-02T14:19:50.1234567Z      | 2026-10-02T14:19:50.123456Z",
             "2026-10-02T14:19:50.12345678Z     | 2026-10-02T14:19:50.123456Z",
             "2026-10-02T14:19:50.123456789Z    | 2026-10-02T14:19:50.123456Z",
-            "2026-10-02T15:19:50.999999999+01:00 | 2026-10-02T14:19:50.999999Z"
+            "2026-10-02T14:19:50.1234567891Z   | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T14:19:50.123456789012Z | 2026-10-02T14:19:50.123456Z",
+            "2026-10-02T15:19:50.999999999+01:00 | 2026-10-02T14:19:50.999999Z",
+            "2026-10-02T15:19:50.9999999999+01:00 | 2026-10-02T14:19:50.999999Z",
+            "2026-10-02T15:19:50.999999999999+01:00 | 2026-10-02T14:19:50.999999Z"
         })
         void read_with_a_shared_time_finer_than_microseconds_should_truncate_it_to_the_microsecond(
                 final String value, final String instant) {
@@ -289,6 +294,20 @@ class ShareIdentityParserTest {
 
             assertThat(reading).isEqualTo(new NotShare(NonShareReason.INVALID_SHARED_TIME,
                     UUID.fromString(HEARING_ID), LocalDate.parse(HEARING_DAY), null));
+        }
+
+        /** java.time and PostgreSQL cannot hold a leap second or an offset past ±18:00 (research R7). */
+        @ParameterizedTest(name = "sharedTime = {0}")
+        @ValueSource(strings = {"2026-12-31T23:59:60Z", "2016-12-31T23:59:60.5Z", "2026-10-02T14:19:50.706+18:01",
+            "2026-10-02T14:19:50.706-18:30", "2026-10-02T14:19:50.706+19:00", "2026-10-02T14:19:50.706+23:59"})
+        void read_with_a_leap_second_or_an_offset_past_18_hours_should_be_invalid_shared_time_with_no_identity(
+                final String value) {
+            final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + value + "\""));
+
+            assertThat(reading).isEqualTo(new NotShare(NonShareReason.INVALID_SHARED_TIME,
+                    UUID.fromString(HEARING_ID), LocalDate.parse(HEARING_DAY), null));
+            assertThat(((NotShare) reading).reason().status()).isEqualTo(ReceiptStatus.NO_IDENTITY);
         }
 
         @ParameterizedTest(name = "{0}")

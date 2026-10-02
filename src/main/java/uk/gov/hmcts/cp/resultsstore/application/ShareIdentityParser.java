@@ -8,6 +8,7 @@ import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 import tools.jackson.core.JacksonException;
@@ -47,6 +48,9 @@ public class ShareIdentityParser {
      */
     private static final Pattern RFC_3339_DATE_TIME = Pattern.compile(
             "^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?([Zz]|[+-][0-9]{2}:[0-9]{2})$");
+
+    /** A dot and the six fraction digits the stored instant keeps. */
+    private static final int MICROSECOND_FRACTION_LENGTH = 7;
 
     private final ObjectReader reader;
 
@@ -152,22 +156,39 @@ public class ShareIdentityParser {
     }
 
     /**
-     * The shared time, if it is an RFC 3339 date-time, as an instant truncated to the microsecond: PostgreSQL's {@code timestamptz}
-     * keeps no finer, so {@code shared_at} and the shared days are what is stored. Times that differ
-     * only past the sixth fraction digit are one instant; the share id still hashes the string as sent.
+     * The shared time, if it is an RFC 3339 date-time, as an instant truncated to the microsecond: PostgreSQL's
+     * {@code timestamptz} keeps no finer, so {@code shared_at} and the shared days are what is stored. The
+     * fraction is cut to its first six digits before parsing, because ISO parsing takes at most nine and RFC
+     * 3339 sets no limit (research R7). Times that differ only past the sixth fraction digit are one instant;
+     * the share id still hashes the string as sent. A leap second ({@code :60}) or an offset past
+     * {@code ±18:00} stays invalid: neither java.time nor PostgreSQL can hold one.
      */
     private static Optional<Instant> instant(final String raw) {
         Optional<Instant> instant = Optional.empty();
-        if (raw != null && RFC_3339_DATE_TIME.matcher(raw).matches()) {
+        final Matcher dateTime = raw == null ? null : RFC_3339_DATE_TIME.matcher(raw);
+        if (dateTime != null && dateTime.matches()) {
             try {
-                instant = Optional.of(OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant()
-                        .truncatedTo(ChronoUnit.MICROS));
+                instant = Optional.of(OffsetDateTime.parse(toMicroseconds(raw, dateTime),
+                        DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant().truncatedTo(ChronoUnit.MICROS));
             } catch (final DateTimeParseException invalid) {
                 // A recorded outcome: the receipt says the shared time is invalid.
                 instant = Optional.empty();
             }
         }
         return instant;
+    }
+
+    /** The matched date-time with its fraction, if longer, cut to six digits. */
+    private static String toMicroseconds(final String raw, final Matcher dateTime) {
+        final int fractionStart = dateTime.start(1);
+        final int fractionEnd = dateTime.end(1);
+        final String cut;
+        if (fractionStart >= 0 && fractionEnd - fractionStart > MICROSECOND_FRACTION_LENGTH) {
+            cut = raw.substring(0, fractionStart + MICROSECOND_FRACTION_LENGTH) + raw.substring(fractionEnd);
+        } else {
+            cut = raw;
+        }
+        return cut;
     }
 
     /** What a message's text was read as. */

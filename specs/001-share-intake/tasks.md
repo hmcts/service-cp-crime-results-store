@@ -268,7 +268,8 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     `expected: 2026-10-02T14:19:50.123456700Z but was: 2026-10-02T14:19:50.123457Z` (the database rounds).
     GREEN: `ShareIdentityParserTest` 76 tests, `FlywayMigrationIT` identity edges 9 tests (7, 8 and 9
     fraction digits, and `23:59:59.9999999Z`, read back as the truncated microsecond), 0 failures.
-    For T016: record the truncation in research R8 and data-model's `shared_at` row.
+    For T016: record the truncation in research R8 and data-model's `shared_at` row (done under the
+    sharedTime-edges ruling below: research R7 and R22, data-model and V3 `shared_at` comment).
   - Gate-4 fix (strict RFC 3339 shared time): `ISO_OFFSET_DATE_TIME` takes forms broader than the event
     schema's RFC 3339 `date-time` (no seconds, `+01`, `+0100`, `+01:00:00`, an empty fraction `50.Z`). The
     parser now matches `RFC_3339_DATE_TIME` (ASCII digits, four-digit year, seconds required, `Z`/`z` or
@@ -289,6 +290,16 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     `read_of_no_text_should_be_not_json`: `expected: NotShare[reason=NOT_JSON, …]` but `NOT_TEXT_MESSAGE`.
     GREEN: `ShareIdentityParserTest` 88, `HearingResultedEventListenerTest` 6, `NonShareReasonTest` 11,
     0 failures.
+  - Ruling (sharedTime edges): `ISO_OFFSET_DATE_TIME` takes at most nine fraction digits, so a valid RFC 3339
+    time with 10 or more was `INVALID_SHARED_TIME`. The parser now cuts the fraction to its first six digits
+    before `OffsetDateTime.parse` (the instant is truncated to microseconds anyway); `rawSharedTime`, and so
+    the share id, is untouched. A leap second (`:60`) and an offset beyond `±18:00` stay `INVALID_SHARED_TIME`
+    (`NO_IDENTITY`), now pinned by tests; research R7 gives the reason, R7/R22 and the `shared_at` comment
+    (data-model, V3) note the cut. RED (tests before the parser changed): `./gradlew test --tests
+    '*ShareIdentityParserTest'`: 48 completed, 4 failed (failFast), the 10 and 12 digit cases with `Z` and
+    `+01:00`: `Expecting actual: NotShare[reason=INVALID_SHARED_TIME, …] … but was instance of: NotShare`.
+    GREEN: `ShareIdentityParserTest` 99 tests (a share 30, unreadable 15, no identity 54), 0 failures;
+    leap-second and offset cases green on first run (they pin existing behaviour).
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

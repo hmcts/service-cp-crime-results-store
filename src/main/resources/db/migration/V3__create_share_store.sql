@@ -15,7 +15,7 @@ CREATE TABLE hearing_share (
     share_id             UUID        NOT NULL,   -- UUID v5 over 'hearingId|hearingDay|sharedTime' as sent
     hearing_id           UUID        NOT NULL,
     hearing_day          DATE        NOT NULL,
-    shared_at            TIMESTAMPTZ NOT NULL,
+    shared_at            TIMESTAMPTZ NOT NULL,   -- sharedTime cut to six fraction digits, truncated to the microsecond (R7)
     shared_day_london    DATE        NOT NULL,   -- worked out in Java (Europe/London)
     shared_day_utc       DATE        NOT NULL,
     stored_at            TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),

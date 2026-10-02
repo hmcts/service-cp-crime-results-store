@@ -210,6 +210,17 @@ Forms:
   `OffsetDateTime.parse` with `ISO_OFFSET_DATE_TIME` and `toInstant()`. ISO parsing alone takes
   forms the event schema does not (`14:19Z` without seconds, `+01`, `+0100`, `+01:00:00`), so
   those, and a value with no offset, are `INVALID_SHARED_TIME`.
+- **`sharedTime` precision**: the instant is truncated to the microsecond, as `timestamptz` keeps
+  no finer; `shared_at` and both shared days come from the truncated instant. Before
+  `OffsetDateTime.parse`, a fraction longer than six digits is cut to its first six, because ISO
+  parsing takes at most nine and RFC 3339 sets no limit; so 7, 9, 10 or 12 digits all read as the
+  same microsecond. The cut changes only the parsed value: the share id still hashes `sharedTime`
+  as sent (R4), and the receipt keeps the identity as parsed.
+- **Leap second and wide offsets**: a seconds value of `60` (RFC 3339 allows it) and an offset
+  beyond `±18:00` match the lexical form but stay `INVALID_SHARED_TIME`, so the receipt is
+  `NO_IDENTITY`. Neither java.time (`LocalTime`, `ZoneOffset`) nor PostgreSQL `timestamptz` can
+  represent them, and hearing, a Java producer, cannot emit them. The receipt keeps the message
+  text, so such a case is visible rather than lost.
 - **Year (both dates)**: exactly four ASCII digits, no sign, as the event schema's `yyyy` and RFC
   3339's `date-fullyear`. Java's ISO parsing also takes signed and longer years (`+999999999`) that
   PostgreSQL cannot hold, so those are invalid. Every four-digit year, 0000 to 9999, with any offset
@@ -544,8 +555,9 @@ through all scenarios and asserts none contains a marker string planted in the p
 - **No defendants** (no `prosecutionCases`): no defendant rows, extraction `OK`,
   `any_subject_is_youth` NULL (R15).
 - **Sub-millisecond `sharedTime`**: `timestamptz` holds microseconds. Hearing sends milliseconds,
-  so nothing is lost; a nanosecond value would be rounded, and two spellings differing only below
-  a microsecond would be one share.
+  so nothing is lost; a finer value is cut to six fraction digits and truncated (R7), and two
+  spellings differing only below a microsecond are one identity (the second is a duplicate) though
+  their share ids differ.
 - **Duplicate JSON keys**: Jackson keeps the last value; the stored text keeps both, as sent.
 - **Lag below zero** (a clock ahead of the store's): recorded as zero; Micrometer timers do not
   take negative durations.
