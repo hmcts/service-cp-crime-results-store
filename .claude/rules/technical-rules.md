@@ -37,14 +37,17 @@ private JdbcShareStore store;
 
 ## Error Handling
 
-- Custom exceptions extending `RuntimeException`; classify at the throw site as retryable (the
-  broker should redeliver: database or progression unreachable) or not (dead-letter now:
-  unreadable message, missing identity)
+- Custom exceptions extending `RuntimeException`; classify each failure as retryable (database or
+  progression unreachable: throw after the short capped pause, `min(2^deliveryCount s, 30 s)`, so
+  the broker redelivers) or not a share (unreadable message, missing identity: record the receipt
+  `UNREADABLE` / `NO_IDENTITY` with a bounded reason and the message text, and acknowledge). Never
+  dead-letter from code; the broker's dead-letter queue is reached only after its own redelivery
+  attempts
 - **NEVER swallow exceptions.** No empty catch blocks, no catch-and-log-and-continue, no returning a
   success value from a catch block. Catch only to classify and rethrow, or to record an explicit
-  outcome (a dead-letter reason, `projection_status = FAILED`)
+  outcome (a non-share reason on the receipt, `projection_status = FAILED`)
 - The message listener is the only place that turns an exception into a broker decision
-  (acknowledge, roll back, dead-letter)
+  (acknowledge or roll back)
 - `@ControllerAdvice` / `ProblemDetail` for the HTTP API only. Responses carry bounded codes —
   never exception text, never payload content, never a value the caller supplied
 
@@ -63,13 +66,14 @@ private JdbcShareStore store;
 - Migrations are additive and forward-only; never edit a migration that has been applied in a
   shared environment
 - Stored shares are immutable: no `UPDATE` of a share's facts or payload. The only updates are the
-  latest pointer, the predecessor link and the day's youth flag, under the hearing-day lock
-- A unique-constraint hit on a share's identity means a duplicate delivery and is handled, not
-  logged as an error
+  latest pointer, the predecessor link and the day's youth flag, under the hearing-day lock; and
+  the key-details and `projection_*` columns, by the extraction sweep alone, from the stored payload
+- A share is inserted with `ON CONFLICT DO NOTHING` on its identity's unique key; nothing inserted
+  means a duplicate delivery: the receipt is marked `DUPLICATE`, no error is raised or logged
 
 ## Enums and Routing
 
-- Java enums for fixed value sets (projection status, dead-letter reasons, anomaly kinds)
+- Java enums for fixed value sets (projection status, receipt status, non-share reasons)
 - Switch expressions for routing — the compiler enforces exhaustive coverage
 - Include a `fromValue(String)` factory when parsing wire strings; unknown values are an explicit
   failure, never a silent default

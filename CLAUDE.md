@@ -43,6 +43,7 @@ Has:
   `/actuator` and `/error` is refused.
 - Audit filter wired; `cp.audit.enabled` is `false` by default.
 - The GitHub Actions pipeline and checks the sibling results-distribution services use.
+- Spec 001 (share intake, the write path) is in progress on branch `001-share-intake`.
 
 Has not (arrives with feature specs): storing shares and versions, enrichment from progression,
 the read API and its rules, the operations API, reconciliation, purge, metrics and alerts. The
@@ -62,7 +63,7 @@ Principle IX). The broker never gates readiness.
 Default deny. Every new endpoint adds, in the same change: its mapping in `ActionHeaderFilter`,
 its own allow rule in `acl/results-store-rules.drl` naming the groups it admits, and its entry in
 `results-store-openapi.yaml`. `/operations/**` is for "Second Line Support" only and never returns
-a payload. Audit events carry no bodies (`audit.http.include-payload-body: false`).
+a payload. Read-API rules admit "System Users". Audit runs on the audit library's default settings.
 
 ## Build & Test
 ```bash

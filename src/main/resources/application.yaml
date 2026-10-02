@@ -82,8 +82,6 @@ audit:
     # Resolved as a suffix glob over the whole classpath, so the name must be unique to this service:
     # `openapi.yaml` would also match any `*openapi.yaml` a dependency ships.
     openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}
-    # The library default is true; response bodies must not reach the audit topic.
-    include-payload-body: false
 
 # The audit transport. False by default because the library switches itself on when it is on the
 # classpath and then requires `cp.audit.hosts` and `cp.audit.port`, which a local run does not

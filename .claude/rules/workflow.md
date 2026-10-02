@@ -52,18 +52,22 @@ Loop repeats until ALL agents return PASS / COMPLIANT.
 A change ships only when all applicable gates are green:
 
 1. **Identity gate.** A message missing `hearing.id`, `hearingDay` or `sharedTime`, or one that
-   cannot be read, is dead-lettered with a bounded reason and counted. Nothing else in the payload
-   is validated.
+   cannot be read, is recorded on its receipt (`NO_IDENTITY` or `UNREADABLE`) with a bounded reason
+   and the message text, counted and acknowledged. It is never dead-lettered. Nothing else in the
+   payload is validated.
 2. **Never-refuse gate.** A share with its identity is always stored. An extraction failure marks
    the row `projection_status = FAILED`; it never drops the share. Proven by test.
 3. **Transaction gate.** Receipt in its own transaction first; then one store transaction for
    everything that makes the share queryable; the message is acknowledged only after that commit.
    The progression lookup runs between the two, never inside a transaction. Proven by test.
-4. **Idempotency gate.** Redelivery of a stored share stores nothing new. The same share with a
-   different digest is recorded as an anomaly and counted. Proven by test, not by inspection.
+4. **Idempotency gate.** Redelivery of a stored share stores nothing new: the share insert uses
+   `ON CONFLICT DO NOTHING` on the identity's unique key, the receipt is marked `DUPLICATE` and the
+   message is acknowledged, with no error and no rollback. Payloads are not compared. Proven by
+   test, not by inspection.
 5. **Immutability gate.** No code updates a stored share's facts or payload. The only updates are
    the latest pointer, the predecessor link and the day's youth flag, all under the hearing-day
-   lock. "Latest" is decided by `sharedTime`, never by arrival order.
+   lock; and the key-details and `projection_*` columns, by the extraction sweep alone, from the
+   stored payload. "Latest" is decided by `sharedTime`, never by arrival order.
 6. **Indexed-search gate.** Pull and search queries use indexed columns only and never read the
    payload table.
 7. **Default-deny gate.** Every endpoint has its `ActionHeaderFilter` mapping, its own allow rule

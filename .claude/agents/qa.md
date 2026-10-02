@@ -37,10 +37,10 @@ with the behaviour it leaves unpinned.
 
 ### Intake Tests (specific to this service)
 - Happy path — receipt recorded, share stored, message acknowledged after commit
-- Missing `hearing.id`, `hearingDay` or `sharedTime`, or an unreadable body — dead-lettered with a bounded reason, counted
-- **Redelivery of a stored share** — nothing new stored, acknowledged
-- Same identity, different digest — recorded as an anomaly, counted
-- Retryable failure (database or progression unreachable) — rolled back, nothing half-stored, receipt survives
+- Missing `hearing.id`, `hearingDay` or `sharedTime`, or an unreadable body — receipt `NO_IDENTITY` / `UNREADABLE` with a bounded reason and the message text, counted, acknowledged, never dead-lettered, store untouched
+- **Redelivery of a stored share** — `ON CONFLICT DO NOTHING` inserts nothing, receipt `DUPLICATE`, acknowledged, no error; the first payload stays
+- Redelivery of any message — the same receipt (broker's message id) with its attempt count raised, never a second receipt
+- Retryable failure (database or progression unreachable) — thrown after the capped pause (`min(2^deliveryCount s, 30 s)`), rolled back, nothing half-stored, receipt survives
 - Extraction failure — share still stored, `projection_status = FAILED`
 - Out-of-order arrival — stored, not latest, linked by `sharedTime`, `arrived_out_of_order = true`
 - Two shares of the same day at once — the hearing-day lock orders them; latest decided by `sharedTime`

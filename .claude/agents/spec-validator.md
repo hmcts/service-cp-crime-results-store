@@ -30,33 +30,33 @@ The design is on Confluence ([Results Store Service](https://hmcts.atlassian.net
 
 ### 1. Inbound event
 - Only `hearing.id`, `hearingDay`, `sharedTime` are required. Any extra validation that can refuse a share is a HIGH finding (Principle V).
-- A message missing one of them, or unreadable, is dead-lettered with a bounded reason and counted — never silently acknowledged in a deployed configuration.
+- A message missing one of them, or unreadable, is recorded on its receipt (`NO_IDENTITY` / `UNREADABLE`) with a bounded reason and the message text, counted and acknowledged — never dead-lettered (Principle V). Acknowledging it without the receipt record and the counter is a finding.
 - Topic, subscription and selector come from configuration. A changed subscription name or selector without a recorded decision is a HIGH finding.
 - Nothing is published on Artemis (Principle IX). Any send is a HIGH finding.
 - Broker health is not in the readiness group.
 
 ### 2. Storage and versioning
-- Receipt in its own transaction first; one store transaction; acknowledgement after commit; the progression call outside any transaction (Principle VI).
-- A stored share's facts and payload are never updated; only the latest pointer, predecessor link and youth flag, under the hearing-day lock (Principle I).
+- Intake order: receipt (keyed by the broker's message id, own transaction) → identify → [enrich: spec 002] → store with `ON CONFLICT DO NOTHING` in one transaction → acknowledge after commit; the progression call outside any transaction (Principle VI).
+- A stored share's facts and payload are never updated; only the latest pointer, predecessor link and youth flag, under the hearing-day lock, and the key-details and `projection_*` columns, by the extraction sweep alone (Principle I).
 - Latest by `sharedTime`, never arrival order; late shares linked in with `arrived_out_of_order = true`.
 - Payload stored and returned exactly as received, plus intake enrichment only (Principle II).
 - Indexed columns derivable from the payload alone; extraction failure marks `projection_status = FAILED` and keeps the share.
 - Facts recorded as the payload states them — no business interpretation (Principle IV).
-- Redelivery stores nothing new; a different digest for the same identity is an anomaly, counted.
+- Redelivery stores nothing new: the unique key with `ON CONFLICT DO NOTHING` drops it, the receipt is marked `DUPLICATE`, the message is acknowledged, no error is raised. Payloads are not compared.
 
 ### 3. Read and operations API
 - Every mapped path and method is described in `results-store-openapi.yaml`, and every described path is mapped. Either direction of drift is a finding.
 - Pull and search queries never read the payload table (Principle III).
 - Pull safety: no row returned while a lower-numbered row is still being written.
-- Youth-scoped reads return only days with `youth_seen IS NOT FALSE`.
 - Responses carry bounded codes and identifiers on refusal — never exception text or caller input.
 - `/operations/**` never returns a payload.
 
 ### 4. Authorisation and audit
 - Every endpoint has an `ActionHeaderFilter` mapping and its own allow rule naming the groups admitted. An action with no rule, a rule naming no group, or any default-allow is a HIGH finding.
 - `deny-when-no-rules: true`; a caller-supplied `CPP-ACTION` is never trusted for a mapped path; an unmapped path is refused.
+- Every read-API action's rule admits "System Users"; no youth scoping.
 - `/operations/**` admits "Second Line Support" only.
-- Audit covers every endpoint, with `include-payload-body: false`.
+- Audit covers every endpoint, on the audit library's default settings.
 
 ### 5. Telemetry
 - No personal data or payload content in logs, metric labels, failure reasons or audit events (Principle XI).

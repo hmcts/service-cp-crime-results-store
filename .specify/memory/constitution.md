@@ -1,27 +1,33 @@
 <!--
 SYNC IMPACT REPORT
 ==================
-Version change: (none) → 1.0.0
-Bump rationale: first ratification. This constitution is written for the
-                Results Store. It takes the engineering principles the
-                sibling results-distribution services already work under
-                (HMCTS standards, test-driven development, the spec-driven
-                review loop, the quality gates) and adds the store's own
-                domain principles from the design page.
+Version change: 1.0.0 → 2.0.0
+Bump rationale: MAJOR. Principle V is reversed: a message without an
+                identity, or with an unreadable body, is no longer
+                dead-lettered; it is recorded on its receipt and
+                acknowledged. Principle VI drops the payload-digest
+                comparison and the anomaly record. Both break practice
+                written against 1.0.0. The changes align this file with the
+                design page (v45, 2026-10-02).
 
-Principles (all new in 1.0.0):
-  I.    Every Share Is an Immutable Version
-  II.   The Payload Is the Source of Truth
-  III.  Consumers Search Indexed Columns
-  IV.   The Store Applies No Business Rules
-  V.    Never Refuse to Store
-  VI.   Idempotent, Transactional Intake
-  VII.  Default-Deny Authorisation
-  VIII. Observability Through Azure Monitor
-  IX.   Artemis Only for Legacy Integration
-  X.    Test-Driven Development
-  XI.   Privacy in Telemetry
-  XII.  HMCTS Estate Conventions
+Principles changed in 2.0.0:
+  I.    Every Share Is an Immutable Version - the key-details columns and
+        the projection_* columns may also be rewritten, by the extraction
+        sweep only, from the stored payload
+  II.   The Payload Is the Source of Truth - the checksum is SHA-256 over
+        the stored text
+  IV.   The Store Applies No Business Rules - a derived fact is added only
+        by an agreed amendment, named as a derivation
+  V.    Never Refuse to Store - non-shares are recorded with a bounded
+        reason and the message text, counted and acknowledged; never
+        dead-lettered (REVERSED)
+  VI.   Idempotent, Transactional Intake - receipt keyed by the broker's
+        message id with statuses and an attempt count; duplicates caught by
+        the unique key with ON CONFLICT DO NOTHING; no digest comparison, no
+        anomaly; a short capped pause before a retryable failure is thrown
+  VII.  Default-Deny Authorisation - read-API rules admit "System Users",
+        no youth scoping; audit on the library's default settings
+Principles unchanged: III, VIII, IX, X, XI, XII.
 
 Sections: Core Principles, Technology Stack & Deployment, Development
 Workflow & Quality Gates, Governance.
@@ -30,15 +36,16 @@ Templates checked:
   ✅ .specify/templates/plan-template.md      - "Constitution Check" gate reads
                                                 this file; no change needed
   ✅ .specify/templates/spec-template.md      - no change needed
-  ✅ .specify/templates/tasks-template.md     - test tasks before
-                                                implementation tasks, as
-                                                Principle X requires
-  ✅ CLAUDE.md                                - points here
+  ✅ .specify/templates/tasks-template.md     - no change needed
+  ✅ .claude/rules/*, .claude/agents/*        - updated to match
+  ✅ CLAUDE.md                                - updated to match
+  ✅ src/main/resources/application.yaml     - include-payload-body removed,
+                                                so the audit library default
+                                                applies
 
 Follow-up TODOs:
-  - Retention period, read group for support staff, and the "Second Line
-    Support" group name are open on the design page. Amend Principle VII or
-    the Technology Stack when they are decided.
+  - Retention period is open on the design page. Amend the Technology Stack
+    when it is decided.
 -->
 
 # service-cp-crime-results-store Constitution
@@ -62,12 +69,19 @@ constitution wins until it is amended.
 
 A share is one version of one hearing day. Its identity is `hearingId`,
 `hearingDay` and `sharedTime` together. Once a share is written, its facts and
-its payload never change. Only three things on a stored row may be updated
-later, and only while holding the hearing-day lock:
+its payload never change. Only these columns on a stored row may be updated
+later. While holding the hearing-day lock:
 
 - the latest pointer (which share of the day is latest);
 - the predecessor link (which share came before it);
 - the day's youth flag (`youth_seen`).
+
+And by the extraction sweep alone, re-read from the stored payload:
+
+- the key-details columns;
+- the `projection_*` columns (extraction status and reason).
+
+Nothing else is ever updated.
 
 "Latest" is the share with the greatest `sharedTime`, worked out under the
 lock. Arrival order never decides it. A share that arrives late is stored and
@@ -81,7 +95,8 @@ works if a stored version means the same thing every time it is read.
 The store keeps each payload exactly as it was received, plus the finalised
 application results added at intake. Nothing else is added, removed or
 reformatted. Every indexed column is read from the payload, and can be
-rebuilt from it if the extraction rules change.
+rebuilt from it if the extraction rules change. The payload checksum is
+SHA-256 over the stored text.
 
 **Rationale**: if the columns can always be rebuilt from the payload, an
 extraction bug is a re-run, not a data loss.
@@ -103,7 +118,9 @@ exactly as the payload states them. For example, it records whether any
 defendant in the share was flagged `isYouth`, and leaves the column empty when
 it cannot read that. What "youth" means for a register is the consumer's
 decision. Read authorisation may limit what a consumer sees; that is access
-control, not a capture rule.
+control, not a capture rule. Where a consumer needs a fact derived from the
+data, it is added by an agreed amendment to this constitution, named as a
+derivation, never silently.
 
 **Rationale**: every consumer has its own rules. If the store applied one of
 them, every other consumer would inherit it.
@@ -111,8 +128,12 @@ them, every other consumer would inherit it.
 ### V. Never Refuse to Store (NON-NEGOTIABLE)
 
 Only `hearing.id`, `hearingDay` and `sharedTime` are required. A message
-without them is dead-lettered with a reason and alerted on. Nothing else is
-validated, and the payload is not checked against a schema. If extracting the
+without one of them, or with a body that cannot be read, is not a share: it
+is recorded on its receipt with a bounded reason and the message text,
+counted, and acknowledged. It is never dead-lettered; the dead-letter queue
+is for failures the broker gives up on after its own redelivery attempts.
+Nothing else is validated, and the payload is not checked against a schema.
+If extracting the
 indexed columns fails, the share is still stored and the row is marked
 (`projection_status = FAILED`) for the sweep to retry. Extraction failure
 never drops a share.
@@ -122,16 +143,32 @@ see. A share stored with a failed extraction can be fixed later.
 
 ### VI. Idempotent, Transactional Intake (NON-NEGOTIABLE)
 
-- **Receipt first.** The listener records the share's identity in the receipt
-  log, in its own transaction, before doing anything else.
+- **Receipt first.** The listener records a receipt in its own transaction,
+  before doing anything else. The receipt is keyed by the broker's message
+  id, which every message has even when its body is unreadable. It holds the
+  share's identity when the message carries one (nullable otherwise), a
+  status (`RECEIVED`, then `STORED`, `DUPLICATE`, `UNREADABLE` or
+  `NO_IDENTITY`), an attempt count, and a reason when something is wrong. A
+  redelivery updates the receipt and raises its attempt count; it is never
+  written twice.
 - **One store transaction.** Locking the hearing day, inserting the share and
-  its payload, extracting the columns, updating the youth flag and moving the
-  latest pointer happen in one transaction. All or nothing.
+  its payload, extracting the columns, updating the youth flag, moving the
+  latest pointer and marking the receipt `STORED` happen in one transaction.
+  All or nothing.
 - **Acknowledge after commit.** The message is acknowledged only after the
-  store transaction commits. A failure rolls the message back to the broker.
-- **Idempotent.** A share already stored is recognised and dropped. The same
-  share arriving with a different payload digest is recorded as an anomaly
-  and alerted on.
+  store transaction commits.
+- **Idempotent.** A unique key on (`hearing_id`, `hearing_day`, `shared_at`)
+  is the whole mechanism. The share is inserted with `ON CONFLICT DO
+  NOTHING`; if nothing was inserted, the share is already stored, the
+  receipt is marked `DUPLICATE` and the message is acknowledged. A duplicate
+  raises no error, is not rolled back and is never dead-lettered. The first
+  stored payload stays; payloads are not compared and nothing is recorded
+  beyond the receipt.
+- **Retryable failures go back to the broker.** A failure a retry can fix
+  (database or progression unreachable) is thrown so the message rolls back
+  and the broker redelivers it. Before throwing, the listener pauses for
+  `min(2^deliveryCount s, 30 s)`, so the broker's immediate redeliveries are
+  not used up during a brief outage. There is no retry loop in the store.
 - The progression lookup for finalised application results runs between the
   two transactions, never inside one. If progression cannot be reached, the
   message rolls back; the share is never stored half-enriched.
@@ -150,11 +187,13 @@ lost; the single transaction means no consumer sees a half-stored share.
 - The action is worked out from the request's path and method by
   `ActionHeaderFilter`. A caller-supplied `CPP-ACTION` header is never
   trusted for a mapped path.
+- Every read-API action's rule admits the "System Users" group. There is no
+  youth scoping; finer-grained rules are added only when a need appears.
 - `/operations/**` is for "Second Line Support" only, and never returns a
   payload. Support staff read payloads through the read API under its own
   rules.
-- Every request is audited by `cp-audit-filter-springboot`, with no request or
-  response bodies (`include-payload-body: false`).
+- Every request is audited by `cp-audit-filter-springboot`, with the
+  library's default settings.
 
 **Rationale**: the store holds every defendant's results, including
 children's. An endpoint someone forgot to protect must fail closed.
@@ -321,4 +360,4 @@ match.
 - Reviewers block a merge that breaks a NON-NEGOTIABLE principle without a
   written waiver.
 
-**Version**: 1.0.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-01
+**Version**: 2.0.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-02

@@ -34,13 +34,13 @@ You are a senior Spring Boot developer on the Crime Common Platform (MOJ/HMCTS),
 - **No AI attribution** in code comments, commit messages, or docs
 
 ### Service-specific rules
-- **Every share is an immutable version.** Never update a share's facts or payload. Only the latest pointer, the predecessor link and the day's youth flag change, under the hearing-day lock. Latest is the greatest `sharedTime`, never arrival order.
+- **Every share is an immutable version.** Never update a share's facts or payload. Only the latest pointer, the predecessor link and the day's youth flag change, under the hearing-day lock; and the key-details and `projection_*` columns, by the extraction sweep alone, from the stored payload. Latest is the greatest `sharedTime`, never arrival order.
 - **Store the payload exactly as received** (plus the finalised application results added at intake). Every indexed column is derived from it and can be rebuilt from it.
 - **Consumers search indexed columns.** Pull and search queries never read the payload table.
 - **No business rules in capture.** Record facts as the payload states them; leave interpretation to consumers.
 - **Never refuse to store.** Only `hearing.id`, `hearingDay`, `sharedTime` are required. Extraction failure sets `projection_status = FAILED`; it never drops the share.
-- **Intake order:** receipt (own transaction) → identify → admit once → enrich from progression (outside any transaction) → one store transaction → acknowledge after commit. A retryable failure rolls back to the broker; an unreadable message or missing identity dead-letters with a bounded reason.
-- **Default-deny authorisation.** Each endpoint lands with its `ActionHeaderFilter` mapping, its own allow rule in `acl/results-store-rules.drl`, and its entry in `results-store-openapi.yaml`. `/operations/**` admits "Second Line Support" only and never returns a payload.
+- **Intake order:** receipt (keyed by the broker's message id, own transaction) → identify → [enrich from progression, outside any transaction: spec 002] → one store transaction, share inserted with `ON CONFLICT DO NOTHING` → acknowledge after commit. A duplicate (nothing inserted) marks the receipt `DUPLICATE` and is acknowledged, no error; payloads are not compared. A retryable failure is thrown after a short capped pause (`min(2^deliveryCount s, 30 s)`) so the broker redelivers. An unreadable message or missing identity is recorded on its receipt (`UNREADABLE` / `NO_IDENTITY`) with a bounded reason and the message text, counted and acknowledged — never dead-lettered.
+- **Default-deny authorisation.** Each endpoint lands with its `ActionHeaderFilter` mapping, its own allow rule in `acl/results-store-rules.drl`, and its entry in `results-store-openapi.yaml`. Read-API rules admit "System Users"; `/operations/**` admits "Second Line Support" only and never returns a payload. Audit runs on the audit library's default settings.
 - **Azure Monitor, not exception reports.** A path that drops or fails something moves a counter with a bounded reason.
 - **Artemis is for the legacy subscription only.** Publish nothing on it. Never change the subscription name or selector without a recorded decision.
 - No hardcoded topic names, URLs, ports or secrets — typed `@ConfigurationProperties`.
