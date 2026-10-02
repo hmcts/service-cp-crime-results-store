@@ -147,6 +147,20 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     "…DataIntegrityViolationException: … ERROR: share_defendant_delete_guard: share_defendant rows are never
     changed by DELETE"`. GREEN: `FlywayMigrationIT` 113 tests, 0 failures (root 2, `event_receipt` 29,
     `hearing_share and its children` 73, identity edges 9).
+  - Gate-3 fix (two-way latest check): `hearing_day_head_latest_check` also needs, at commit, every day row
+    that has any `hearing_share` row to name a latest share (`latest_share_id` set, `share_count >= 1`); the
+    existing half (the named share has `is_latest`, on the same day by `hearing_day_head_latest_fk`) stays.
+    New refusal `hearing_day_head_has_latest_guard` (23514). The constraint triggers now also fire on a
+    share's INSERT and on the day row's `share_count`. A day row with no shares may still name none. The
+    `FlywayMigrationIT` share cases that left shares under a day row with a null latest now start from a
+    complete day (day row, first share latest, day row moved onto it, one transaction), as the store
+    writes it; the identity-edge round trips store their share the same way. New cases: a share inserted
+    under a day row with no latest (latest or not) refused; emptying a day row that has shares refused; a
+    day row alone accepted; a new day built in one transaction accepted. RED (tests before V3 changed):
+    `./gradlew test --tests '*FlywayMigrationIT'`: 48 completed, 1 failed (failFast),
+    `insert_of_a_share_into_a_day_row_with_no_latest_share_should_be_refused`: `Expecting code to raise a
+    throwable.` GREEN: `FlywayMigrationIT` 117 tests, 0 failures (root 2, `event_receipt` 29,
+    `hearing_share and its children` 77, identity edges 9).
 
 - [X] T003 [P] [US1] [US2] [US3] Test first: `ShareIdentityParserTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParserTest.java, `ShareIdTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdTest.java, `PayloadChecksumTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksumTest.java, `SharedDaysTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDaysTest.java, `NonShareReasonTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReasonTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareIdentityParser.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareIdentity.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ShareId.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/PayloadChecksum.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/SharedDays.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ReceiptStatus.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/NonShareReason.java; delete src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelope.java and src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/PublicEventEnvelopeTest.java (the current listener moves to the parser in the same commit so the build stays green)
   - Cases: parser returns `Share` for a valid body and `NotShare(reason)` for each of `not_json`, `not_object`, `nul_character`, `missing_/invalid_hearing_id`, `missing_/invalid_hearing_day`, `missing_/invalid_shared_time` (research R7, R8); the three raw identity strings kept as sent; share id golden vectors including `…706Z` vs `…7060Z` giving different ids and the fixed namespace `3f6c2a4e-8d1b-4f0a-9c57-1e2b7d9a4c60`; SHA-256 hex over UTF-8 (empty, ASCII, multi-byte); London and UTC days either side of both clock changes; each `NonShareReason` maps to its status and metric tag.
