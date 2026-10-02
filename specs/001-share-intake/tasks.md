@@ -111,6 +111,14 @@ tests prove identity, share id, checksum, shared days and extraction without Spr
     metric's `status` tag (`statusTag()`). A non-string identity value counts as missing (R7's
     "missing / not a string"), and a blank body reads as `NOT_JSON`. The listener now logs a non-share's
     bounded reason instead of the parse exception's class.
+  - Gate-1 fix (year range): `LocalDate.parse` / `OffsetDateTime.parse` also take signed and longer
+    years (`+999999999-01-01`) that PostgreSQL `date` / `timestamptz` cannot hold, so a parsed share would
+    fail at the store and be retried. Both identity dates now need the wire's four ASCII-digit year with no
+    sign; `hearingDay` must be 0001-01-01 or later, and `sharedTime` as an instant must lie in
+    [0001-01-01T00:00Z, 10000-01-01T00:00Z). Anything else is `INVALID_HEARING_DAY` / `INVALID_SHARED_TIME`.
+    RED: `./gradlew test --tests '*ShareIdentityParserTest'`: 37 completed, 4 failed (failFast), e.g.
+    `hearingDay = "+999999999-01-01"`: `expected: NotShare[reason=INVALID_HEARING_DAY, …]` but was a `Share`.
+    GREEN: `ShareIdentityParserTest` 65 tests, 0 failures.
 
 - [X] T004 [P] [US1] [US5] Test first: table-driven `KeyDetailsExtractorTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractorTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/KeyDetailsExtractor.java (`EXTRACTOR_VERSION = 1`), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/Projection.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/KeyDetails.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/DefendantRef.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ExtractionFailureKind.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ProjectionStatus.java
   - Cases: every key-detail path (FR-018) read; a missing optional field → NULL and `Extracted`; wrong type and invalid UUID per field → `Failed` with a reason naming the path and the kind; a `RuntimeException` inside extraction → `Failed` `UNEXPECTED:<class>` (catch `RuntimeException`, never `Throwable`); defendants merged per (case, defendant); one defendant on two cases → two rows; `any_subject_is_youth` TRUE / FALSE / NULL including no defendants and an unstated `isYouth`; `youth_court_id` recorded as stated; the reason never contains payload text; each `ExtractionFailureKind` has its metric tag.

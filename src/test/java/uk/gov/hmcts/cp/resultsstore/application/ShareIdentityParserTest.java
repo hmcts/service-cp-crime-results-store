@@ -63,6 +63,32 @@ class ShareIdentityParserTest {
                         .isEqualTo(ShareId.from(upperCaseId, HEARING_DAY, fourDigits));
             });
         }
+        @ParameterizedTest(name = "hearingDay = {0}")
+        @ValueSource(strings = {"0001-01-01", "9999-12-31"})
+        void read_with_a_hearing_day_at_either_end_of_the_four_digit_years_should_give_the_share(
+                final String value) {
+            final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + value + "\"",
+                    "\"" + SHARED_TIME + "\""));
+
+            assertThat(reading).isInstanceOfSatisfying(Share.class,
+                    share -> assertThat(share.identity().hearingDay()).isEqualTo(LocalDate.parse(value)));
+        }
+
+        @ParameterizedTest(name = "sharedTime = {0}")
+        @CsvSource(delimiter = '|', value = {
+            "0001-01-01T00:00:00Z                | 0001-01-01T00:00:00Z",
+            "0001-01-01T00:30:00-01:00           | 0001-01-01T01:30:00Z",
+            "9999-12-31T23:59:59.999999999Z      | 9999-12-31T23:59:59.999999999Z",
+            "9999-12-31T23:59:59.999999999+01:00 | 9999-12-31T22:59:59.999999999Z"
+        })
+        void read_with_a_shared_time_at_either_end_of_the_four_digit_years_should_give_the_share(
+                final String value, final String instant) {
+            final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
+                    "\"" + value + "\""));
+
+            assertThat(reading).isInstanceOfSatisfying(Share.class,
+                    share -> assertThat(share.identity().sharedAt()).isEqualTo(Instant.parse(instant)));
+        }
     }
 
     @Nested
@@ -128,7 +154,8 @@ class ShareIdentityParserTest {
         }
 
         @ParameterizedTest(name = "hearingDay = {0}")
-        @ValueSource(strings = {"2026-02-30", "02/10/2026", "2026-10-2", "2026-10-02T00:00:00Z", ""})
+        @ValueSource(strings = {"2026-02-30", "02/10/2026", "2026-10-2", "2026-10-02T00:00:00Z", "",
+            "+999999999-01-01", "-0001-01-01", "+2026-10-02", "+10000-01-01", "0000-01-01", "\uFF12026-10-02"})
         void read_with_a_hearing_day_that_is_not_an_iso_date_should_be_invalid_hearing_day(final String value) {
             final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + value + "\"",
                     "\"" + SHARED_TIME + "\""));
@@ -147,7 +174,10 @@ class ShareIdentityParserTest {
         }
 
         @ParameterizedTest(name = "sharedTime = {0}")
-        @ValueSource(strings = {"2026-10-02T14:19:50.706", "2026-10-02", "yesterday", "2026-10-02T25:19:50Z", ""})
+        @ValueSource(strings = {"2026-10-02T14:19:50.706", "2026-10-02", "yesterday", "2026-10-02T25:19:50Z", "",
+            "+999999999-01-01T00:00:00Z", "-0001-01-01T00:00:00Z", "+2026-10-02T14:19:50.706Z",
+            "+10000-01-01T00:00:00Z", "0000-12-31T23:59:59Z", "0001-01-01T00:30:00+01:00",
+            "9999-12-31T23:30:00-01:00"})
         void read_with_a_shared_time_that_is_not_a_date_time_with_offset_should_be_invalid_shared_time(
                 final String value) {
             final Reading reading = parser.read(body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"",
