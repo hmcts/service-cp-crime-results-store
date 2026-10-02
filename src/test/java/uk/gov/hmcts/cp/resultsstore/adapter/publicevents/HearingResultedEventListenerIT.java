@@ -2,12 +2,18 @@ package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
 import jakarta.jms.TextMessage;
 import jakarta.jms.Topic;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -15,19 +21,29 @@ import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.Queue;
 import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
 import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.TestSocketUtils;
-import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
+import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
+import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
  * The shared durable subscription against a real (embedded) Artemis broker, with the committed
- * topic, subscription name and selector.
+ * topic, subscription name and selector, delivering to intake: each message selected reaches its
+ * receipt on Testcontainers Postgres.
+ *
+ * <p>The share store and the observer are stand-ins until their adapters land (tasks.md wiring note:
+ * {@code ShareStore} in T008, {@code IntakeObserver} in T013), so a share's receipt stays
+ * {@code RECEIVED} here.
  */
 @SpringBootTest(properties = "resultsstore.publicevents.enabled=true")
 @ActiveProfiles("test")
@@ -46,23 +62,27 @@ class HearingResultedEventListenerIT {
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
     private static EmbeddedActiveMQ broker;
 
-    private CapturedLog log;
+    @MockitoBean
+    private ShareStore shareStore;
+
+    @MockitoBean
+    private IntakeObserver observer;
+
+    @Autowired
+    private JdbcClient jdbc;
 
     @DynamicPropertySource
-    static void pointAtTheEmbeddedBroker(final DynamicPropertyRegistry registry) throws Exception {
+    static void pointAtTheEmbeddedBrokerAndTheStore(final DynamicPropertyRegistry registry) throws Exception {
         startTheBroker();
         registry.add("spring.artemis.broker-url", () -> BROKER_URL);
+        PostgresTestSupport.register(registry);
     }
 
     @BeforeEach
     void awaitTheSubscription() {
-        log = CapturedLog.forClass(HearingResultedEventListener.class);
+        when(shareStore.store(any())).thenAnswer(invocation -> new Stored(UUID.randomUUID(), Instant.now(), false,
+                false));
         await().atMost(WITHIN).until(() -> !subscriptionsOnTheTopic().isEmpty());
-    }
-
-    @AfterEach
-    void detachTheLog() {
-        log.close();
     }
 
     @Test
@@ -78,15 +98,18 @@ class HearingResultedEventListenerIT {
     }
 
     @Test
-    void hearing_resulted_event_should_be_received() {
+    void hearing_resulted_event_should_reach_its_receipt_and_the_store() {
         final String hearingId = UUID.randomUUID().toString();
 
         publish(HEARING_RESULTED, envelope(hearingId));
 
-        await().atMost(WITHIN).until(() -> log.messages().stream().anyMatch(m -> m.contains(hearingId)));
-        assertThat(log.messages()).anyMatch(m -> m.contains("hearingId=" + hearingId)
-                && m.contains("hearingDay=2026-09-30")
-                && m.contains("sharedTime=2026-09-30T15:04:05.000Z"));
+        await().atMost(WITHIN).until(() -> receipts(hearingId) == 1);
+        assertThat(jdbc.sql("SELECT status FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId)).query(String.class).single()).isEqualTo("RECEIVED");
+        verify(shareStore, timeout(WITHIN.toMillis())).store(argThat(request ->
+                request.identity().rawHearingId().equals(hearingId)
+                        && "2026-09-30".equals(request.identity().rawHearingDay())
+                        && "2026-09-30T15:04:05.000Z".equals(request.identity().rawSharedTime())));
     }
 
     @Test
@@ -98,8 +121,15 @@ class HearingResultedEventListenerIT {
         publish("public.progression.events.hearing-resulted", envelope(filtered));
         publish(HEARING_RESULTED, envelope(delivered));
 
-        await().atMost(WITHIN).until(() -> log.messages().stream().anyMatch(m -> m.contains(delivered)));
-        assertThat(log.messages()).noneMatch(m -> m.contains(filtered));
+        await().atMost(WITHIN).until(() -> receipts(delivered) == 1);
+        assertThat(receipts(filtered)).isZero();
+    }
+
+    private int receipts(final String hearingId) {
+        return jdbc.sql("SELECT count(*) FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(Integer.class)
+                .single();
     }
 
     private static String envelope(final String hearingId) {

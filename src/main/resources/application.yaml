@@ -49,6 +49,31 @@ resultsstore:
     subscription: resultsstore-service.sdg
     # Applied by the broker, so only hearing-resulted events reach this service.
     selector: "CPPNAME = 'public.events.hearing.hearing-resulted'"
+  # Intake (contracts/configuration.md). Checked at start; a bad value stops the service.
+  intake:
+    redelivery-pause:
+      # Before a failed message goes back to the broker: min(2^deliveryCount s, cap). The broker
+      # redelivers at once, so this keeps a short outage from using up its redeliveries.
+      enabled: ${RESULTSSTORE_INTAKE_REDELIVERYPAUSE_ENABLED:true}
+      cap: ${RESULTSSTORE_INTAKE_REDELIVERYPAUSE_CAP:30s}
+    # The receipt's own short transaction.
+    receipt-timeout: ${RESULTSSTORE_INTAKE_RECEIPTTIMEOUT:10s}
+    store:
+      # The outer bound of the store transaction; at least each timeout below.
+      transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT:60s}
+      # Set per store transaction with set_config(..., true), so they never leak to the next borrower.
+      lock-timeout: ${RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT:10s}
+      # Below the socket timeout above, so a long statement ends as a database error.
+      statement-timeout: ${RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT:20s}
+      idle-in-transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT:10s}
+  # The extraction sweep, which retries shares whose key details could not be read.
+  sweep:
+    enabled: ${RESULTSSTORE_SWEEP_ENABLED:true}
+    initial-delay: ${RESULTSSTORE_SWEEP_INITIALDELAY:1m}
+    fixed-delay: ${RESULTSSTORE_SWEEP_FIXEDDELAY:5m}
+    batch-size: ${RESULTSSTORE_SWEEP_BATCHSIZE:100}
+    # Counts the intake's attempt.
+    max-attempts: ${RESULTSSTORE_SWEEP_MAXATTEMPTS:3}
 
 # cp-auth-rules-filter. On by default; the `test` profile turns it off where a suite does not
 # exercise it. The library reads the literal string `true`.

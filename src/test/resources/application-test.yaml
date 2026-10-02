@@ -4,6 +4,13 @@ resultsstore:
   publicevents:
     # Literal, so an exported RESULTSSTORE_PUBLICEVENTS_ENABLED cannot start a listener here.
     enabled: false
+  intake:
+    redelivery-pause:
+      # Tests do not wait; RedeliveryPauseTest proves the pause once with a real sleeper.
+      enabled: false
+  sweep:
+    # Sweep tests call the sweep directly.
+    enabled: false
 
 authz:
   http:

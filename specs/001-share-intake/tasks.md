@@ -413,12 +413,41 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     `parsedCopySkipped` for T008. A non-share whose receipt was not inserted by this delivery is
     `ALREADY_SETTLED` and not counted again.
 
-- [ ] T007 [US1] [US6] [US7] Test first: `HearingResultedEventListenerTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerTest.java, `RedeliveryPauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPauseTest.java, `PublicEventsConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/PublicEventsConfigTest.java, `ConfigurationValidationTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, and the subscription-shape update of src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListener.java (rewrite), src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPause.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/Sleeper.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java, src/main/resources/application.yaml, src/test/resources/application-test.yaml
+- [X] T007 [US1] [US6] [US7] Test first: `HearingResultedEventListenerTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerTest.java, `RedeliveryPauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPauseTest.java, `PublicEventsConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/PublicEventsConfigTest.java, `ConfigurationValidationTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, and the subscription-shape update of src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListener.java (rewrite), src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPause.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/Sleeper.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java, src/main/resources/application.yaml, src/test/resources/application-test.yaml
   - Cases: the listener builds `IntakeCommand(messageId, deliveryCount, text|null)` and a non-text body becomes a null text; MDC holds message id, share id and hearing id and is cleared in `finally`; on `RetryableIntakeException` it pauses then rethrows; logs hold ids only; pause is `min(2^deliveryCount s, cap)`, off when disabled, and an interrupt restores the flag and rethrows; the container factory is transacted, has no JMS transaction manager, shared durable subscription, concurrency 1; every rule in contracts/configuration.md refuses a bad value at start; the subscription name, topic and selector are unchanged; the context-load tests still start without a datasource (wiring note).
   - Covers: FR-001, FR-006, FR-041, FR-045, FR-046.
   - Done when: the four test classes and `HearingResultedEventListenerIT` green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (the listener's new constructor with an empty body and no bean,
+    `RedeliveryPause` returning zero, the settings records with no rules, `IntakeConfig` binding them only),
+    each class run on its own: `./gradlew test --tests '*HearingResultedEventListenerTest'`: 2 completed,
+    1 failed (failFast), `retryable_failure_on_a_late_delivery_should_pause_no_longer_than_the_cap`:
+    `AssertionError: Expecting code to raise a throwable.`; `--tests '*RedeliveryPauseTest'`: 8 completed,
+    8 failed, e.g. `deliveryCount = "1", seconds = "2"`: `AssertionFailedError: expected: 2S but was: 0S`;
+    `--tests '*ConfigurationValidationTest'`: 2 completed, 1 failed,
+    `statement_timeout_should_stay_below_a_longer_socket_timeout`: `Expecting: <Started application …> to
+    have failed but context started`; `--tests '*HearingResultedEventListenerIT'`: 2 completed, 1 failed,
+    `hearing_resulted_event_should_reach_its_receipt_and_the_store`: `ConditionTimeoutException: Condition …
+    was not fulfilled within 30 seconds`. `PublicEventsConfigTest` (2) was green on first run: it pins the
+    existing container factory, which this task leaves unchanged.
+  - GREEN: `HearingResultedEventListenerTest` 11, `RedeliveryPauseTest` 15 (one pauses for real with a
+    1 s cap), `PublicEventsConfigTest` 2, `ConfigurationValidationTest` 40, `HearingResultedEventListenerIT` 3,
+    0 failures; `ActuatorIntegrationTest` and `AuthzIT` still start without a datasource. The gate exits 0:
+    502 tests, 0 failures; JaCoCo line 0.983, branch 0.989.
+  - Notes: the listener is no longer a `@Component`; `IntakeConfig` registers it with the parser, extractor,
+    `JdbcReceiptStore` (receipt `TransactionTemplate`, timeout `receipt-timeout`), `IntakeService`, the
+    `Thread::sleep` `Sleeper` and `RedeliveryPause`, all `@ConditionalOnProperty(resultsstore.publicevents.enabled
+    = true)`; the settings are bound and checked whatever that flag says. The rules live in the records'
+    compact constructors (`config/Rules.java`, one file beyond the list); the statement-timeout-below-socket
+    rule needs the datasource property, so `IntakeConfig`'s constructor checks it (0 or absent = no socket
+    timeout). Until T008 / T013 no `ShareStore` / `IntakeObserver` bean exists, so a context with the
+    subscription enabled starts only with stand-ins: `HearingResultedEventListenerIT` registers Postgres
+    and `@MockitoBean`s both, and asserts the receipt row (`RECEIVED`, as the store is a stand-in) and the
+    store call instead of a log line. The delivery count is read with `getObjectProperty`; anything but an
+    `Integer` counts as 1. The pause is `min(2^n s, cap)` with n clamped to 0..62; an interrupt restores the
+    flag and the listener still rethrows. Only `RetryableIntakeException` is paused; anything else escapes at
+    once. MDC: `messageId` first, then the receipt key, `shareId`, `hearingId`, `hearingDay`, `sharedTime`,
+    all removed in `finally`. The environment-variable names of contracts/configuration.md are given as
+    `${…:default}` placeholders in `application.yaml` (relaxed binding would also take them).
 
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
