@@ -37,6 +37,11 @@ spring:
 
 server:
   port: ${SERVER_PORT:8082}
+  error:
+    # The service's own /error page (api/BoundedErrorController) answers every Accept with the four-field
+    # JSON body; the white-label HTML page stays off as a second guard.
+    whitelabel:
+      enabled: false
 
 resultsstore:
   publicevents:

@@ -5,13 +5,20 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
+import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+/**
+ * The actuator endpoints, in a context with the store (research R1: every context needs a data source
+ * once the read beans are wired unconditionally), so the readiness group carries {@code db} as deployed.
+ */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
@@ -19,6 +26,11 @@ class ActuatorIntegrationTest {
 
     @Resource
     private MockMvc mockMvc;
+
+    @DynamicPropertySource
+    static void store(final DynamicPropertyRegistry registry) {
+        PostgresTestSupport.register(registry);
+    }
 
     @Test
     void actuator_info_should_have_build_fields() throws Exception {

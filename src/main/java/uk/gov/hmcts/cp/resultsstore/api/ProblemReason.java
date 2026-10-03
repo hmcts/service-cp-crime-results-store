@@ -41,6 +41,10 @@ public enum ProblemReason {
     INTERNAL_ERROR(500),
     STORE_UNAVAILABLE(503);
 
+    private static final int CLIENT_ERRORS_FROM = 400;
+
+    private static final int SERVER_ERRORS_FROM = 500;
+
     private final int httpStatus;
 
     ProblemReason(final int httpStatus) {
@@ -50,6 +54,28 @@ public enum ProblemReason {
     /** The HTTP status the reason is sent with. */
     public int status() {
         return httpStatus;
+    }
+
+    /**
+     * The reason {@code /error} gives a status it did not choose itself (research R13): {@code 401}
+     * {@code unauthenticated}, {@code 403} {@code forbidden}, any other {@code 4xx} {@code bad_request},
+     * anything else {@code internal_error}.
+     *
+     * @param status the status the error dispatch carries
+     * @return the bounded reason
+     */
+    public static ProblemReason forErrorStatus(final int status) {
+        final ProblemReason reason;
+        if (status == UNAUTHENTICATED.httpStatus) {
+            reason = UNAUTHENTICATED;
+        } else if (status == FORBIDDEN.httpStatus) {
+            reason = FORBIDDEN;
+        } else if (status >= CLIENT_ERRORS_FROM && status < SERVER_ERRORS_FROM) {
+            reason = BAD_REQUEST;
+        } else {
+            reason = INTERNAL_ERROR;
+        }
+        return reason;
     }
 
     /** The {@code reason} field: the constant's name in lower snake case. */

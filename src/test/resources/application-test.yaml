@@ -1,5 +1,7 @@
-# The `test` profile: no database, no broker, no usersgroups, so context-load tests run without
-# Docker. Suites that need one of those switch it back on for themselves.
+# The `test` profile: no broker, no usersgroups, authorisation and audit off. The datasource and Flyway
+# are excluded here, but every Spring context test runs on the Testcontainers database
+# (support/PostgresTestSupport.register clears the exclusion), so context tests need Docker. Suites that
+# need the broker, usersgroups, authorisation or audit switch them on for themselves.
 resultsstore:
   publicevents:
     # Literal, so an exported RESULTSSTORE_PUBLICEVENTS_ENABLED cannot start a listener here.
