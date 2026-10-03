@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.function.LongSupplier;
 import org.apache.hc.client5.http.classic.methods.HttpUriRequestBase;
 import org.apache.hc.client5.http.config.ConnectionConfig;
 import org.apache.hc.client5.http.config.RequestConfig;
@@ -48,6 +49,8 @@ public final class NoRedirectRequestFactory extends HttpComponentsClientHttpRequ
 
     private final Duration responseDeadline;
 
+    private final LongSupplier nanoClock;
+
     /** One daemon thread for every lookup's deadline; it only ever cancels a request. */
     private final ScheduledExecutorService deadlines = Executors.newSingleThreadScheduledExecutor(
             Thread.ofPlatform().name("progression-deadline").daemon().factory());
@@ -61,17 +64,31 @@ public final class NoRedirectRequestFactory extends HttpComponentsClientHttpRequ
      */
     public NoRedirectRequestFactory(final Duration connectTimeout, final Duration readTimeout,
             final Duration responseDeadline) {
+        this(connectTimeout, readTimeout, responseDeadline, System::nanoTime);
+    }
+
+    /**
+     * Creates the factory on a given clock.
+     *
+     * @param connectTimeout   the connect timeout
+     * @param readTimeout      the timeout of each socket read
+     * @param responseDeadline the longest a whole exchange may take, from creating the request
+     * @param nanoClock        a monotonic clock in nanoseconds, {@code System::nanoTime} in production
+     */
+    /* default */ NoRedirectRequestFactory(final Duration connectTimeout, final Duration readTimeout,
+            final Duration responseDeadline, final LongSupplier nanoClock) {
         this(ConnectionConfig.custom()
                 .setConnectTimeout(Timeout.of(connectTimeout))
                 .setSocketTimeout(Timeout.of(readTimeout))
-                .build(), readTimeout, responseDeadline);
+                .build(), readTimeout, responseDeadline, nanoClock);
     }
 
     private NoRedirectRequestFactory(final ConnectionConfig connectionConfig, final Duration readTimeout,
-            final Duration responseDeadline) {
+            final Duration responseDeadline, final LongSupplier nanoClock) {
         super(httpClient(connectionConfig, readTimeout));
         this.connectionConfig = connectionConfig;
         this.responseDeadline = responseDeadline;
+        this.nanoClock = nanoClock;
     }
 
     /**
@@ -109,8 +126,11 @@ public final class NoRedirectRequestFactory extends HttpComponentsClientHttpRequ
     protected ClassicHttpRequest createHttpUriRequest(final HttpMethod httpMethod, final URI uri) {
         // Spring builds an HttpUriRequestBase for every method it knows, and refuses any other.
         final HttpUriRequestBase request = (HttpUriRequestBase) super.createHttpUriRequest(httpMethod, uri);
-        CREATED.set(new ProgressionExchange(request));
-        deadlines.schedule(request::cancel, responseDeadline.toNanos(), TimeUnit.NANOSECONDS);
+        // One instant for the whole lookup: the cancellation below and the client's body guard both use it.
+        final long deadline = nanoClock.getAsLong() + responseDeadline.toNanos();
+        final ProgressionExchange exchange = new ProgressionExchange(deadline, request);
+        CREATED.set(exchange);
+        deadlines.schedule(exchange::expire, deadline - nanoClock.getAsLong(), TimeUnit.NANOSECONDS);
         return request;
     }
 

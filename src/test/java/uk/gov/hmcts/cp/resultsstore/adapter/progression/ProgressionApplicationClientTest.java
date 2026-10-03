@@ -14,12 +14,14 @@ import com.github.tomakehurst.wiremock.verification.LoggedRequest;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.net.ServerSocket;
+import java.net.SocketException;
 import java.time.Duration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import org.apache.hc.client5.http.classic.methods.HttpGet;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -27,6 +29,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -83,7 +87,7 @@ class ProgressionApplicationClientTest {
         final RestClient rest = RestClient.builder().baseUrl(baseUrl)
                 .requestFactory(new NoRedirectRequestFactory(CONNECT_TIMEOUT, READ_TIMEOUT, responseDeadline))
                 .build();
-        return new ProgressionApplicationClient(rest, SYSTEM_USER_ID, responseDeadline, mapper);
+        return new ProgressionApplicationClient(rest, SYSTEM_USER_ID, mapper);
     }
 
     private static UUID answered(final ResponseDefinitionBuilder response) {
@@ -330,6 +334,55 @@ class ProgressionApplicationClientTest {
             // The deadline guard on the body or the factory's cancellation, whichever comes first.
             assertThatThrownBy(() -> client.find(applicationId))
                     .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT));
+        }
+
+        @Test
+        void answer_after_a_pause_inside_the_deadline_should_be_found() {
+            final UUID applicationId = answered(okJson(FINALISED.formatted(UUID.randomUUID()))
+                    .withFixedDelay((int) READ_TIMEOUT.dividedBy(2).toMillis()));
+
+            assertThat(client.find(applicationId)).isInstanceOf(ApplicationAnswer.Found.class);
+        }
+
+        /** The factory's deadline passed but did not cancel the request: the failure is what it says. */
+        @Test
+        void failure_after_the_deadline_not_caused_by_it_should_not_be_a_timeout() {
+            final ProgressionApplicationClient failing = clientFailingWith(
+                    new ProgressionExchange(System.nanoTime() - 1, new HttpGet(PROGRESSION.baseUrl())), false);
+
+            assertThatThrownBy(() -> failing.find(UUID.randomUUID()))
+                    .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_UNREACHABLE));
+        }
+
+        /** The scheduler cancelled the request: a timeout, however the cancelled read fails. */
+        @Test
+        void failure_after_the_scheduler_cancelled_the_request_should_be_a_timeout() {
+            final ProgressionApplicationClient failing = clientFailingWith(new ProgressionExchange(
+                    System.nanoTime() + Duration.ofHours(1).toNanos(), new HttpGet(PROGRESSION.baseUrl())), true);
+
+            assertThatThrownBy(() -> failing.find(UUID.randomUUID()))
+                    .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT));
+        }
+
+        /** A transport whose request fails with a plain socket error, after the scheduler expired it or not. */
+        private ProgressionApplicationClient clientFailingWith(final ProgressionExchange exchange,
+                final boolean expireFirst) {
+            final RestClient rest = RestClient.builder().baseUrl(PROGRESSION.baseUrl())
+                    .requestFactory((uri, method) -> {
+                        final MockClientHttpRequest request = new MockClientHttpRequest(method, uri) {
+                            @Override
+                            protected ClientHttpResponse executeInternal() throws IOException {
+                                if (expireFirst) {
+                                    exchange.expire();
+                                }
+                                throw new SocketException("Socket closed");
+                            }
+                        };
+                        request.getAttributes().put(ProgressionExchange.ATTRIBUTE, exchange);
+                        return request;
+                    })
+                    .build();
+            return new ProgressionApplicationClient(rest, SYSTEM_USER_ID, mapper);
         }
 
         /** Status line and headers one byte every 60 ms: each read is quick, the whole head takes 3 s or more. */

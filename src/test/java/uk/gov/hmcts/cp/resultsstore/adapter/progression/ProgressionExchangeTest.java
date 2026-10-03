@@ -15,6 +15,8 @@ class ProgressionExchangeTest {
 
     private static final URI TARGET = URI.create("http://progression.invalid/applications/1");
 
+    private static final long DEADLINE = 1_000L;
+
     @Test
     void request_built_elsewhere_should_have_no_exchange() {
         final MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, TARGET);
@@ -24,7 +26,7 @@ class ProgressionExchangeTest {
 
     @Test
     void exchange_should_be_found_in_the_request_attributes() {
-        final ProgressionExchange exchange = new ProgressionExchange(new HttpGet(TARGET));
+        final ProgressionExchange exchange = new ProgressionExchange(DEADLINE, new HttpGet(TARGET));
         final MockClientHttpRequest request = new MockClientHttpRequest(HttpMethod.GET, TARGET);
         request.getAttributes().put(ProgressionExchange.ATTRIBUTE, exchange);
 
@@ -32,11 +34,25 @@ class ProgressionExchangeTest {
     }
 
     @Test
-    void abort_should_cancel_the_transport_request() {
+    void abort_should_cancel_the_transport_request_without_counting_as_the_deadline() {
         final HttpGet request = new HttpGet(TARGET);
+        final ProgressionExchange exchange = new ProgressionExchange(DEADLINE, request);
 
-        new ProgressionExchange(request).abort();
+        exchange.abort();
 
         assertThat(request.isCancelled()).isTrue();
+        assertThat(exchange.isExpired()).isFalse();
+    }
+
+    @Test
+    void expiry_should_cancel_the_transport_request_and_be_recorded() {
+        final HttpGet request = new HttpGet(TARGET);
+        final ProgressionExchange exchange = new ProgressionExchange(DEADLINE, request);
+
+        exchange.expire();
+
+        assertThat(request.isCancelled()).isTrue();
+        assertThat(exchange.isExpired()).isTrue();
+        assertThat(exchange.getDeadlineNanos()).isEqualTo(DEADLINE);
     }
 }

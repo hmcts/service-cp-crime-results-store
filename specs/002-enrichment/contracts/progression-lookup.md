@@ -31,7 +31,8 @@ sharing user. Progression's access rule for the action admits "System Users"
 | Client | Spring `RestClient` over `HttpComponentsClientHttpRequestFactory` (Apache HttpClient 5), subclassed as `NoRedirectRequestFactory`; no connection reuse |
 | Connect timeout | `resultsstore.progression.connect-timeout`, default 5 s |
 | Read timeout | `resultsstore.progression.read-timeout`, default 10 s, per socket read |
-| Response deadline | the same read timeout, measured from creating the request to the end of the body: status line, headers and body. The factory cancels the request (closing its connection) when it passes, and the body is also read through `DeadlineInputStream`; a slow drip that keeps each read short still ends at the deadline as `progression_timeout` |
+| Response deadline | the same read timeout, one absolute instant fixed when the factory creates the request and covering status line, headers and body. The factory cancels the request (closing its connection) when it passes and records that it did; the body is also read through `DeadlineInputStream` against the same instant. A slow drip that keeps each read short still ends at the deadline as `progression_timeout`; an I/O failure is a timeout only when it is a socket timeout or the deadline's cancellation caused it |
+| Non-200 body | never read or drained: the client aborts the exchange on the status, so a slow body cannot delay the answer or change its cause |
 | Redirects | not followed (`disableRedirectHandling()`, `redirectsEnabled=false`); a 3xx is an answer, and `CJSCPPUID` is never sent to another location |
 | Retries | none in the store and none in the transport (`disableAutomaticRetries()`; `HttpURLConnection` resends a `GET` after a failure before the status line, which is why it is not used); failures go back to the broker (Principle VI) |
 | Calls per share | one per distinct application id (by UUID), one at a time, in array order |

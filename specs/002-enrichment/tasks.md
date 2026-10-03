@@ -256,6 +256,34 @@ contracts/progression-lookup.md against an in-process WireMock.
     GREEN: `ProgressionApplicationClientTest` 57 (statuses 23; the new row ends in about 0.1 s with
     `progression_unavailable` and one WARN line naming no timeout), `ProgressionExchangeTest` 3,
     `NoRedirectRequestFactoryTest` 1, `ProgressionConfigTest` 9, 0 failures; `pmdMain pmdTest` clean.
+  - Ruling 2 (orchestrator, phase A close-out: one absolute deadline): the client set its own deadline
+    at the start of `find`, a moment before the factory armed its cancellation, and called any I/O
+    failure past that instant a timeout. Now the factory fixes one instant when it creates the request
+    and puts it in the request's `ProgressionExchange`; the scheduled cancellation (`expire()`) and the
+    body guard (`DeadlineInputStream`) both use it, the exchange records that the scheduler cancelled
+    it, and the client calls a failure `progression_timeout` only for a socket timeout (the guard's
+    included) or an exchange the scheduler expired. The client no longer takes a deadline of its own
+    (`ProgressionConfig` updated); contracts/progression-lookup.md "Transport" updated, with a row for
+    the non-200 body of ruling 1.
+    RED (seam: the exchange holding a deadline, `isExpired()` always false and `expire()` only
+    cancelling; the factory fixing the deadline on `System.nanoTime()` rather than its clock; the client
+    calling any failure past the exchange's deadline a timeout):
+    `NoRedirectRequestFactoryTest` → `request_should_carry_one_absolute_deadline_fixed_when_it_is_created() FAILED`
+    `expected: 16000000000L but was: 1066859564837548L`, and
+    `deadline_should_cancel_the_request_and_record_that_it_did() FAILED` `ConditionTimeoutException: … was not
+    fulfilled within 5 seconds`; `ProgressionExchangeTest` →
+    `expiry_should_cancel_the_transport_request_and_be_recorded() FAILED` `Expecting value to be true but was
+    false`; `ProgressionApplicationClientTest` →
+    `not answered > failure_after_the_deadline_not_caused_by_it_should_not_be_a_timeout() FAILED`
+    `expected: PROGRESSION_UNREACHABLE but was: PROGRESSION_TIMEOUT`, and
+    `failure_after_the_scheduler_cancelled_the_request_should_be_a_timeout() FAILED`
+    `expected: PROGRESSION_TIMEOUT but was: PROGRESSION_UNREACHABLE` (both over a stub transport whose
+    request fails with a plain `SocketException`). `answer_after_a_pause_inside_the_deadline_should_be_found`
+    (WireMock fixed delay of half the 1 s deadline) and `abort_should_cancel_the_transport_request_without_counting_as_the_deadline`
+    were green at the seam; they pin that a late-but-in-time answer and the client's own abort are not timeouts.
+    GREEN: `ProgressionApplicationClientTest` 60 (not answered 10), `NoRedirectRequestFactoryTest` 3,
+    `ProgressionExchangeTest` 4, `DeadlineInputStreamTest` 5, `ProgressionConfigTest` 9, `IntakeConfigTest` 8,
+    0 failures; `pmdMain pmdTest` clean.
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.

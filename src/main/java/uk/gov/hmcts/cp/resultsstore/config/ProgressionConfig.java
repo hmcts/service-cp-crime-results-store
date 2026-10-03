@@ -59,8 +59,7 @@ public class ProgressionConfig {
                 .baseUrl(progression.baseUrl())
                 .requestFactory(requestFactory)
                 .build();
-        return new ProgressionApplicationClient(restClient, progression.systemUserId(),
-                requestFactory.getResponseDeadline(), mapper);
+        return new ProgressionApplicationClient(restClient, progression.systemUserId(), mapper);
     }
 
     private static void required(final String name, final String value) {

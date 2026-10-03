@@ -3,7 +3,7 @@ package uk.gov.hmcts.cp.resultsstore.adapter.progression;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.SocketTimeoutException;
-import java.time.Duration;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Objects;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -60,8 +60,6 @@ public class ProgressionApplicationClient implements ProgressionApplications {
 
     private final String systemUserId;
 
-    private final Duration responseDeadline;
-
     private final ObjectReader reader;
 
     /**
@@ -69,14 +67,12 @@ public class ProgressionApplicationClient implements ProgressionApplications {
      *
      * @param restClient       a client with progression's base URL, over {@link NoRedirectRequestFactory}
      * @param systemUserId     the store's own system user, sent as {@code CJSCPPUID}
-     * @param responseDeadline the longest a whole response may take, from sending the request
      * @param mapper           the application's mapper; the reader is derived from it, never changing it
      */
     public ProgressionApplicationClient(final RestClient restClient, final String systemUserId,
-            final Duration responseDeadline, final ObjectMapper mapper) {
+            final ObjectMapper mapper) {
         this.restClient = restClient;
         this.systemUserId = systemUserId;
-        this.responseDeadline = responseDeadline;
         this.reader = mapper.reader()
                 .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                 .with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
@@ -100,28 +96,29 @@ public class ProgressionApplicationClient implements ProgressionApplications {
     }
 
     private ApplicationAnswer exchange(final UUID applicationId) {
-        final long deadline = System.nanoTime() + responseDeadline.toNanos();
+        // The factory makes the exchange with the request; it carries the one deadline of the lookup.
+        final AtomicReference<ProgressionExchange> exchange = new AtomicReference<>();
         final ApplicationAnswer answer;
         try {
             answer = restClient.get()
                     .uri(PATH, applicationId)
                     .header(HttpHeaders.ACCEPT, MEDIA_TYPE)
                     .header(USER_HEADER, systemUserId)
-                    .exchangeForRequiredValue((request, response) ->
-                            classify(ProgressionExchange.exchangeOf(request), response, deadline));
+                    .httpRequest(request -> exchange.set(ProgressionExchange.exchangeOf(request)))
+                    .exchangeForRequiredValue((request, response) -> classify(exchange.get(), response));
         } catch (ResourceAccessException e) {
             // An I/O failure before the status line and headers were read: Spring wraps it, with the URL
-            // in the message. Past the deadline it is the request factory's cancellation, or a timeout.
+            // in the message. A timeout when the socket timed out or the deadline cancelled the request.
             final Throwable io = Objects.requireNonNullElse(e.getCause(), e);
-            final IntakeFailureCause cause = timedOut(io, deadline)
+            final IntakeFailureCause cause = timedOut(io, exchange.get())
                     ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_UNREACHABLE;
             throw failure(cause, io.getClass().getSimpleName());
         }
         return answer;
     }
 
-    private ApplicationAnswer classify(final ProgressionExchange exchange,
-            final ClientHttpResponse response, final long deadline) throws IOException {
+    private ApplicationAnswer classify(final ProgressionExchange exchange, final ClientHttpResponse response)
+            throws IOException {
         final HttpStatusCode status = response.getStatusCode();
         if (!status.isSameCodeAs(HttpStatus.OK)) {
             // The status decides it: the body is never read, and aborting stops closing the response
@@ -129,7 +126,7 @@ public class ProgressionApplicationClient implements ProgressionApplications {
             exchange.abort();
             throw failure(causeOf(status), "status " + status.value());
         }
-        return shapeOf(parse(body(response, deadline)));
+        return shapeOf(parse(body(response, exchange)));
     }
 
     private static IntakeFailureCause causeOf(final HttpStatusCode status) {
@@ -145,22 +142,26 @@ public class ProgressionApplicationClient implements ProgressionApplications {
         return cause;
     }
 
-    private static byte[] body(final ClientHttpResponse response, final long deadline) {
+    private static byte[] body(final ClientHttpResponse response, final ProgressionExchange exchange) {
         final byte[] body;
-        try (InputStream stream = new DeadlineInputStream(response.getBody(), deadline, System::nanoTime)) {
+        try (InputStream stream =
+                new DeadlineInputStream(response.getBody(), exchange.getDeadlineNanos(), System::nanoTime)) {
             body = stream.readAllBytes();
         } catch (IOException e) {
             // The status line was read, so short of a timeout or the deadline the body was cut short.
-            final IntakeFailureCause cause = timedOut(e, deadline)
+            final IntakeFailureCause cause = timedOut(e, exchange)
                     ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_MALFORMED;
             throw failure(cause, e.getClass().getSimpleName());
         }
         return body;
     }
 
-    /** A socket timeout, or any I/O failure once the deadline has passed (the factory cancelled it). */
-    private static boolean timedOut(final Throwable io, final long deadline) {
-        return io instanceof SocketTimeoutException || System.nanoTime() - deadline >= 0;
+    /**
+     * A socket timeout (the body guard's included), or any I/O failure of an exchange the deadline
+     * cancelled. Past the deadline but not cancelled by it, a failure is what it says it is.
+     */
+    private static boolean timedOut(final Throwable io, final ProgressionExchange exchange) {
+        return io instanceof SocketTimeoutException || exchange != null && exchange.isExpired();
     }
 
     private JsonNode parse(final byte[] body) {
