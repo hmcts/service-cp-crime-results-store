@@ -72,7 +72,7 @@ class MicrometerIntakeObserverTest {
             "stage", Set.of("receipt", "store", "intake", "sweep"),
             "cause", Set.of("lock_timeout", "statement_timeout", "database", "other"),
             "kind", Set.of("missing", "wrong_type", "invalid_uuid", "unstorable_text", "unexpected"),
-            "outcome", Set.of("fixed", "failed_again", "skipped", "error"));
+            "outcome", Set.of("fixed", "failed_again", "skipped", "error", "cancelled"));
 
     private static final Pattern UUID_SHAPE =
             Pattern.compile("[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}");
@@ -110,7 +110,8 @@ class MicrometerIntakeObserverTest {
                 .contains(Map.of("stage", "intake", "kind", "invalid_uuid"), Map.of("stage", "sweep", "kind",
                         "unexpected"));
         assertThat(registered.get(SWEEP_ROWS)).containsExactlyInAnyOrder(Map.of("outcome", "fixed"),
-                Map.of("outcome", "failed_again"), Map.of("outcome", "skipped"), Map.of("outcome", "error"));
+                Map.of("outcome", "failed_again"), Map.of("outcome", "skipped"), Map.of("outcome", "error"),
+                Map.of("outcome", "cancelled"));
         assertThat(registry.find(LAG).timers()).hasSize(2);
         assertThat(registry.find(STORED).counters()).hasSize(2);
     }

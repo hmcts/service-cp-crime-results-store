@@ -66,10 +66,10 @@ public class ExtractionSweep {
                 .map(this::sweepRow)
                 .toList();
         if (!outcomes.isEmpty()) {
-            LOG.info("Extraction sweep round finished; rows={} fixed={} failedAgain={} skipped={} error={}",
-                    outcomes.size(), count(outcomes, SweepRowOutcome.FIXED),
+            LOG.info("Extraction sweep round finished; rows={} fixed={} failedAgain={} skipped={} error={} "
+                    + "cancelled={}", outcomes.size(), count(outcomes, SweepRowOutcome.FIXED),
                     count(outcomes, SweepRowOutcome.FAILED_AGAIN), count(outcomes, SweepRowOutcome.SKIPPED),
-                    count(outcomes, SweepRowOutcome.ERROR));
+                    count(outcomes, SweepRowOutcome.ERROR), count(outcomes, SweepRowOutcome.CANCELLED));
         }
         return outcomes;
     }
@@ -79,8 +79,9 @@ public class ExtractionSweep {
      * quote the row) and recorded as a failed attempt, {@code UNEXPECTED:<class>}, in a second
      * transaction under the same locks and re-check: the attempt count then grows, so a row that fails
      * the same way every round stops being selected at the retry limit (FR-035) instead of holding the
-     * head of every batch. Only when that write fails too, or the thread is being stopped, is the row
-     * counted {@code error}, with nothing written, and the round goes on (FR-037).
+     * head of every batch. Only when that write fails too is the row
+     * counted {@code error}, with nothing written, and the round goes on (FR-037); a failure met while
+     * the thread is interrupted (the schedule stopping) is counted {@code cancelled} instead.
      */
     // Catch-to-record: the failure becomes an explicit outcome with a bounded tag and is logged by class.
     // Errors are not caught.
@@ -98,7 +99,7 @@ public class ExtractionSweep {
             projection = KeyDetailsExtractor.unexpected(failure);
             // A failure met while stopping is the stop's, not the row's: no attempt is spent on it.
             outcome = Thread.currentThread().isInterrupted()
-                    ? SweepRowOutcome.ERROR
+                    ? SweepRowOutcome.CANCELLED
                     : recordFailedAttempt(candidate, projection);
         }
         observer.sweepRow(outcome);

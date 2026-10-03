@@ -18,7 +18,12 @@ public enum SweepRowOutcome {
      * The row's work threw, and so did recording it as a failed attempt; nothing was written for it and
      * the round went on.
      */
-    ERROR;
+    ERROR,
+    /**
+     * The row's work was cut short because the sweep is stopping (its thread interrupted, or a
+     * transaction not opened once stop was asked); nothing was written for it and no attempt was spent.
+     */
+    CANCELLED;
 
     /** The {@code outcome} tag. */
     public String tag() {

@@ -14,7 +14,8 @@ class SweepRowOutcomeTest {
         "FIXED, fixed",
         "FAILED_AGAIN, failed_again",
         "SKIPPED, skipped",
-        "ERROR, error"
+        "ERROR, error",
+        "CANCELLED, cancelled"
     })
     void outcome_should_have_its_lower_case_tag(final SweepRowOutcome outcome, final String tag) {
         assertThat(outcome.tag()).isEqualTo(tag);

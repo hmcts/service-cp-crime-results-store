@@ -268,7 +268,7 @@ class ExtractionSweepTest {
     }
 
     @Test
-    void row_that_fails_while_its_thread_is_interrupted_should_be_an_error_with_no_failed_attempt() {
+    void row_that_fails_while_its_thread_is_interrupted_should_be_cancelled_with_no_failed_attempt() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
         when(store.payloadText(row.shareId())).thenReturn(readable(row));
@@ -280,8 +280,10 @@ class ExtractionSweepTest {
         try {
             final List<SweepRowOutcome> outcomes = sweep().runRound();
 
-            assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR);
+            assertThat(outcomes).containsExactly(SweepRowOutcome.CANCELLED);
             verify(store, times(1)).recordReextraction(any(), any(), anyInt());
+            verify(observer).sweepRow(SweepRowOutcome.CANCELLED);
+            verify(observer, never()).sweepRow(SweepRowOutcome.ERROR);
             verify(observer, never()).extractionFailed(any(), any());
         } finally {
             assertThat(Thread.interrupted()).isTrue();
@@ -300,7 +302,7 @@ class ExtractionSweepTest {
 
             assertThat(log.messages()).singleElement().satisfies(line -> assertThat(line)
                     .contains("rows=1").contains("fixed=1").contains("failedAgain=0").contains("skipped=0")
-                    .contains("error=0").doesNotContain(MARKER));
+                    .contains("error=0").contains("cancelled=0").doesNotContain(MARKER));
         }
     }
 }
