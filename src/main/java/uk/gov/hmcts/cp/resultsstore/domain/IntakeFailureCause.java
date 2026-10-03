@@ -12,7 +12,19 @@ public enum IntakeFailureCause {
     /** Any other database failure. */
     DATABASE,
     /** Not a database failure. */
-    OTHER;
+    OTHER,
+    /** Progression answered 404, a 3xx, a 2xx other than 200, or any status not listed elsewhere. */
+    PROGRESSION_REJECTED,
+    /** Progression answered 401 or 403: the system user is missing, unknown or not admitted. */
+    PROGRESSION_REFUSED,
+    /** Progression answered 408, 429 or a 5xx. */
+    PROGRESSION_UNAVAILABLE,
+    /** Progression could not be reached: refused, unknown host, or reset before the status line. */
+    PROGRESSION_UNREACHABLE,
+    /** A connect or read timeout, or the whole-response deadline passed. */
+    PROGRESSION_TIMEOUT,
+    /** Progression's 200 body broke the contract: not JSON, cut short, or of the wrong shape. */
+    PROGRESSION_MALFORMED;
 
     /** PostgreSQL's {@code lock_not_available}, raised when {@code lock_timeout} passes. */
     private static final String LOCK_NOT_AVAILABLE = "55P03";

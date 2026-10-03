@@ -8,7 +8,9 @@ public enum IntakeStage {
     /** The receipt's own short transaction. */
     RECEIPT,
     /** The store transaction. */
-    STORE;
+    STORE,
+    /** The enrichment step between the two transactions: the progression lookups (spec 002). */
+    ENRICH;
 
     /** The {@code stage} tag. */
     public String tag() {

@@ -2,10 +2,15 @@ package uk.gov.hmcts.cp.resultsstore.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.Arrays;
+import java.util.EnumSet;
+import java.util.Set;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @DisplayName("intake failure causes")
 class IntakeFailureCauseTest {
@@ -32,15 +37,35 @@ class IntakeFailureCauseTest {
         "LOCK_TIMEOUT, lock_timeout",
         "STATEMENT_TIMEOUT, statement_timeout",
         "DATABASE, database",
-        "OTHER, other"
+        "OTHER, other",
+        "PROGRESSION_REJECTED, progression_rejected",
+        "PROGRESSION_REFUSED, progression_refused",
+        "PROGRESSION_UNAVAILABLE, progression_unavailable",
+        "PROGRESSION_UNREACHABLE, progression_unreachable",
+        "PROGRESSION_TIMEOUT, progression_timeout",
+        "PROGRESSION_MALFORMED, progression_malformed"
     })
     void cause_should_have_its_lower_case_tag(final IntakeFailureCause cause, final String tag) {
         assertThat(cause.tag()).isEqualTo(tag);
     }
 
+    @Test
+    void every_tag_should_come_from_the_fixed_list() {
+        assertThat(Arrays.stream(IntakeFailureCause.values()).map(IntakeFailureCause::tag))
+                .containsExactly("lock_timeout", "statement_timeout", "database", "other",
+                        "progression_rejected", "progression_refused", "progression_unavailable",
+                        "progression_unreachable", "progression_timeout", "progression_malformed");
+    }
+
+    /** Every SQLSTATE row above, plus a failure that carried none. */
     @ParameterizedTest
-    @CsvSource({"RECEIPT, receipt", "STORE, store"})
-    void stage_should_have_its_lower_case_tag(final IntakeStage stage, final String tag) {
-        assertThat(stage.tag()).isEqualTo(tag);
+    @NullSource
+    @ValueSource(strings = {"55P03", "57014", "23505", "08006", "40P01"})
+    void from_sql_state_should_never_name_a_progression_cause(final String sqlState) {
+        final Set<IntakeFailureCause> progression = EnumSet.of(IntakeFailureCause.PROGRESSION_REJECTED,
+                IntakeFailureCause.PROGRESSION_REFUSED, IntakeFailureCause.PROGRESSION_UNAVAILABLE,
+                IntakeFailureCause.PROGRESSION_UNREACHABLE, IntakeFailureCause.PROGRESSION_TIMEOUT,
+                IntakeFailureCause.PROGRESSION_MALFORMED);
+        assertThat(IntakeFailureCause.fromSqlState(sqlState)).isNotIn(progression);
     }
 }

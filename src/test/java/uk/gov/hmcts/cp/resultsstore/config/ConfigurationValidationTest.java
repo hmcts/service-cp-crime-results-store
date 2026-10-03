@@ -20,6 +20,11 @@ class ConfigurationValidationTest {
 
     private static final String STATEMENT_BELOW_SOCKET = "resultsstore.intake.store.statement-timeout must be below";
 
+    private static final String BASE_URL = "resultsstore.progression.base-url=http://progression.example";
+
+    private static final String SYSTEM_USER_ID =
+            "resultsstore.progression.system-user-id=6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f";
+
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
             .withUserConfiguration(IntakeConfig.class)
@@ -145,5 +150,68 @@ class ConfigurationValidationTest {
                 .run(context -> assertThat(context).getFailure().rootCause()
                         .isInstanceOf(IllegalStateException.class)
                         .hasMessageStartingWith(STATEMENT_BELOW_SOCKET));
+    }
+
+    @Test
+    void enrichment_defaults_should_be_those_of_the_contract() {
+        runner.withPropertyValues(BASE_URL, SYSTEM_USER_ID).run(context -> {
+            assertThat(context).hasNotFailed()
+                    .hasSingleBean(EnrichmentProperties.class)
+                    .hasSingleBean(ProgressionProperties.class);
+            assertThat(context.getBean(EnrichmentProperties.class).enabled()).isTrue();
+            final ProgressionProperties progression = context.getBean(ProgressionProperties.class);
+            assertThat(progression.baseUrl()).isEqualTo("http://progression.example");
+            assertThat(progression.systemUserId()).isEqualTo("6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f");
+            assertThat(progression.connectTimeout()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(progression.readTimeout()).isEqualTo(Duration.ofSeconds(10));
+        });
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+        resultsstore.progression.base-url=localhost:8080 | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=ftp://x | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=http://x/path | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=http://x?q=1 | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=http://x#f | resultsstore.progression.base-url must be
+        resultsstore.progression.connect-timeout=0s | resultsstore.progression.connect-timeout must be from
+        resultsstore.progression.connect-timeout=31s | resultsstore.progression.connect-timeout must be from
+        resultsstore.progression.read-timeout=0s | resultsstore.progression.read-timeout must be from
+        resultsstore.progression.read-timeout=61s | resultsstore.progression.read-timeout must be from
+        resultsstore.progression.system-user-id=not-a-uuid | resultsstore.progression.system-user-id must be
+        """)
+    void bad_progression_value_should_stop_the_service_starting_without_naming_the_value(final String setting,
+            final String refusal) {
+        final String value = setting.substring(setting.indexOf('=') + 1);
+        runner.withPropertyValues(BASE_URL, SYSTEM_USER_ID).withPropertyValues(setting)
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageStartingWith(refusal)
+                        .hasMessageNotContaining(value));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "resultsstore.progression.base-url=http://x",
+        "resultsstore.progression.base-url=http://x/",
+        "resultsstore.progression.base-url=https://x:8443",
+        "resultsstore.progression.connect-timeout=1s",
+        "resultsstore.progression.connect-timeout=30s",
+        "resultsstore.progression.read-timeout=1s",
+        "resultsstore.progression.read-timeout=60s"
+    })
+    void progression_value_at_a_boundary_should_be_accepted(final String setting) {
+        runner.withPropertyValues(BASE_URL, SYSTEM_USER_ID).withPropertyValues(setting)
+                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(ProgressionProperties.class));
+    }
+
+    @Test
+    void blank_base_url_and_user_id_should_be_accepted_with_enrichment_off() {
+        runner.withPropertyValues("resultsstore.enrichment.enabled=false", "resultsstore.progression.base-url=",
+                        "resultsstore.progression.system-user-id=")
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(EnrichmentProperties.class);
+                    assertThat(context.getBean(EnrichmentProperties.class).enabled()).isFalse();
+                });
     }
 }

@@ -31,7 +31,8 @@ import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
  * with no stand-in.
  */
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class})
+@EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class, EnrichmentProperties.class,
+    ProgressionProperties.class})
 public class IntakeConfig {
 
     /** The PostgreSQL driver's socket timeout, in seconds; 0 or absent means none. */

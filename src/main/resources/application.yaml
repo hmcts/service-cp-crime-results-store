@@ -74,6 +74,18 @@ resultsstore:
     batch-size: ${RESULTSSTORE_SWEEP_BATCHSIZE:100}
     # Counts the intake's attempt.
     max-attempts: ${RESULTSSTORE_SWEEP_MAXATTEMPTS:3}
+  # Enrichment from progression (specs/002-enrichment/contracts/configuration.md).
+  enrichment:
+    enabled: ${RESULTSSTORE_ENRICHMENT_ENABLED:true}
+  progression:
+    # The stack's internal mesh host, set per environment. No default: a missing value must stop the
+    # service, not send the call to this service's own port.
+    base-url: ${CP_BASE_URL:}
+    # The store's own system user ("System Users"), from Key Vault. Never defaulted, never logged.
+    system-user-id: ${RESULTS_STORE_SYSTEM_USER_ID:}
+    connect-timeout: ${RESULTSSTORE_PROGRESSION_CONNECTTIMEOUT:5s}
+    # Per socket read, and also the deadline for the whole response.
+    read-timeout: ${RESULTSSTORE_PROGRESSION_READTIMEOUT:10s}
 
 # cp-auth-rules-filter. On by default; the `test` profile turns it off where a suite does not
 # exercise it. The library reads the literal string `true`.

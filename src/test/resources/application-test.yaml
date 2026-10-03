@@ -11,6 +11,10 @@ resultsstore:
   sweep:
     # Sweep tests call the sweep directly.
     enabled: false
+  enrichment:
+    # Literal, so an exported RESULTSSTORE_ENRICHMENT_ENABLED cannot reach progression here. Suites
+    # that cover enrichment switch it on with a WireMock base URL and a synthetic system user id.
+    enabled: false
 
 authz:
   http:
