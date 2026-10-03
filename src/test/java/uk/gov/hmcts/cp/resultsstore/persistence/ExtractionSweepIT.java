@@ -2,7 +2,10 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -50,7 +53,9 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
  * The extraction sweep on PostgreSQL (FR-033 to FR-037, SC-006, US5): it selects only {@code FAILED}
  * rows due a retry, re-reads the stored text, fills the key details and defendant rows under the
  * hearing-day lock and the share row's lock, records a renewed failure, stops retrying an unexpected
- * failure at the limit, and two sweeps at once work each row once.
+ * failure at the limit, and two sweeps at once work each row once. A write that fails is operational:
+ * the row's projection is left alone, only {@code sweep_tried_at} is stamped, and the row rotates
+ * behind the rows not yet tried.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -199,6 +204,7 @@ class ExtractionSweepIT {
                 .containsEntry("projection_status", "FAILED")
                 .containsEntry("projection_reason", UNEXPECTED_REASON)
                 .containsEntry("projection_attempts", MAX_ATTEMPTS);
+        assertThat(share(shareId).get("sweep_tried_at")).isNotNull();
     }
 
     @Test
@@ -304,41 +310,92 @@ class ExtractionSweepIT {
     }
 
     @Test
-    void write_that_fails_after_the_key_details_should_leave_nothing_and_record_a_bounded_unexpected_attempt() {
-        final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+    void write_that_fails_should_leave_the_projection_stamp_the_try_count_an_error_and_rotate_the_row() {
+        final UUID older = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
                 ExtractionFailureKind.INVALID_UUID));
+        final UUID newer = stored("2026-10-02T11:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final Map<String, Object> before = share(older);
         // Test only: every defendant insert fails, after the key details were set in the same transaction.
         jdbc.sql("ALTER TABLE share_defendant ADD CONSTRAINT " + REFUSE_DEFENDANTS
                 + " CHECK (case_id IS NULL) NOT VALID").update();
         try {
-            final ExtractionSweep sweep = sweep(new KeyDetailsExtractor(), RAISED_VERSION);
+            final IntakeObserver observer = mock(IntakeObserver.class);
+            final ExtractionSweep oneAtATime = new ExtractionSweep(store,
+                    new ShareIdentityParser(JsonMapper.builder().build()), new KeyDetailsExtractor(), observer,
+                    new ExtractionSweep.Settings(RAISED_VERSION, MAX_ATTEMPTS, 1));
 
-            final List<SweepRowOutcome> first = sweep.runRound();
+            final List<SweepRowOutcome> first = oneAtATime.runRound();
 
-            assertThat(first).containsExactly(SweepRowOutcome.FAILED_AGAIN);
-            assertThat(share(shareId))
+            assertThat(first).containsExactly(SweepRowOutcome.ERROR);
+            verify(observer).sweepRow(SweepRowOutcome.ERROR);
+            verify(observer, never()).extractionFailed(any(), any());
+            final Map<String, Object> after = share(older);
+            assertThat(after)
                     .containsEntry("projection_status", "FAILED")
-                    .containsEntry("projection_reason", "UNEXPECTED:DataIntegrityViolationException")
-                    .containsEntry("projection_version", RAISED_VERSION)
-                    .containsEntry("projection_attempts", 2)
+                    .containsEntry("projection_reason", COURT_CENTRE_REASON)
+                    .containsEntry("projection_version", KeyDetailsExtractor.EXTRACTOR_VERSION)
+                    .containsEntry("projection_attempts", 1)
+                    .containsEntry("projected_at", before.get("projected_at"))
                     .containsEntry("court_centre_id", null)
                     .containsEntry("lja_code", null)
                     .containsEntry("any_subject_is_youth", null)
                     .containsEntry("day_youth_seen", null);
-            assertThat(defendants(shareId)).isEmpty();
+            assertThat(after.get("sweep_tried_at")).isNotNull();
+            assertThat(defendants(older)).isEmpty();
             assertThat(day()).containsEntry("youth_seen", null);
+            assertThat(share(newer).get("sweep_tried_at")).isNull();
 
-            assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FAILED_AGAIN);
-            assertThat(sweep.runRound()).isEmpty();
-            assertThat(share(shareId)).containsEntry("projection_attempts", MAX_ATTEMPTS);
+            // The row never tried goes first; the one that failed rotates behind it.
+            assertThat(store.sweepCandidates(RAISED_VERSION, MAX_ATTEMPTS, 1))
+                    .extracting(SweepCandidate::shareId).containsExactly(newer);
+            assertThat(oneAtATime.runRound()).containsExactly(SweepRowOutcome.ERROR);
+            assertThat(share(newer).get("sweep_tried_at")).isNotNull();
+            assertThat(instant(share(older), "sweep_tried_at")).isEqualTo(instant(after, "sweep_tried_at"));
+            assertThat(store.sweepCandidates(RAISED_VERSION, MAX_ATTEMPTS, 1))
+                    .extracting(SweepCandidate::shareId).containsExactly(older);
         } finally {
             jdbc.sql("ALTER TABLE share_defendant DROP CONSTRAINT " + REFUSE_DEFENDANTS).update();
         }
     }
 
     @Test
-    void row_whose_write_and_failed_attempt_both_fail_should_be_left_as_it_was_and_selected_again()
-            throws Exception {
+    void selection_should_take_rows_never_tried_first_then_the_longest_since_tried() {
+        final UUID first = stored("2026-10-02T09:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final UUID second = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final UUID third = stored("2026-10-02T11:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        triedAt(first, "2026-10-03T10:00:00Z");
+        triedAt(second, "2026-10-03T09:00:00Z");
+
+        final List<UUID> order = store.sweepCandidates(RAISED_VERSION, MAX_ATTEMPTS, 100).stream()
+                .map(SweepCandidate::shareId).toList();
+
+        assertThat(order).containsExactly(third, second, first);
+    }
+
+    @Test
+    void recording_a_try_should_stamp_only_that_row_with_the_database_clock() {
+        final UUID tried = stored("2026-10-02T09:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final UUID untouched = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final Map<String, Object> before = share(tried);
+
+        store.recordSweepAttempt(tried);
+
+        final Map<String, Object> after = share(tried);
+        assertThat(instant(after, "sweep_tried_at")).isAfterOrEqualTo(instant(before, "stored_at"));
+        before.remove("sweep_tried_at");
+        after.remove("sweep_tried_at");
+        assertThat(after).isEqualTo(before);
+        assertThat(share(untouched).get("sweep_tried_at")).isNull();
+    }
+
+    @Test
+    void row_whose_write_times_out_should_be_left_as_it_was_stamped_and_selected_again() throws Exception {
         final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
                 ExtractionFailureKind.INVALID_UUID));
         final JdbcShareStore impatient = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager),
@@ -363,6 +420,7 @@ class ExtractionSweepIT {
                 .containsEntry("projection_version", KeyDetailsExtractor.EXTRACTOR_VERSION)
                 .containsEntry("projection_attempts", 1)
                 .containsEntry("projected_at", before.get("projected_at"));
+        assertThat(share(shareId).get("sweep_tried_at")).isNotNull();
         assertThat(defendants(shareId)).isEmpty();
         assertThat(day()).containsEntry("youth_seen", null);
         assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FIXED);
@@ -413,6 +471,11 @@ class ExtractionSweepIT {
         store.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
                 request.sharedDays(), PayloadChecksum.sha256Hex(payload), payload, projection));
         return request.shareId();
+    }
+
+    private void triedAt(final UUID shareId, final String instant) {
+        jdbc.sql("UPDATE hearing_share SET sweep_tried_at = :triedAt WHERE share_id = :shareId")
+                .param("triedAt", OffsetDateTime.parse(instant)).param("shareId", shareId).update();
     }
 
     private void holdTheDay(final Connection holder) throws SQLException {

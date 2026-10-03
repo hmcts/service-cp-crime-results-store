@@ -95,8 +95,30 @@ class FlywayMigrationIT {
     }
 
     @Test
-    void startup_on_an_empty_database_should_apply_v1_to_v3() {
-        assertThat(appliedVersions()).containsExactly("1", "2", "3");
+    void startup_on_an_empty_database_should_apply_v1_to_v4() {
+        assertThat(appliedVersions()).containsExactly("1", "2", "3", "4");
+    }
+
+    @Test
+    void v4_should_add_a_nullable_sweep_tried_at_and_an_index_for_the_sweep_s_order() {
+        final Map<String, Object> column = jdbc.sql("""
+                SELECT data_type, is_nullable, column_default FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = 'hearing_share'
+                   AND column_name = 'sweep_tried_at'
+                """).query().singleRow();
+        final List<String> sweepIndexes = jdbc.sql("""
+                SELECT indexdef FROM pg_indexes
+                 WHERE schemaname = current_schema() AND tablename = 'hearing_share'
+                   AND indexname IN ('hearing_share_failed_ix', 'hearing_share_sweep_ix')
+                """).query(String.class).list();
+
+        assertThat(column).containsEntry("data_type", "timestamp with time zone")
+                .containsEntry("is_nullable", "YES")
+                .containsEntry("column_default", null);
+        assertThat(sweepIndexes).singleElement().asString()
+                .contains("hearing_share_sweep_ix")
+                .contains("(sweep_tried_at NULLS FIRST, stored_seq)")
+                .contains("WHERE (projection_status = 'FAILED'::text)");
     }
 
     @Test

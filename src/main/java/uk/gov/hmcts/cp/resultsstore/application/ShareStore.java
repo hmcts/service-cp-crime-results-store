@@ -23,7 +23,8 @@ public interface ShareStore {
     StoreResult store(StoreRequest request);
 
     /**
-     * The {@code FAILED} shares due a retry, oldest stored first, read without locks: those read by an
+     * The {@code FAILED} shares due a retry, never tried by the sweep first, then the longest since
+     * tried, then oldest stored, read without locks: those read by an
      * older extractor version, and those whose reason is an unexpected error with fewer attempts than
      * the limit (FR-033, FR-035).
      *
@@ -54,7 +55,18 @@ public interface ShareStore {
      * @param projection what the re-extraction read
      * @param version    the extractor version that read it
      * @return {@code FIXED}, {@code FAILED_AGAIN} or {@code SKIPPED}
-     * @throws RuntimeException when the transaction fails; nothing is written
+     * @throws RuntimeException when the transaction fails; nothing is written, and the sweep counts it
+     *     as an operational {@code error}, not as the row's failed attempt
      */
     SweepRowOutcome recordReextraction(SweepCandidate candidate, Projection projection, int version);
+
+    /**
+     * Records that the sweep tried a row, {@code sweep_tried_at = now()}, in its own short transaction,
+     * after the attempt and whatever it wrote. Nothing else changes. The candidates are taken never
+     * tried first, then the longest since tried, so a row that keeps failing rotates behind the others.
+     *
+     * @param shareId the share
+     * @throws RuntimeException when the transaction fails; nothing is written
+     */
+    void recordSweepAttempt(UUID shareId);
 }

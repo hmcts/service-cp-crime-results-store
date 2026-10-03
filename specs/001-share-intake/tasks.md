@@ -790,6 +790,31 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     `row_that_fails_while_its_thread_is_interrupted_should_be_cancelled_with_no_failed_attempt`: `[ERROR] to
     contain exactly [CANCELLED]`. GREEN: `SweepRowOutcomeTest` 5, `MicrometerIntakeObserverTest` 20,
     `ExtractionSweepTest` 12, 0 failures.
+  - Gate round 2, rulings B and C (schema; operational failures apart from extraction failures, no
+    starvation): the row's work is two steps. READ+EXTRACT (the stored text read as JSON, then
+    `KeyDetailsExtractor`): a failure is the row's, recorded as today (`UNEXPECTED:<class>`, version,
+    attempts + 1, capped at 3). WRITE (`recordReextraction`): any runtime failure (`DataAccessException`,
+    `RetryableIntakeException`, other) is operational: `projection_status`, reason, version and attempts
+    stay as they were, the row counts `sweep.rows{outcome="error"}`, logged by class names only. This
+    reverses gate round 1's second-transaction failed attempt for a write failure. Every attempt of either
+    kind then stamps `sweep_tried_at = now()` in its own short transaction (`ShareStore.recordSweepAttempt`,
+    store timeouts, the row's lock alone); for an operational error that is the only write, and if it
+    fails too the row stays as it is and the round goes on. Candidates are `ORDER BY sweep_tried_at NULLS
+    FIRST, stored_seq`, so a row that keeps failing rotates behind the others. Schema:
+    `V4__sweep_tried_at.sql` (column, `hearing_share_sweep_ix` on `(sweep_tried_at NULLS FIRST, stored_seq)
+    WHERE projection_status = 'FAILED'`, `hearing_share_failed_ix` dropped as redundant); V1 to V3 are not
+    edited; data-model.md updated. The `error` tag's meaning changes (contracts/metrics.md); no tag is added.
+    RED (seam: `recordSweepAttempt` a no-op, no V4), each class on its own: `ExtractionSweepTest` 6
+    completed, 1 failed (failFast), `readable_row_should_be_recorded_with_the_details_read_from_its_stored_text_and_counted_fixed`:
+    `VerificationInOrderFailure: Wanted but not invoked: store.recordSweepAttempt(…)`; `ExtractionSweepIT` 3
+    completed, 1 failed, `write_that_fails_should_leave_the_projection_stamp_the_try_count_an_error_and_rotate_the_row`:
+    `Expecting actual: [FAILED_AGAIN] to contain exactly (and in same order): [ERROR]`; `FlywayMigrationIT` 2
+    completed, 1 failed, `startup_on_an_empty_database_should_apply_v1_to_v4`: `["1", "2", "3"] … could not
+    find the following elements: ["4"]`. GREEN: `ExtractionSweepTest` 13, `ExtractionSweepIT` 14 (new: the
+    operational failure leaves `projection_*` and `projected_at` alone, stamps the try, counts `error`, and
+    with batch size 1 the next round takes the other `FAILED` row first, then the first again; never-tried
+    then longest-since-tried selection; the stamp changes that row's `sweep_tried_at` alone), `FlywayMigrationIT`
+    (V4 applies; nullable `timestamptz` with no default; the one sweep index), `JdbcShareStoreIT` 14, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

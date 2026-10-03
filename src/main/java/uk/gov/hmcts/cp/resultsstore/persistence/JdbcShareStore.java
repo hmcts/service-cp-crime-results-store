@@ -100,16 +100,22 @@ public class JdbcShareStore implements ShareStore {
             """;
 
     /**
-     * The sweep's candidates (research R13): unlocked, oldest stored first, on the partial index of
-     * {@code FAILED} rows.
+     * The sweep's candidates (research R13): unlocked, never tried first, then the longest since tried,
+     * then oldest stored, on the partial index of {@code FAILED} rows in that order
+     * ({@code hearing_share_sweep_ix}).
      */
     private static final String SWEEP_CANDIDATES = """
             SELECT share_id, hearing_id, hearing_day, projection_attempts FROM hearing_share
              WHERE projection_status = 'FAILED'
                AND (projection_version < :currentVersion
                     OR (projection_reason LIKE 'UNEXPECTED%' AND projection_attempts < :maxAttempts))
-             ORDER BY stored_seq
+             ORDER BY sweep_tried_at NULLS FIRST, stored_seq
              LIMIT :limit
+            """;
+
+    /** The sweep's try, alone: no lock but the row's own, and no other column. */
+    private static final String SET_SWEEP_TRIED = """
+            UPDATE hearing_share SET sweep_tried_at = now() WHERE share_id = :shareId
             """;
 
     private static final String PAYLOAD_TEXT = """
@@ -258,6 +264,20 @@ public class JdbcShareStore implements ShareStore {
     public SweepRowOutcome recordReextraction(final SweepCandidate candidate, final Projection projection,
             final int version) {
         return storeTransaction.execute(status -> reextractLocked(candidate, projection, version));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>One short transaction bounded by the store's timeouts. It takes the share row's lock alone,
+     * holding no other, so it cannot deadlock with a transaction that takes the day lock first.
+     */
+    @Override
+    public void recordSweepAttempt(final UUID shareId) {
+        storeTransaction.executeWithoutResult(status -> {
+            setTimeouts();
+            jdbc.sql(SET_SWEEP_TRIED).param(SHARE_ID, shareId).update();
+        });
     }
 
     private SweepRowOutcome reextractLocked(final SweepCandidate candidate, final Projection projection,

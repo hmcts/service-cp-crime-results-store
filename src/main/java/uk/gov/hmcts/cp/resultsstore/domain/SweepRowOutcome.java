@@ -8,15 +8,15 @@ public enum SweepRowOutcome {
     /** The key details were read; the row is now {@code OK}. */
     FIXED,
     /**
-     * The key details still could not be read, or the row's work threw ({@code UNEXPECTED:<class>}); the
-     * new reason, version and attempts are recorded.
+     * The key details still could not be read, or reading or extracting them threw
+     * ({@code UNEXPECTED:<class>}); the new reason, version and attempts are recorded.
      */
     FAILED_AGAIN,
     /** Under the locks the row was no longer {@code FAILED} as selected: another sweep changed it first. */
     SKIPPED,
     /**
-     * The row's work threw, and so did recording it as a failed attempt; nothing was written for it and
-     * the round went on.
+     * The row's write threw: an operational error, not the row's. Its projection was left as it was
+     * (only the try is recorded) and the round went on.
      */
     ERROR,
     /**

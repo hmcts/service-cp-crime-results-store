@@ -11,14 +11,15 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 /**
  * Retries shares whose key details could not be read (FR-033 to FR-037, research R13).
  *
- * <p>A round selects the {@code FAILED} rows due a retry, without locks. For each it reads the stored
- * payload text (never the parsed copy) as JSON and extracts, outside any transaction, then hands the result to
- * the store, which writes it under the hearing-day lock and the share row's lock only if the row is
- * still {@code FAILED} with the attempts it had when selected. That re-check, not a distributed lock,
- * keeps several pods sweeping at once correct: each row is worked at most once per round. A row whose
- * work throws is recorded as a failed {@code UNEXPECTED} attempt, or counted {@code error} when even
- * that cannot be written, and the round goes on. Every outcome is reported after the row's
- * transaction ends.
+ * <p>A round selects the {@code FAILED} rows due a retry, without locks, never tried first, then the
+ * longest since tried. For each it reads the stored payload text (never the parsed copy) as JSON and
+ * extracts, outside any transaction, then hands the result to the store, which writes it under the
+ * hearing-day lock and the share row's lock only if the row is still {@code FAILED} with the attempts
+ * it had when selected. That re-check, not a distributed lock, keeps several pods sweeping at once
+ * correct: each row is worked at most once per round. A row whose reading or extraction throws is
+ * recorded as a failed {@code UNEXPECTED} attempt; a row whose write throws is an operational
+ * {@code error} and its projection is left alone. Each try is then recorded in its own transaction,
+ * and the round goes on. Every outcome is reported after the row's transactions end.
  */
 public class ExtractionSweep {
 
@@ -75,33 +76,21 @@ public class ExtractionSweep {
     }
 
     /**
-     * One row. A runtime failure, reading or writing, is logged by its class alone (its message may
-     * quote the row) and recorded as a failed attempt, {@code UNEXPECTED:<class>}, in a second
-     * transaction under the same locks and re-check: the attempt count then grows, so a row that fails
-     * the same way every round stops being selected at the retry limit (FR-035) instead of holding the
-     * head of every batch. Only when that write fails too is the row
-     * counted {@code error}, with nothing written, and the round goes on (FR-037); a failure met while
-     * the thread is interrupted (the schedule stopping) is counted {@code cancelled} instead.
+     * One row, in two steps. READ+EXTRACT (the stored text, read as JSON, then the extractor): a
+     * runtime failure here is the row's own, logged by class alone (its message may quote the row) and
+     * recorded as a failed attempt, {@code UNEXPECTED:<class>}, so a row that fails the same way every
+     * round stops at the retry limit (FR-035). WRITE (the store transaction): a runtime failure here is
+     * operational, not the row's; nothing about the projection changes and the row is counted
+     * {@code error} (FR-037). Either way the try is then recorded on its own ({@link #recordTried}), so
+     * a row that keeps failing rotates behind the others. A row met while the thread is interrupted
+     * (the schedule stopping) is {@code cancelled}: no transaction is opened for it.
      */
-    // Catch-to-record: the failure becomes an explicit outcome with a bounded tag and is logged by class.
-    // Errors are not caught.
-    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private SweepRowOutcome sweepRow(final SweepCandidate candidate) {
-        Projection projection;
-        SweepRowOutcome outcome;
-        try {
-            // JSON alone: the identity was proved when stored, and its rules may have been tightened since.
-            projection = extractor.extract(parser.readTree(store.payloadText(candidate.shareId())));
-            outcome = store.recordReextraction(candidate, projection, settings.extractorVersion());
-        } catch (final RuntimeException failure) {
-            LOG.warn("Extraction sweep could not finish a row; recording it as a failed attempt. shareId={} "
-                    + "exception={}", candidate.shareId(), failure.getClass().getName());
-            projection = KeyDetailsExtractor.unexpected(failure);
-            // A failure met while stopping is the stop's, not the row's: no attempt is spent on it.
-            outcome = Thread.currentThread().isInterrupted()
-                    ? SweepRowOutcome.CANCELLED
-                    : recordFailedAttempt(candidate, projection);
-        }
+        final Projection projection = readAndExtract(candidate);
+        final SweepRowOutcome outcome = Thread.currentThread().isInterrupted()
+                ? SweepRowOutcome.CANCELLED
+                : write(candidate, projection);
+        recordTried(candidate);
         observer.sweepRow(outcome);
         if (projection instanceof Projection.Failed failed && outcome == SweepRowOutcome.FAILED_AGAIN) {
             observer.extractionFailed(ExtractionStage.SWEEP, failed.kind());
@@ -109,18 +98,52 @@ public class ExtractionSweep {
         return outcome;
     }
 
-    // Catch-to-count: the row is left as it was, counted error and logged by class.
+    // Catch-to-record: the failure becomes the row's UNEXPECTED projection and is logged by class.
+    // Errors are not caught.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
-    private SweepRowOutcome recordFailedAttempt(final SweepCandidate candidate, final Projection failed) {
+    private Projection readAndExtract(final SweepCandidate candidate) {
+        Projection projection;
+        try {
+            // JSON alone: the identity was proved when stored, and its rules may have been tightened since.
+            projection = extractor.extract(parser.readTree(store.payloadText(candidate.shareId())));
+        } catch (final RuntimeException failure) {
+            LOG.warn("Extraction sweep could not read a row's key details; recording it as a failed attempt. "
+                    + "shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
+            projection = KeyDetailsExtractor.unexpected(failure);
+        }
+        return projection;
+    }
+
+    // Catch-to-count: an operational failure leaves the row as it was, counted error and logged by class.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private SweepRowOutcome write(final SweepCandidate candidate, final Projection projection) {
         SweepRowOutcome outcome;
         try {
-            outcome = store.recordReextraction(candidate, failed, settings.extractorVersion());
+            outcome = store.recordReextraction(candidate, projection, settings.extractorVersion());
         } catch (final RuntimeException failure) {
-            LOG.warn("Extraction sweep could not record a failed attempt; the row stays as it was for the next "
-                    + "round. shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
-            outcome = SweepRowOutcome.ERROR;
+            LOG.warn("Extraction sweep could not write a row; an operational error, so the row is left as it "
+                    + "was. shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
+            // A failure met while stopping is the stop's, not the row's.
+            outcome = Thread.currentThread().isInterrupted() ? SweepRowOutcome.CANCELLED : SweepRowOutcome.ERROR;
         }
         return outcome;
+    }
+
+    /**
+     * Records the try in its own short transaction, unless the thread is being stopped. When that
+     * fails too, the row stays as it is and the round goes on.
+     */
+    // Catch-to-log: the try's stamp is best effort; the failure is logged by class.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private void recordTried(final SweepCandidate candidate) {
+        if (!Thread.currentThread().isInterrupted()) {
+            try {
+                store.recordSweepAttempt(candidate.shareId());
+            } catch (final RuntimeException failure) {
+                LOG.warn("Extraction sweep could not record that it tried a row; the row stays as it is. "
+                        + "shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
+            }
+        }
     }
 
     private static int count(final List<SweepRowOutcome> outcomes, final SweepRowOutcome outcome) {

@@ -2,12 +2,14 @@
 
 **Feature**: `001-share-intake` | **Date**: 2026-10-02 | **Plan**: [plan.md](plan.md)
 
-Two new Flyway migrations. `V1__create_event_receipt.sql` is never edited (FR-042).
+Three new Flyway migrations. `V1__create_event_receipt.sql` is never edited (FR-042), and nor are
+V2 and V3 now that they are on main: changes arrive as new migrations.
 
 | Migration | Does |
 |---|---|
 | `V2__reshape_event_receipt.sql` | Refuses to run if V1's table holds rows; drops it and creates the receipt keyed by the broker's message id |
 | `V3__create_share_store.sql` | Creates `hearing_day_head`, `hearing_share`, `hearing_share_payload`, `share_defendant` |
+| `V4__sweep_tried_at.sql` | Adds `hearing_share.sweep_tried_at` and the sweep's index in its order, replacing `hearing_share_failed_ix` |
 
 Consumer search indexes (court centre, shared day, defendant id and so on) are **not** created
 here; spec 003 adds them with the read API. The only indexes in 001 serve the write path, the
@@ -341,6 +343,26 @@ CREATE TRIGGER share_defendant_guard_tg
     FOR EACH ROW EXECUTE FUNCTION refuse_row_change();
 ```
 
+## V4__sweep_tried_at.sql
+
+```sql
+ALTER TABLE hearing_share ADD COLUMN sweep_tried_at TIMESTAMPTZ NULL;
+
+CREATE INDEX hearing_share_sweep_ix
+    ON hearing_share (sweep_tried_at NULLS FIRST, stored_seq) WHERE projection_status = 'FAILED';
+DROP INDEX hearing_share_failed_ix;
+```
+
+`sweep_tried_at` is when the extraction sweep last tried the share: empty until its first try, then
+`now()` of the short transaction the sweep opens after every attempt, an extraction failure (which
+also records reason, version and attempts) or an operational one (a write that failed, which
+records nothing else). The sweep selects `ORDER BY sweep_tried_at NULLS FIRST, stored_seq`, so a
+row that keeps failing operationally rotates behind the rows not yet tried instead of holding the
+head of every batch. The new index serves that order on `FAILED` rows; `hearing_share_failed_ix`
+(`stored_seq` alone, the sweep's only user) is dropped as redundant. The column is outside
+`hearing_share_guard`'s lists, so the stamp is allowed whatever the row's status (a row just made
+`OK` is stamped too).
+
 ### Database rules mapped to FR-043
 
 | Rule | Enforced by |
@@ -405,6 +427,7 @@ Insert-only: `share_defendant_guard_tg` refuses any update or delete.
 | `hearing_share` | `is_latest`, `predecessor_share_id`, `day_youth_seen` | store transaction (and sweep for `day_youth_seen`) | under the day lock |
 | `hearing_share` | `is_reshare`, `court_centre_id`, `court_room_id`, `lja_code`, `jurisdiction_type`, `is_sjp`, `is_group_proceedings`, `youth_court_id`, `any_subject_is_youth` | sweep only | under the day lock, row still `FAILED` |
 | `hearing_share` | `projection_status`, `projection_reason`, `projection_version`, `projection_attempts`, `projected_at` | sweep only | under the day lock, row still `FAILED` |
+| `hearing_share` | `sweep_tried_at` (V4) | sweep only | after each attempt, in its own short transaction holding only the row's lock |
 
 Nothing else is ever updated, and `hearing_share_payload` and `share_defendant` are insert-only;
 the sweep inserts a re-extracted share's `share_defendant` rows (a `FAILED` share has none). The application enforces this table under the
@@ -451,8 +474,9 @@ share, day, payload or defendant row deleted, no payload or defendant row update
 ```
 
 A `FAILED` row is picked by the sweep when `projection_version` is older than the current
-extractor version, or when its reason starts `UNEXPECTED` and `projection_attempts` < 3. The
-intake counts as attempt 1. An `OK` row is never re-extracted in 001 (marking rows for a rerun is
+extractor version, or when its reason starts `UNEXPECTED` and `projection_attempts` < 3, never
+tried first, then the longest since tried (`sweep_tried_at`). The intake counts as attempt 1. A
+write that fails (an operational error) changes none of `projection_*`; only `sweep_tried_at`. An `OK` row is never re-extracted in 001 (marking rows for a rerun is
 spec 004).
 
 ## Youth flags (three values)
