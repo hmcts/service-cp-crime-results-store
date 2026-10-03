@@ -830,6 +830,24 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     failed, `stop_should_give_up_waiting_at_its_bound_and_log_that_it_timed_out`: `Expected size: 1 but was:
     0 in: []`. GREEN: `ExtractionSweepTest` 17, `SweepScheduleTest` 9, `SweepSchedulingConfigTest` 4,
     `ExtractionSweepIT` 14, 0 failures.
+  - Verification gate, ruling 1 (the payload read is operational): `JdbcShareStore.payloadText` classifies
+    a `DataAccessException` through `RetryableFailures` and throws `RetryableIntakeException`; a missing
+    payload row (`IncorrectResultSizeDataAccessException`, e.g. `EmptyResultDataAccessException`) is thrown
+    as it is. `ExtractionSweep` catches `RetryableIntakeException` around the read first: the row counts
+    `error` (`cancelled` while stopping), `projection_*` untouched, the try stamped, logged by cause and
+    class names only. Any other runtime failure of the read, `readTree` or `extract` (a missing payload row
+    included) stays the row's own `UNEXPECTED:<class>` attempt.
+    RED: `ExtractionSweepTest` 19 completed, 1 failed (failFast),
+    `payload_read_that_fails_operationally_should_be_an_error_that_leaves_the_projection_alone`:
+    `Wanted 0 times … recordReextraction(… Failed[reason=UNEXPECTED:RetryableIntakeException …])`;
+    `ExtractionSweepIT` 6 completed, 1 failed,
+    `payload_read_that_fails_should_leave_the_projection_stamp_the_try_and_count_an_error`: `Expecting
+    actual throwable to be an instance of: …RetryableIntakeException` (the read threw unclassified).
+    GREEN: `ExtractionSweepTest` 19 (new: the operational read failure; one while stopping is
+    `cancelled`; the missing-row test renamed `row_whose_payload_row_is_missing_should_record_a_failed_unexpected_attempt`),
+    `ExtractionSweepIT` 16 (new: payload table renamed away for the test, the row counts `error`, the row is
+    unchanged but for its try stamp and is fixed next round; a share with no payload row throws
+    `EmptyResultDataAccessException` unclassified), `JdbcShareStoreIT` 14, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

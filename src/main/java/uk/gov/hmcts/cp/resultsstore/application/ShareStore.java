@@ -41,6 +41,9 @@ public interface ShareStore {
      *
      * @param shareId the share
      * @return the text
+     * @throws RetryableIntakeException when the database read fails: an operational failure, which the
+     *     sweep counts as the row's {@code error}, not as its failed attempt
+     * @throws RuntimeException any other, e.g. no payload row for the share: the row's own failure
      */
     String payloadText(UUID shareId);
 

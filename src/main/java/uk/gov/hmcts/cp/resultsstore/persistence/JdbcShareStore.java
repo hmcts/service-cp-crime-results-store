@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.TransactionException;
 import org.springframework.transaction.TransactionStatus;
@@ -249,9 +250,23 @@ public class JdbcShareStore implements ShareStore {
                 .list();
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @throws uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException when the database read
+     *         fails, classified by its SQLSTATE: an operational failure, not the row's
+     * @throws IncorrectResultSizeDataAccessException when the share has no payload row: the row's own
+     *         failure, thrown as it is
+     */
     @Override
     public String payloadText(final UUID shareId) {
-        return jdbc.sql(PAYLOAD_TEXT).param(SHARE_ID, shareId).query(String.class).single();
+        try {
+            return jdbc.sql(PAYLOAD_TEXT).param(SHARE_ID, shareId).query(String.class).single();
+        } catch (final IncorrectResultSizeDataAccessException missing) {
+            throw missing;
+        } catch (final DataAccessException failure) {
+            throw RetryableFailures.classify(IntakeStage.STORE, failure);
+        }
     }
 
     /**

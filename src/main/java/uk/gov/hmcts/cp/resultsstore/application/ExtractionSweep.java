@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.resultsstore.application;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
@@ -16,9 +17,9 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  * extracts, outside any transaction, then hands the result to the store, which writes it under the
  * hearing-day lock and the share row's lock only if the row is still {@code FAILED} with the attempts
  * it had when selected. That re-check, not a distributed lock, keeps several pods sweeping at once
- * correct: each row is worked at most once per round. A row whose reading or extraction throws is
- * recorded as a failed {@code UNEXPECTED} attempt; a row whose write throws is an operational
- * {@code error} and its projection is left alone. Each try is then recorded in its own transaction,
+ * correct: each row is worked at most once per round. A row whose stored text is missing, or whose
+ * parsing or extraction throws, is recorded as a failed {@code UNEXPECTED} attempt; a row whose
+ * database read or write fails is an operational {@code error} and its projection is left alone. Each try is then recorded in its own transaction,
  * and the round goes on. Every outcome is reported after the row's transactions end.
  */
 public class ExtractionSweep {
@@ -93,8 +94,10 @@ public class ExtractionSweep {
     }
 
     /**
-     * One row, in two steps. READ+EXTRACT (the stored text, read as JSON, then the extractor): a
-     * runtime failure here is the row's own, logged by class alone (its message may quote the row) and
+     * One row, in two steps. READ+EXTRACT (the stored text, read as JSON, then the extractor): the
+     * database failing the read is operational, counted {@code error} with the projection left alone,
+     * as for a failed write; any other runtime failure here (a missing payload row, unreadable JSON,
+     * the extractor) is the row's own, logged by class alone (its message may quote the row) and
      * recorded as a failed attempt, {@code UNEXPECTED:<class>}, so a row that fails the same way every
      * round stops at the retry limit (FR-035). WRITE (the store transaction): a runtime failure here is
      * operational, not the row's; nothing about the projection changes and the row is counted
@@ -103,9 +106,20 @@ public class ExtractionSweep {
      * ({@link #stop()}, or the thread interrupted) is {@code cancelled}: no transaction is opened for it.
      */
     private SweepRowOutcome sweepRow(final SweepCandidate candidate) {
-        final Projection projection = readAndExtract(candidate);
-        // Checked immediately before the write's transaction would open.
-        final SweepRowOutcome outcome = isStopping() ? SweepRowOutcome.CANCELLED : write(candidate, projection);
+        Projection projection = null;
+        SweepRowOutcome outcome;
+        try {
+            projection = readAndExtract(candidate);
+            // Checked immediately before the write's transaction would open.
+            outcome = isStopping() ? SweepRowOutcome.CANCELLED : write(candidate, projection);
+        } catch (final RetryableIntakeException failure) {
+            // The database failed reading the stored text: operational, like a failed write.
+            LOG.warn("Extraction sweep could not read a row's stored text; an operational error, so the row is "
+                    + "left as it was. shareId={} cause={} exception={}", candidate.shareId(),
+                    failure.getFailureCause(), Objects.requireNonNullElse(failure.getCause(), failure).getClass()
+                            .getName());
+            outcome = isStopping() ? SweepRowOutcome.CANCELLED : SweepRowOutcome.ERROR;
+        }
         recordTried(candidate);
         observer.sweepRow(outcome);
         if (projection instanceof Projection.Failed failed && outcome == SweepRowOutcome.FAILED_AGAIN) {
@@ -114,6 +128,13 @@ public class ExtractionSweep {
         return outcome;
     }
 
+    /**
+     * Reads the stored text and extracts. A database failure reading the text is thrown, as the
+     * store classified it, for the caller to count as operational; any other runtime failure, a
+     * missing payload row included, becomes the row's {@code UNEXPECTED} projection.
+     *
+     * @throws RetryableIntakeException when the database read fails
+     */
     // Catch-to-record: the failure becomes the row's UNEXPECTED projection and is logged by class.
     // Errors are not caught.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
@@ -122,6 +143,8 @@ public class ExtractionSweep {
         try {
             // JSON alone: the identity was proved when stored, and its rules may have been tightened since.
             projection = extractor.extract(parser.readTree(store.payloadText(candidate.shareId())));
+        } catch (final RetryableIntakeException operational) {
+            throw operational;
         } catch (final RuntimeException failure) {
             LOG.warn("Extraction sweep could not read a row's key details; recording it as a failed attempt. "
                     + "shareId={} exception={}", candidate.shareId(), failure.getClass().getName());

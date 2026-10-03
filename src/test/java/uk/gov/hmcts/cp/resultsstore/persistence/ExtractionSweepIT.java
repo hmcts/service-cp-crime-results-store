@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -28,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -39,6 +41,7 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
+import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.application.SweepCandidate;
@@ -73,6 +76,9 @@ class ExtractionSweepIT {
     private static final String UNEXPECTED_REASON = "UNEXPECTED:IllegalStateException";
 
     private static final Duration WITHIN = Duration.ofSeconds(20);
+
+    /** Where the payload table is moved, out of reach, by the test whose read fails. */
+    private static final String PAYLOAD_AWAY = "sweep_it_payload_away";
 
     /** A test-only constraint that refuses every defendant row; dropped by the test that adds it. */
     private static final String REFUSE_DEFENDANTS = "sweep_it_refuse_defendants_ck";
@@ -357,6 +363,43 @@ class ExtractionSweepIT {
         } finally {
             jdbc.sql("ALTER TABLE share_defendant DROP CONSTRAINT " + REFUSE_DEFENDANTS).update();
         }
+    }
+
+    @Test
+    void payload_read_that_fails_should_leave_the_projection_stamp_the_try_and_count_an_error() {
+        final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final Map<String, Object> before = share(shareId);
+        final IntakeObserver observer = mock(IntakeObserver.class);
+        final ExtractionSweep sweep = new ExtractionSweep(store,
+                new ShareIdentityParser(JsonMapper.builder().build()), new KeyDetailsExtractor(), observer,
+                new ExtractionSweep.Settings(RAISED_VERSION, MAX_ATTEMPTS, 100));
+        // Test only: the payload table is out of reach, so the read fails on the database, not on the row.
+        jdbc.sql("ALTER TABLE hearing_share_payload RENAME TO " + PAYLOAD_AWAY).update();
+        final List<SweepRowOutcome> outcomes;
+        try {
+            assertThatThrownBy(() -> store.payloadText(shareId)).isInstanceOf(RetryableIntakeException.class);
+            outcomes = sweep.runRound();
+        } finally {
+            jdbc.sql("ALTER TABLE " + PAYLOAD_AWAY + " RENAME TO hearing_share_payload").update();
+        }
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR);
+        verify(observer).sweepRow(SweepRowOutcome.ERROR);
+        verify(observer, never()).extractionFailed(any(), any());
+        final Map<String, Object> after = share(shareId);
+        assertThat(after.get("sweep_tried_at")).isNotNull();
+        before.remove("sweep_tried_at");
+        after.remove("sweep_tried_at");
+        assertThat(after).isEqualTo(before);
+        assertThat(defendants(shareId)).isEmpty();
+        assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FIXED);
+    }
+
+    @Test
+    void payload_read_of_a_share_with_no_payload_row_should_throw_unclassified() {
+        assertThatThrownBy(() -> store.payloadText(UUID.randomUUID()))
+                .isInstanceOf(EmptyResultDataAccessException.class);
     }
 
     @Test

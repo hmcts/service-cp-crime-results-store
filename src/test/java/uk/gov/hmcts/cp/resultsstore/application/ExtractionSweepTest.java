@@ -25,9 +25,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.QueryTimeoutException;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
@@ -37,7 +40,8 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
  * The extraction sweep's round (FR-033 to FR-037, research R13), over a mocked share store: what it
  * selects, that it re-reads the stored text, what it reports, and that one row's failure is counted
  * and never stops the round. A failure reading or extracting is the row's (a failed attempt); a
- * failure writing is operational (counted {@code error}, the row's projection left alone). Every
+ * failure writing, or a database failure reading the stored text, is operational (counted
+ * {@code error}, the row's projection left alone); a missing payload row is the row's own. Every
  * attempt of either kind is then recorded as tried, in its own transaction.
  */
 @ExtendWith(MockitoExtension.class)
@@ -263,7 +267,52 @@ class ExtractionSweepTest {
     }
 
     @Test
-    void row_whose_payload_read_throws_should_record_a_failed_unexpected_attempt() {
+    void payload_read_that_fails_operationally_should_be_an_error_that_leaves_the_projection_alone() {
+        final SweepCandidate row = candidate(1);
+        final SweepCandidate next = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
+        when(store.payloadText(row.shareId())).thenThrow(new RetryableIntakeException(IntakeStage.STORE,
+                IntakeFailureCause.DATABASE, new CannotGetJdbcConnectionException("connection quoted " + MARKER)));
+        when(store.payloadText(next.shareId())).thenReturn(readable(next));
+        when(store.recordReextraction(eq(next), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
+
+        try (CapturedLog log = CapturedLog.forClass(ExtractionSweep.class)) {
+            final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+            assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR, SweepRowOutcome.FIXED);
+            verify(store, never()).recordReextraction(eq(row), any(), anyInt());
+            verify(store).recordSweepAttempt(row.shareId());
+            verify(observer).sweepRow(SweepRowOutcome.ERROR);
+            verify(observer, never()).extractionFailed(any(), any());
+            assertThat(log.messages()).anySatisfy(line -> assertThat(line)
+                    .contains("shareId=" + row.shareId())
+                    .contains(CannotGetJdbcConnectionException.class.getName()));
+            assertThat(log.events()).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+            assertThat(String.join("\n", log.messages())).doesNotContain(MARKER);
+        }
+    }
+
+    @Test
+    void payload_read_that_fails_while_stop_is_asked_should_be_cancelled_with_no_try_recorded() {
+        final SweepCandidate row = candidate(1);
+        final ExtractionSweep underTest = sweep();
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenAnswer(invocation -> {
+            underTest.stop();
+            throw new RetryableIntakeException(IntakeStage.STORE, IntakeFailureCause.DATABASE,
+                    new CannotGetJdbcConnectionException("closing"));
+        });
+
+        final List<SweepRowOutcome> outcomes = underTest.runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.CANCELLED);
+        verify(store, never()).recordReextraction(any(), any(), anyInt());
+        verify(store, never()).recordSweepAttempt(any());
+        verify(observer).sweepRow(SweepRowOutcome.CANCELLED);
+    }
+
+    @Test
+    void row_whose_payload_row_is_missing_should_record_a_failed_unexpected_attempt() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
         when(store.payloadText(row.shareId())).thenThrow(new EmptyResultDataAccessException(1));
