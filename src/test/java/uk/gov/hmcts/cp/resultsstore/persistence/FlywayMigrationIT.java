@@ -14,6 +14,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
@@ -77,6 +78,10 @@ class FlywayMigrationIT {
     /** The longest reason a bounded column holds. */
     private static final String REASON_120 = "R".repeat(120);
 
+    /** Flyway's checksums of V1 to V4 as first applied; a migration that has run is never edited. */
+    private static final Map<String, Integer> V1_TO_V4_CHECKSUMS = Map.of(
+            "1", -1_073_667_405, "2", -927_700_843, "3", -1_989_865_135, "4", -586_884_824);
+
     @Autowired
     private JdbcClient jdbc;
 
@@ -95,8 +100,70 @@ class FlywayMigrationIT {
     }
 
     @Test
-    void startup_on_an_empty_database_should_apply_v1_to_v4() {
-        assertThat(appliedVersions()).containsExactly("1", "2", "3", "4");
+    void startup_on_an_empty_database_should_apply_v1_to_v5() {
+        assertThat(appliedVersions()).containsExactly("1", "2", "3", "4", "5");
+    }
+
+    @Test
+    void v1_to_v4_should_keep_the_checksums_they_were_applied_with() {
+        // V1 to V4 are never edited (contracts/schema.md rule 6): an edit changes Flyway's checksum.
+        final Map<String, Integer> checksums = jdbc.sql("""
+                SELECT version, checksum FROM flyway_schema_history
+                 WHERE success AND version IN ('1', '2', '3', '4')
+                """).query((rs, rowNum) -> Map.entry(rs.getString(1), rs.getInt(2)))
+                .list()
+                .stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+
+        assertThat(checksums).containsExactlyInAnyOrderEntriesOf(V1_TO_V4_CHECKSUMS);
+    }
+
+    @Test
+    void v5_should_create_the_stored_at_trigger_and_the_three_partial_indexes() {
+        final Map<String, String> indexes = jdbc.sql("""
+                SELECT indexname, indexdef FROM pg_indexes
+                 WHERE schemaname = current_schema() AND tablename = 'hearing_share'
+                   AND indexname IN ('hearing_share_youth_feed_ix', 'hearing_share_centre_feed_ix',
+                                     'hearing_share_centre_shared_at_ix')
+                """).query((rs, rowNum) -> Map.entry(rs.getString(1), rs.getString(2)))
+                .list()
+                .stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+        final List<Map<String, Object>> triggers = jdbc.sql("""
+                SELECT action_timing, event_manipulation, action_orientation, action_statement
+                  FROM information_schema.triggers
+                 WHERE event_object_schema = current_schema() AND event_object_table = 'hearing_share'
+                   AND trigger_name = 'hearing_share_stored_at_tg'
+                """).query().listOfRows();
+        final List<String> dayIndexes = jdbc.sql("""
+                SELECT indexname FROM pg_indexes
+                 WHERE schemaname = current_schema() AND tablename = 'hearing_share'
+                   AND indexdef LIKE '%shared_day_london%'
+                """).query(String.class).list();
+
+        assertThat(indexes).containsOnlyKeys("hearing_share_youth_feed_ix", "hearing_share_centre_feed_ix",
+                "hearing_share_centre_shared_at_ix");
+        assertThat(indexes.get("hearing_share_youth_feed_ix"))
+                .endsWith("USING btree (stored_seq) WHERE (day_youth_seen IS NOT FALSE)");
+        assertThat(indexes.get("hearing_share_centre_feed_ix"))
+                .endsWith("USING btree (court_centre_id, stored_seq) WHERE (court_centre_id IS NOT NULL)");
+        assertThat(indexes.get("hearing_share_centre_shared_at_ix"))
+                .endsWith("USING btree (court_centre_id, shared_at, share_id) WHERE (court_centre_id IS NOT NULL)");
+        assertThat(dayIndexes).as("no index on shared_day_london").isEmpty();
+        assertThat(triggers).singleElement().satisfies(trigger -> assertThat(trigger)
+                .containsEntry("action_timing", "BEFORE")
+                .containsEntry("event_manipulation", "INSERT")
+                .containsEntry("action_orientation", "ROW")
+                .containsEntry("action_statement", "EXECUTE FUNCTION hearing_share_stored_at()"));
+    }
+
+    @Test
+    void the_stored_seq_sequence_should_have_cache_one() {
+        // Pull safety (research R4) needs numbers handed out in time order across sessions.
+        assertThat(jdbc.sql("""
+                SELECT seqcache FROM pg_sequence
+                 WHERE seqrelid = pg_get_serial_sequence('hearing_share', 'stored_seq')::regclass
+                """).query(Long.class).single()).isOne();
     }
 
     @Test
@@ -800,6 +867,42 @@ class FlywayMigrationIT {
             assertThat(List.of(firstRow.get("stored_at"), secondRow.get("stored_at")))
                     .allSatisfy(storedAt -> assertThat(((OffsetDateTime) storedAt).toInstant())
                             .isBetween(before, after));
+        }
+
+        @Test
+        void stored_at_should_be_at_or_after_a_clock_read_taken_just_before_the_insert() {
+            // One transaction, so the clock read and the insert run on one connection, in that order.
+            final Map<String, Object> clocks = transaction.execute(status -> {
+                final Instant before = databaseNow();
+                final UUID shareId = storedShare(SHARED_AT, "FALSE");
+                return Map.of("before", before, "stored_at", ((OffsetDateTime) clocks(shareId).get("stored_at"))
+                        .toInstant());
+            });
+
+            assertThat(clocks).isNotNull();
+            assertThat((Instant) clocks.get("stored_at")).isAfterOrEqualTo((Instant) clocks.get("before"));
+        }
+
+        @Test
+        void an_insert_supplying_stored_at_should_be_overridden() {
+            final UUID shareId = UUID.randomUUID();
+            final Instant before = databaseNow();
+
+            assertAccepted(withColumn(share(shareId, SHARED_AT, "FALSE", "'" + SHA256 + "'", "'OK'", "NULL",
+                    "NULL"), "stored_at", "clock_timestamp() - INTERVAL '1 hour'"));
+
+            assertThat(((OffsetDateTime) clocks(shareId).get("stored_at")).toInstant())
+                    .as("stored_at set by the trigger, not by the insert")
+                    .isAfterOrEqualTo(before);
+        }
+
+        @Test
+        void updating_stored_at_should_still_be_refused() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertRefused(RESTRICT_VIOLATION, "hearing_share_fixed_columns_guard",
+                    "UPDATE hearing_share SET stored_at = stored_at - INTERVAL '1 hour' WHERE share_id = '"
+                            + shareId + "'");
         }
 
         @ParameterizedTest(name = "SET {0}")
