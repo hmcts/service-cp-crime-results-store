@@ -29,6 +29,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
@@ -41,6 +42,7 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
+import uk.gov.hmcts.cp.resultsstore.application.ProgressionApplications;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
@@ -50,11 +52,13 @@ import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
+import uk.gov.hmcts.cp.resultsstore.support.ProgressionStub;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
  * The extraction sweep on PostgreSQL (FR-033 to FR-037, SC-006, US5): it selects only {@code FAILED}
- * rows due a retry, re-reads the stored text, fills the key details and defendant rows under the
+ * rows due a retry, re-reads the working copy ({@code payload_json}, or the arrived text when that is
+ * NULL: specs/002-enrichment FR-033), fills the key details and defendant rows under the
  * hearing-day lock and the share row's lock, records a renewed failure, stops retrying an unexpected
  * failure at the limit, and two sweeps at once work each row once. A write that fails is operational:
  * the row's projection is left alone, only {@code projection_tried_at} is stamped, and the row rotates
@@ -80,6 +84,10 @@ class ExtractionSweepIT {
     /** Where the payload table is moved, out of reach, by the test whose read fails. */
     private static final String PAYLOAD_AWAY = "sweep_it_payload_away";
 
+    private static final UUID SECOND_DEFENDANT = UUID.fromString("d1d1d1d1-0000-4000-8000-000000000002");
+
+    private static final UUID SECOND_MASTER_DEFENDANT = UUID.fromString("e1e1e1e1-0000-4000-8000-000000000002");
+
     /** A test-only constraint that refuses every defendant row; dropped by the test that adds it. */
     private static final String REFUSE_DEFENDANTS = "sweep_it_refuse_defendants_ck";
 
@@ -88,6 +96,9 @@ class ExtractionSweepIT {
 
     @Autowired
     private DataSource dataSource;
+
+    @Autowired
+    private ApplicationContext context;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -318,6 +329,44 @@ class ExtractionSweepIT {
     }
 
     @Test
+    void failed_row_should_be_re_extracted_from_its_working_copy_not_its_arrived_text() {
+        final String text = SampleShares.share(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z");
+        // The working copy names a defendant the arrived text lacks, so only a read of the copy indexes it.
+        final String copy = text.replace("\"defendants\":[{", "\"defendants\":[{\"id\":\"" + SECOND_DEFENDANT
+                + "\",\"masterDefendantId\":\"" + SECOND_MASTER_DEFENDANT + "\"},{");
+        final UUID shareId = storedWithCopy(text, copy, failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+
+        final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        assertThat(share(shareId)).containsEntry("projection_status", "OK")
+                .containsEntry("court_centre_id", SampleShares.COURT_CENTRE);
+        assertThat(defendants(shareId)).containsExactlyInAnyOrder(
+                List.of(SampleShares.CASE_ID, SampleShares.DEFENDANT_ID, SampleShares.MASTER_DEFENDANT_ID),
+                List.of(SampleShares.CASE_ID, SECOND_DEFENDANT, SECOND_MASTER_DEFENDANT));
+        assertThat(jdbc.sql("SELECT payload_text = :text FROM hearing_share_payload WHERE share_id = :shareId")
+                .param("text", text).param("shareId", shareId).query(Boolean.class).single()).isTrue();
+    }
+
+    @Test
+    void sweep_should_make_no_progression_request_and_keep_the_extractor_version() {
+        assertThat(context.getBeanProvider(ProgressionApplications.class).getIfAvailable()).isNull();
+        final UUID applicationId = UUID.fromString("a1a1a1a1-0000-4000-8000-0000000000aa");
+        try (ProgressionStub progression = ProgressionStub.start()) {
+            final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z",
+                    applicationId.toString());
+            stored(text, failed(COURT_CENTRE_REASON, ExtractionFailureKind.INVALID_UUID));
+
+            final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+
+            assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+            assertThat(progression.requestsFor(applicationId)).isEmpty();
+        }
+        assertThat(KeyDetailsExtractor.EXTRACTOR_VERSION).isEqualTo(1);
+    }
+
+    @Test
     void write_that_fails_should_leave_the_projection_stamp_the_try_count_an_error_and_rotate_the_row() {
         final UUID older = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
                 ExtractionFailureKind.INVALID_UUID));
@@ -380,7 +429,8 @@ class ExtractionSweepIT {
         jdbc.sql("ALTER TABLE hearing_share_payload RENAME TO " + PAYLOAD_AWAY).update();
         final List<SweepRowOutcome> outcomes;
         try {
-            assertThatThrownBy(() -> store.payloadText(shareId)).isInstanceOf(RetryableIntakeException.class);
+            assertThatThrownBy(() -> store.payloadForExtraction(shareId))
+                    .isInstanceOf(RetryableIntakeException.class);
             outcomes = sweep.runRound();
         } finally {
             jdbc.sql("ALTER TABLE " + PAYLOAD_AWAY + " RENAME TO hearing_share_payload").update();
@@ -400,7 +450,7 @@ class ExtractionSweepIT {
 
     @Test
     void payload_read_of_a_share_with_no_payload_row_should_throw_unclassified() {
-        assertThatThrownBy(() -> store.payloadText(UUID.randomUUID()))
+        assertThatThrownBy(() -> store.payloadForExtraction(UUID.randomUUID()))
                 .isInstanceOf(EmptyResultDataAccessException.class);
     }
 
@@ -515,6 +565,17 @@ class ExtractionSweepIT {
         final StoreRequest request = SampleShares.request(messageId, identifiedBy);
         store.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
                 request.sharedDays(), PayloadChecksum.sha256Hex(payload), payload, projection));
+        return request.shareId();
+    }
+
+    /** Stores a share whose working copy differs from its arrived text, as an enriched share is stored. */
+    private UUID storedWithCopy(final String text, final String copy, final Projection projection) {
+        messages++;
+        final String messageId = "ID:" + messages;
+        receipts.recordArrival(SampleShares.arrival(messageId, text));
+        final StoreRequest request = SampleShares.request(messageId, text);
+        store.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
+                request.sharedDays(), request.checksum(), text, copy, true, projection));
         return request.shareId();
     }
 

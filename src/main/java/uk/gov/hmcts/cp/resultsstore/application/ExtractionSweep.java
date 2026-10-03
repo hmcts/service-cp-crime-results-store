@@ -13,11 +13,12 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  * Retries shares whose key details could not be read (FR-033 to FR-037, research R13).
  *
  * <p>A round selects the {@code FAILED} rows due a retry, without locks, never tried first, then the
- * longest since tried. For each it reads the stored payload text (never the parsed copy) as JSON and
- * extracts, outside any transaction, then hands the result to the store, which writes it under the
+ * longest since tried. For each it reads the share's working copy ({@code payload_json}, or the
+ * arrived text when there is none: specs/002-enrichment FR-033) as JSON and extracts, outside any
+ * transaction, then hands the result to the store, which writes it under the
  * hearing-day lock and the share row's lock only if the row is still {@code FAILED} with the attempts
  * it had when selected. That re-check, not a distributed lock, keeps several pods sweeping at once
- * correct: each row is worked at most once per round. A row whose stored text is missing, or whose
+ * correct: each row is worked at most once per round. A row whose stored payload is missing, or whose
  * parsing or extraction throws, is recorded as a failed {@code UNEXPECTED} attempt; a row whose
  * database read or write fails is an operational {@code error} and its projection is left alone. Each try is then recorded in its own transaction,
  * and the round goes on. Every outcome is reported after the row's transactions end.
@@ -43,7 +44,7 @@ public class ExtractionSweep {
      * Creates the sweep.
      *
      * @param store     the share tables
-     * @param parser    reads the stored text back as JSON
+     * @param parser    reads the working copy back as JSON
      * @param extractor reads the key details
      * @param observer  the metrics port
      * @param settings  the version, retry limit and batch size of a round
@@ -94,7 +95,7 @@ public class ExtractionSweep {
     }
 
     /**
-     * One row, in two steps. READ+EXTRACT (the stored text, read as JSON, then the extractor): the
+     * One row, in two steps. READ+EXTRACT (the working copy, read as JSON, then the extractor): the
      * database failing the read is operational, counted {@code error} with the projection left alone,
      * as for a failed write; any other runtime failure here (a missing payload row, unreadable JSON,
      * the extractor) is the row's own, logged by class alone (its message may quote the row) and
@@ -113,8 +114,8 @@ public class ExtractionSweep {
             // Checked immediately before the write's transaction would open.
             outcome = isStopping() ? SweepRowOutcome.CANCELLED : write(candidate, projection);
         } catch (final RetryableIntakeException failure) {
-            // The database failed reading the stored text: operational, like a failed write.
-            LOG.warn("Extraction sweep could not read a row's stored text; an operational error, so the row is "
+            // The database failed reading the working copy: operational, like a failed write.
+            LOG.warn("Extraction sweep could not read a row's stored payload; an operational error, so the row is "
                     + "left as it was. shareId={} cause={} exception={}", candidate.shareId(),
                     failure.getFailureCause(), Objects.requireNonNullElse(failure.getCause(), failure).getClass()
                             .getName());
@@ -129,7 +130,7 @@ public class ExtractionSweep {
     }
 
     /**
-     * Reads the stored text and extracts. A database failure reading the text is thrown, as the
+     * Reads the working copy and extracts. A database failure reading it is thrown, as the
      * store classified it, for the caller to count as operational; any other runtime failure, a
      * missing payload row included, becomes the row's {@code UNEXPECTED} projection.
      *
@@ -142,7 +143,7 @@ public class ExtractionSweep {
         Projection projection;
         try {
             // JSON alone: the identity was proved when stored, and its rules may have been tightened since.
-            projection = extractor.extract(parser.readTree(store.payloadText(candidate.shareId())));
+            projection = extractor.extract(parser.readTree(store.payloadForExtraction(candidate.shareId())));
         } catch (final RetryableIntakeException operational) {
             throw operational;
         } catch (final RuntimeException failure) {

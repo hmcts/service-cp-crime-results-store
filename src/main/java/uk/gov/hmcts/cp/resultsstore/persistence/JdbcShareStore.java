@@ -123,10 +123,6 @@ public class JdbcShareStore implements ShareStore {
             UPDATE hearing_share SET projection_tried_at = now() WHERE share_id = :shareId
             """;
 
-    private static final String PAYLOAD_TEXT = """
-            SELECT payload_text FROM hearing_share_payload WHERE share_id = :shareId
-            """;
-
     /** The working copy, or the arrived text when there is none (specs/002-enrichment research R19). */
     private static final String PAYLOAD_FOR_EXTRACTION = """
             SELECT COALESCE(payload_json::text, payload_text) FROM hearing_share_payload WHERE share_id = :shareId
@@ -296,25 +292,6 @@ public class JdbcShareStore implements ShareStore {
     /**
      * {@inheritDoc}
      *
-     * @throws uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException when the database read
-     *         fails, classified by its SQLSTATE: an operational failure, not the row's
-     * @throws IncorrectResultSizeDataAccessException when the share has no payload row: the row's own
-     *         failure, thrown as it is
-     */
-    @Override
-    public String payloadText(final UUID shareId) {
-        try {
-            return jdbc.sql(PAYLOAD_TEXT).param(SHARE_ID, shareId).query(String.class).single();
-        } catch (final IncorrectResultSizeDataAccessException missing) {
-            throw missing;
-        } catch (final DataAccessException failure) {
-            throw RetryableFailures.classify(IntakeStage.STORE, failure);
-        }
-    }
-
-    /**
-     * {@inheritDoc}
-     *
      * <p>The existing-share select, run on its own as one autocommit read: no transaction, no lock.
      */
     @Override
@@ -335,8 +312,9 @@ public class JdbcShareStore implements ShareStore {
      * {@inheritDoc}
      *
      * @throws uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException when the database read
-     *         fails, classified by its SQLSTATE
-     * @throws IncorrectResultSizeDataAccessException when the share has no payload row, thrown as it is
+     *         fails, classified by its SQLSTATE: an operational failure, not the row's
+     * @throws IncorrectResultSizeDataAccessException when the share has no payload row: the row's own
+     *         failure, thrown as it is
      */
     @Override
     public String payloadForExtraction(final UUID shareId) {

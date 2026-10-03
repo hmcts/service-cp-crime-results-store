@@ -38,9 +38,9 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
  * The extraction sweep's round (FR-033 to FR-037, research R13), over a mocked share store: what it
- * selects, that it re-reads the stored text, what it reports, and that one row's failure is counted
- * and never stops the round. A failure reading or extracting is the row's (a failed attempt); a
- * failure writing, or a database failure reading the stored text, is operational (counted
+ * selects, that it re-reads the working copy (specs/002-enrichment FR-033), what it reports, and that
+ * one row's failure is counted and never stops the round. A failure reading or extracting is the row's (a failed attempt); a
+ * failure writing, or a database failure reading the working copy, is operational (counted
  * {@code error}, the row's projection left alone); a missing payload row is the row's own. Every
  * attempt of either kind is then recorded as tried, in its own transaction.
  */
@@ -97,10 +97,10 @@ class ExtractionSweepTest {
     }
 
     @Test
-    void readable_row_should_be_recorded_with_the_details_read_from_its_stored_text_and_counted_fixed() {
+    void readable_row_should_be_recorded_with_the_details_read_from_its_working_copy_and_counted_fixed() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -108,7 +108,7 @@ class ExtractionSweepTest {
         assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
         final ArgumentCaptor<Projection> projection = ArgumentCaptor.forClass(Projection.class);
         final InOrder order = inOrder(store, observer);
-        order.verify(store).payloadText(row.shareId());
+        order.verify(store).payloadForExtraction(row.shareId());
         order.verify(store).recordReextraction(eq(row), projection.capture(), eq(VERSION));
         order.verify(store).recordSweepAttempt(row.shareId());
         order.verify(observer).sweepRow(SweepRowOutcome.FIXED);
@@ -123,7 +123,7 @@ class ExtractionSweepTest {
     void row_that_fails_again_should_be_counted_with_its_kind_at_the_sweep_stage_after_the_write() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(unreadableCourtCentre(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(unreadableCourtCentre(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FAILED_AGAIN);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -143,7 +143,7 @@ class ExtractionSweepTest {
     void row_another_sweep_changed_first_should_be_counted_skipped_and_not_as_an_extraction_failure() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(unreadableCourtCentre(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(unreadableCourtCentre(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.SKIPPED);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -158,8 +158,8 @@ class ExtractionSweepTest {
         final SweepCandidate failing = candidate(1);
         final SweepCandidate next = candidate(2);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(failing, next));
-        when(store.payloadText(failing.shareId())).thenReturn(readable(failing));
-        when(store.payloadText(next.shareId())).thenReturn(readable(next));
+        when(store.payloadForExtraction(failing.shareId())).thenReturn(readable(failing));
+        when(store.payloadForExtraction(next.shareId())).thenReturn(readable(next));
         when(store.recordReextraction(eq(failing), any(), eq(VERSION)))
                 .thenThrow(new QueryTimeoutException("statement quoted " + MARKER));
         when(store.recordReextraction(eq(next), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
@@ -189,7 +189,7 @@ class ExtractionSweepTest {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
         // An offset without minutes: refused by today's identity rules, but the body is still JSON.
-        when(store.payloadText(row.shareId())).thenReturn(readable(row).replace(SHARED_TIME, "2026-10-02T14:19:50+01"));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row).replace(SHARED_TIME, "2026-10-02T14:19:50+01"));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -202,7 +202,7 @@ class ExtractionSweepTest {
     void row_whose_stored_text_is_not_json_should_record_a_failed_unexpected_attempt() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn("not json " + MARKER);
+        when(store.payloadForExtraction(row.shareId())).thenReturn("not json " + MARKER);
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FAILED_AGAIN);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -223,7 +223,7 @@ class ExtractionSweepTest {
     void row_whose_write_throws_should_be_an_operational_error_that_spends_no_attempt_and_is_recorded_as_tried() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(Projection.Extracted.class), eq(VERSION)))
                 .thenThrow(new DataIntegrityViolationException("row quoted " + MARKER));
 
@@ -248,7 +248,7 @@ class ExtractionSweepTest {
         final SweepCandidate first = candidate(1);
         final SweepCandidate next = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(first, next));
-        when(store.payloadText(any())).thenReturn(readable(first));
+        when(store.payloadForExtraction(any())).thenReturn(readable(first));
         when(store.recordReextraction(any(), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
         doThrow(new QueryTimeoutException("statement quoted " + MARKER)).when(store)
                 .recordSweepAttempt(first.shareId());
@@ -271,9 +271,9 @@ class ExtractionSweepTest {
         final SweepCandidate row = candidate(1);
         final SweepCandidate next = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
-        when(store.payloadText(row.shareId())).thenThrow(new RetryableIntakeException(IntakeStage.STORE,
+        when(store.payloadForExtraction(row.shareId())).thenThrow(new RetryableIntakeException(IntakeStage.STORE,
                 IntakeFailureCause.DATABASE, new CannotGetJdbcConnectionException("connection quoted " + MARKER)));
-        when(store.payloadText(next.shareId())).thenReturn(readable(next));
+        when(store.payloadForExtraction(next.shareId())).thenReturn(readable(next));
         when(store.recordReextraction(eq(next), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
 
         try (CapturedLog log = CapturedLog.forClass(ExtractionSweep.class)) {
@@ -297,7 +297,7 @@ class ExtractionSweepTest {
         final SweepCandidate row = candidate(1);
         final ExtractionSweep underTest = sweep();
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenAnswer(invocation -> {
+        when(store.payloadForExtraction(row.shareId())).thenAnswer(invocation -> {
             underTest.stop();
             throw new RetryableIntakeException(IntakeStage.STORE, IntakeFailureCause.DATABASE,
                     new CannotGetJdbcConnectionException("closing"));
@@ -315,7 +315,7 @@ class ExtractionSweepTest {
     void row_whose_payload_row_is_missing_should_record_a_failed_unexpected_attempt() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenThrow(new EmptyResultDataAccessException(1));
+        when(store.payloadForExtraction(row.shareId())).thenThrow(new EmptyResultDataAccessException(1));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FAILED_AGAIN);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
@@ -331,7 +331,7 @@ class ExtractionSweepTest {
         final SweepCandidate first = candidate(1);
         final SweepCandidate second = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(first, second));
-        when(store.payloadText(first.shareId())).thenReturn(readable(first));
+        when(store.payloadForExtraction(first.shareId())).thenReturn(readable(first));
         when(store.recordReextraction(eq(first), any(), eq(VERSION))).thenAnswer(invocation -> {
             Thread.currentThread().interrupt();
             return SweepRowOutcome.FIXED;
@@ -341,7 +341,7 @@ class ExtractionSweepTest {
             final List<SweepRowOutcome> outcomes = sweep().runRound();
 
             assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
-            verify(store, never()).payloadText(second.shareId());
+            verify(store, never()).payloadForExtraction(second.shareId());
             verify(store, never()).recordSweepAttempt(any());
         } finally {
             assertThat(Thread.interrupted()).as("still interrupted for the scheduler").isTrue();
@@ -352,7 +352,7 @@ class ExtractionSweepTest {
     void row_that_fails_while_its_thread_is_interrupted_should_be_cancelled_with_no_failed_attempt() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
             Thread.currentThread().interrupt();
             throw new QueryTimeoutException("interrupted");
@@ -378,7 +378,7 @@ class ExtractionSweepTest {
         final SweepCandidate next = candidate(1);
         final ExtractionSweep underTest = sweep();
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
-        when(store.payloadText(row.shareId())).thenAnswer(invocation -> {
+        when(store.payloadForExtraction(row.shareId())).thenAnswer(invocation -> {
             underTest.stop();
             return readable(row);
         });
@@ -388,7 +388,7 @@ class ExtractionSweepTest {
         assertThat(outcomes).containsExactly(SweepRowOutcome.CANCELLED);
         verify(store, never()).recordReextraction(any(), any(), anyInt());
         verify(store, never()).recordSweepAttempt(any());
-        verify(store, never()).payloadText(next.shareId());
+        verify(store, never()).payloadForExtraction(next.shareId());
         verify(observer).sweepRow(SweepRowOutcome.CANCELLED);
         assertThat(Thread.currentThread().isInterrupted()).isFalse();
     }
@@ -399,7 +399,7 @@ class ExtractionSweepTest {
         final SweepCandidate next = candidate(1);
         final ExtractionSweep underTest = sweep();
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
             underTest.stop();
             return SweepRowOutcome.FIXED;
@@ -409,7 +409,7 @@ class ExtractionSweepTest {
 
         assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
         verify(store, never()).recordSweepAttempt(any());
-        verify(store, never()).payloadText(next.shareId());
+        verify(store, never()).payloadForExtraction(next.shareId());
     }
 
     @Test
@@ -417,7 +417,7 @@ class ExtractionSweepTest {
         final SweepCandidate row = candidate(1);
         final ExtractionSweep underTest = sweep();
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
             underTest.stop();
             throw new QueryTimeoutException("cancelled by the stop");
@@ -434,7 +434,7 @@ class ExtractionSweepTest {
         final SweepCandidate row = candidate(1);
         final ExtractionSweep underTest = sweep();
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
         underTest.stop();
         assertThat(underTest.runRound()).isEmpty();
@@ -449,7 +449,7 @@ class ExtractionSweepTest {
     void round_with_rows_should_log_its_counts_and_no_stored_text() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.payloadForExtraction(row.shareId())).thenReturn(readable(row));
         when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
 
         try (CapturedLog log = CapturedLog.forClass(ExtractionSweep.class)) {

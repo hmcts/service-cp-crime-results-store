@@ -530,10 +530,26 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     between deliveries is read with a wide margin on a slow runner and still well inside the 30 s bound and
     the 10 s read timeout. Test-only change; green.
 
-- [ ] T008 [P] [US1] Test first: `ExtractionSweepTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweepTest.java, `ExtractionSweepIT` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ExtractionSweepIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweep.java (reads `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (`payloadText` removed; javadoc of `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java (`payloadText` removed)
+- [X] T008 [P] [US1] Test first: `ExtractionSweepTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweepTest.java, `ExtractionSweepIT` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ExtractionSweepIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweep.java (reads `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (`payloadText` removed; javadoc of `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java (`payloadText` removed)
   - Cases: `ExtractionSweepTest`: extracts from `payloadForExtraction`; a missing payload row still counts its own failure; a database failure reading the copy counts `error`. `ExtractionSweepIT`: a `FAILED` row whose `payload_json` carries a defendant the `payload_text` lacks (rows inserted directly, as the suite's fixtures do) is re-extracted from `payload_json` and indexes that defendant; a `FAILED` row with NULL `payload_json` is re-extracted from the text; the sweep makes no progression request (no `ProgressionApplications` bean in the sweep context, and a WireMock verify of 0 requests when one is present); `EXTRACTOR_VERSION` unchanged.
   - Covers: FR-033, FR-034.
   - Done when: both test classes green; the gate green.
+  - RED (the three production files at phase C's base, 5c08ab3, where the sweep still reads
+    `payloadText`; the tests as committed here; `failFast`, so case by case):
+    `ExtractionSweepTest` → `readable_row_should_be_recorded_with_the_details_read_from_its_working_copy_and_counted_fixed() FAILED`
+    `WantedButNotInvoked: store.payloadForExtraction(…)` (the sweep read `payloadText`, which the mock
+    leaves unanswered, so the row became an `UNEXPECTED` failure; the round's other cases fail the same way);
+    `ExtractionSweepIT` → `failed_row_should_be_re_extracted_from_its_working_copy_not_its_arrived_text() FAILED`
+    `Expecting actual: [[c1c1…0001, d1d1…0001, e1e1…0001]] to contain exactly in any order: […0001], [c1c1…0001, d1d1…0002, e1e1…0002]] but could not find […0002]`
+    (the defendant only the working copy names was not indexed). Already green on the base, as they pin
+    behaviour that does not change: `row_with_no_parsed_copy_should_be_read_from_its_stored_text` (NULL
+    `payload_json` falls back to the text: `COALESCE` of T005), `sweep_should_make_no_progression_request_and_keep_the_extractor_version`
+    (no `ProgressionApplications` bean in the sweep's context, 0 requests on the stub, `EXTRACTOR_VERSION`
+    1), `payload_read_that_fails_should_leave_the_projection_stamp_the_try_and_count_an_error` (now
+    through `payloadForExtraction`).
+  - GREEN: `ExtractionSweepTest` 19, `ExtractionSweepIT` 18, `JdbcShareStoreIT` 26, 0 failures.
+    `payloadText` is gone from `ShareStore` and `JdbcShareStore`; the sweep reads `payloadForExtraction`
+    (`COALESCE(payload_json::text, payload_text)`), so the T005 stop-gap duplication is removed.
 
 - [ ] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
   - Covers: FR-039; SC-010.

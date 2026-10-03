@@ -49,26 +49,17 @@ public interface ShareStore {
     List<SweepCandidate> sweepCandidates(int currentVersion, int maxAttempts, int limit);
 
     /**
-     * A share's stored payload text, as received (FR-036). Read outside any transaction: it never
-     * changes.
-     *
-     * @param shareId the share
-     * @return the text
-     * @throws RetryableIntakeException when the database read fails: an operational failure, which the
-     *     sweep counts as the row's {@code error}, not as its failed attempt
-     * @throws RuntimeException any other, e.g. no payload row for the share: the row's own failure
-     */
-    String payloadText(UUID shareId);
-
-    /**
-     * A share's working copy for extraction: {@code payload_json} as text, or {@code payload_text} when
-     * the working copy is empty (specs/002-enrichment FR-033). Read outside any transaction: it never
-     * changes.
+     * A share's working copy for extraction, the one payload read the sweep makes: {@code payload_json}
+     * as text, or {@code payload_text} when {@code payload_json} is NULL (text {@code jsonb} cannot hold)
+     * (specs/002-enrichment FR-033). Every indexed column is derived from it, so a re-extraction indexes
+     * what an enriched share's working copy holds, not only what arrived. Read outside any transaction:
+     * it never changes.
      *
      * @param shareId the share
      * @return the copy to extract from
-     * @throws RetryableIntakeException when the database read fails
-     * @throws RuntimeException any other, e.g. no payload row for the share
+     * @throws RetryableIntakeException when the database read fails: an operational failure, which the
+     *     sweep counts as the row's {@code error}, not as its failed attempt
+     * @throws RuntimeException any other, e.g. no payload row for the share: the row's own failure
      */
     String payloadForExtraction(UUID shareId);
 
