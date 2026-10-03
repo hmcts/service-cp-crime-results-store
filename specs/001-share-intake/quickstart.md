@@ -110,6 +110,19 @@ Recovery is a restart only, and Kubernetes does it through the liveness probe; n
 the schedule in place. Readiness is not affected, so the pod keeps taking traffic until it is
 restarted.
 
+A row that fails for an operational reason (the database failing its payload read or its write)
+is counted `resultsstore.sweep.rows{outcome="error"}`; its projection is left as it was and no
+attempt is spent, so it is retried for as long as the cause lasts. Every attempt stamps
+`projection_tried_at`, and rounds take rows never tried first, then the longest since tried, so a
+row that keeps failing rotates behind the others instead of blocking the batch. A steady `error`
+count therefore points at the database, not at the rows.
+
+On shutdown the schedule asks the sweep to stop: no new row, write or try stamp is started, and
+`stop()` waits for the row in progress up to twice `resultsstore.intake.store.transaction-timeout`
+(120 s by default). If that bound passes the log shows one WARN, `Extraction sweep stop timed out`,
+and the row may still be finishing; the pod's termination grace period should allow for the bound.
+A row cut short by the stop counts `cancelled`.
+
 ## 7. Run a phase through the phase gate
 
 Each phase of `tasks.md` is implemented and reviewed with the repository's workflow

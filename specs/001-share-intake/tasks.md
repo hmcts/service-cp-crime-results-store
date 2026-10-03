@@ -968,8 +968,45 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
 
 ## Final: Consistency and PR preparation
 
-- [ ] T016 Run `/speckit-analyze` over specs/001-share-intake/spec.md, specs/001-share-intake/plan.md and specs/001-share-intake/tasks.md and resolve every CRITICAL/HIGH finding (including the FR-008 narrowing for raw U+0000 noted in plan.md); walk specs/001-share-intake/quickstart.md §3–§5 against the compose stack; prepare the PR description naming the principles touched (I, II, IV, V, VI, VIII, IX, X, XI, XII) and the success criteria evidence
+- [X] T016 Run `/speckit-analyze` over specs/001-share-intake/spec.md, specs/001-share-intake/plan.md and specs/001-share-intake/tasks.md and resolve every CRITICAL/HIGH finding (including the FR-008 narrowing for raw U+0000 noted in plan.md); walk specs/001-share-intake/quickstart.md §3–§5 against the compose stack; prepare the PR description naming the principles touched (I, II, IV, V, VI, VIII, IX, X, XI, XII) and the success criteria evidence
   - Done when: `/speckit-analyze` reports no CRITICAL or HIGH finding; the quickstart steps give the expected rows and metrics; the PR text is drafted (no push without approval); the gate green.
+  - `/speckit-analyze` (read-only, over spec.md, plan.md and tasks.md with the constitution, research,
+    data-model and contracts as context): 0 CRITICAL, 4 HIGH, 7 MEDIUM, 4 LOW. Coverage: 47 of 47
+    functional requirements and 12 of 12 success criteria have at least one task; no unmapped task.
+    HIGH, all fixed: research R13 still ordered candidates by `stored_seq` and did not tell the row's
+    own failures from operational ones (now `projection_tried_at NULLS FIRST, stored_seq`, the two
+    kinds, the try stamp, the stop); R17 said `AvoidCatchingGenericException` was not enabled (it is,
+    in errorprone in PMD 7.22; the six `catch (RuntimeException)` sites carry reasoned suppressions); R8 rejected
+    the savepoint the payload insert uses and called the NUL pre-check over-cautious (it reads escapes
+    exactly, so `\\u0000` is plain text); plan's Principle I row left out `projection_tried_at`.
+    MEDIUM, all fixed: spec Key Entities (share: `enrichment_applied` fixed, `projected_at` and
+    `projection_tried_at` updatable by the sweep; defendant rows insert-only, matching
+    `share_defendant_guard_tg` and `hearing_share_fixed_columns_guard`, which keeps
+    `arrived_out_of_order` fixed); V4 missing from spec Scope and plan; plan's source tree (`CANCELLED`,
+    the `ShareStore` sweep methods, `StoreRequest` / `StoreResult` shapes, `SweepSchedule` and its
+    health indicator); contracts/metrics.md (`error` includes a failed payload read, `cancelled`
+    includes `stop()`, `extraction.failed{stage=sweep}` only with `failed_again`, sweep failures never
+    in `intake.failed`, `rounds.failed` and the liveness end); quickstart §6 (operational errors rotate,
+    `stop()` waits up to 2 × the store transaction timeout); data-model's day row (`latest_share_id`
+    NULL whenever `share_count` is 0) and share prose (`shared_at` to the microsecond, the V4 column).
+    LOW: plan's task count fixed (16); the rest are under "Deferred" below. R7 already matched the
+    parser (six-digit cut; leap second and offsets past ±18:00 are `INVALID_SHARED_TIME`). The FR-008
+    narrowing for raw U+0000 is in FR-008 itself. Complexity Tracking stays empty: no gate is violated
+    (`projection_tried_at` is a `projection_*` column, which Principle I lets the sweep alone write).
+  - Quickstart §3–§5: walked by `scripts/container-smoke.sh` (the compose stack, the §4 message, the §5
+    rows and metrics): `PASS`, every check `ok`. Final gate: `./gradlew clean build pmdMain pmdTest
+    jacocoTestReport jacocoTestCoverageVerification` exits 0: 683 tests, 0 failures, 0 skipped; PMD main
+    and test clean; JaCoCo report line 943/949, branch 295/296; verification passes.
+  - PR description: not drafted in the repository; left to whoever opens the PR.
+  - Deferred (not in 001):
+    - batching the `share_defendant` inserts (one statement per row today; fine at the volumes seen);
+    - retention and purge (`expires_at` stays empty; a later spec drops `hearing_share_expires_unset_ck`);
+    - SC-001's 1 s bound is not timed by the smoke (it waits up to 30 s for the receipts to settle);
+    - V3's comment on `latest_share_id` names only the creating transaction; V3 is on `main`, so the
+      wider rule is written in data-model.md instead of editing the migration;
+    - a sweep `error` does not say whether the read or the write failed (one bounded tag; the log line
+      does);
+    - the production PostgreSQL version (research R2) is still to be confirmed.
 
 ---
 

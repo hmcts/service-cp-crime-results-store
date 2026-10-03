@@ -9,7 +9,7 @@
 
 ### Scope
 
-**In scope.** Receipt-first intake. Identifying the share. The store transaction: hearing-day lock, duplicate drop by unique key, payload text and parsed copy, key details, defendant index, youth flags, latest pointer and predecessor chain. Non-shares recorded and acknowledged. A short capped pause before a redelivery. Extraction failure kept apart from storing, with a sweep that retries. Metrics. Database migrations V2 and V3 (V1 is not changed). An end-to-end check through the compose stack.
+**In scope.** Receipt-first intake. Identifying the share. The store transaction: hearing-day lock, duplicate drop by unique key, payload text and parsed copy, key details, defendant index, youth flags, latest pointer and predecessor chain. Non-shares recorded and acknowledged. A short capped pause before a redelivery. Extraction failure kept apart from storing, with a sweep that retries. Metrics. Database migrations V2, V3 and V4 (V1 is not changed). An end-to-end check through the compose stack.
 
 **Out of scope.**
 
@@ -245,9 +245,9 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 
 - **Receipt (`event_receipt`)**: one row per message received. Identity: the broker's message id. Holds arrival times, delivery and attempt counts, the share's identity when present, status, settled time, reason, message text (non-shares only), and the share id once stored or found as a duplicate. Updatable: attempt count, last received and delivery count on every delivery; status, reason, text and share id only while `RECEIVED`.
 - **Hearing day (`hearing_day_head`)**: one row per (`hearingId`, `hearingDay`). The lock point for writes. Holds the latest share, the share count and `youth_seen`. All three change under the lock.
-- **Share (`hearing_share`)**: one row per share. Identity: `share_id`, computed from `hearingId`, `hearingDay`, `sharedTime`, with a unique key on the three. Fixed at insert: identity, `shared_at`, both shared days, `stored_at`, `stored_seq`, checksum, `arrived_out_of_order`. Updatable under the lock: `is_latest`, predecessor, `day_youth_seen`. Updatable by the sweep only: key-detail columns (including re-share, `isReshare`, which is read with them), `any_subject_is_youth`, `projection_status`, `projection_reason`, `projection_version`, extraction attempts. `expires_at` is present and empty.
+- **Share (`hearing_share`)**: one row per share. Identity: `share_id`, computed from `hearingId`, `hearingDay`, `sharedTime`, with a unique key on the three. Fixed at insert: identity, `shared_at`, both shared days, `stored_at`, `stored_seq`, checksum, `arrived_out_of_order`, `enrichment_applied`. Updatable under the lock: `is_latest`, predecessor, `day_youth_seen`. Updatable by the sweep only, while the row is `FAILED`: key-detail columns (including re-share, `isReshare`, which is read with them), `any_subject_is_youth`, `projection_status`, `projection_reason`, `projection_version`, extraction attempts, `projected_at`. Stamped by the sweep only, after every attempt whatever the outcome or status: `projection_tried_at`. `expires_at` is present and empty.
 - **Payload (`hearing_share_payload`)**: one row per share. The exact text, its size in bytes, and a parsed copy that may be empty. Never updated.
-- **Defendant index (`share_defendant`)**: rows keyed by (share, case, defendant), with the master defendant id. Ids only. Written at store time, or by the sweep for a row that failed extraction.
+- **Defendant index (`share_defendant`)**: rows keyed by (share, case, defendant), with the master defendant id. Ids only. Written at store time, or by the sweep for a row that failed extraction (which has none). Insert-only: never updated or deleted.
 
 ## Success Criteria *(mandatory)*
 

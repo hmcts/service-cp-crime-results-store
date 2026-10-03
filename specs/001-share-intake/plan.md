@@ -17,8 +17,8 @@ chain by `shared_at`, youth flags, receipt `STORED`); fire metrics; return so th
 commits the JMS session, which acknowledges the message. Duplicates are dropped by the unique key
 and marked `DUPLICATE`. An extraction failure never stops a share being stored; a scheduled sweep,
 safe on several pods without a distributed lock, retries `FAILED` rows. A retryable failure is
-rethrown after a capped pause so the broker redelivers. Two Flyway migrations, V2 and V3; V1 is
-untouched. Detail: [research.md](research.md), [data-model.md](data-model.md),
+rethrown after a capped pause so the broker redelivers. Flyway migrations V2, V3 and V4 (the
+sweep's `projection_tried_at`); V1 is untouched. Detail: [research.md](research.md), [data-model.md](data-model.md),
 [contracts/](contracts/).
 
 ## Technical Context
@@ -30,7 +30,7 @@ over Boot's `JdbcTransactionManager`; Jackson 3 (`tools.jackson`); Micrometer, p
 `io.micrometer:micrometer-registry-prometheus` (new, version from the Boot BOM; research R16);
 Lombok available  
 **Storage**: PostgreSQL (16 locally and in tests; production Azure Flexible Server version not
-known yet, see research R2), Flyway migrations V2 and V3  
+known yet, see research R2), Flyway migrations V2, V3 and V4  
 **Testing**: JUnit 5, Mockito, AssertJ, Awaitility; Testcontainers `postgres:16`
 (`support/PostgresTestSupport`); embedded Artemis (`artemis-jakarta-server`); all in the one
 `test` task, `failFast` on  
@@ -45,7 +45,7 @@ branch (excluding `Application` and `config/**`); PMD 7.22.0 clean on main and t
 (`OnlyOneReturn` on); no wildcard imports; ids only in logs; bounded metric tags; Hikari socket
 timeout 30 s; V1 never edited  
 **Scale/Scope**: 2 or more pods, one consumer each on the one shared subscription; about 35 new
-production classes and 25 test classes; 15 tasks (T001 done) in four phases
+production classes and 25 test classes; 16 tasks (T001 done) in four phases and a final task
 
 No item above is unresolved: every open point is settled in [research.md](research.md).
 
@@ -57,7 +57,7 @@ Constitution 2.0.0.
 
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|
-| I. Every share is an immutable version | Shares, payloads and defendant rows are insert-only. Only `is_latest`, `predecessor_share_id`, `day_youth_seen` (store transaction, under the day lock) and the key-detail and `projection_*` columns (sweep only, under the day lock, row still `FAILED`) are ever updated; on the day row only latest, count and `youth_seen` (data-model "What may change"). Latest is the greatest `shared_at` under the lock; a late share is linked in, not made latest | PASS |
+| I. Every share is an immutable version | Payloads and defendant rows are insert-only (`refuse_row_change` guards; the sweep only inserts the first defendant rows of a `FAILED` share). A share's facts, `arrived_out_of_order` and `enrichment_applied` included, are fixed at insert (`hearing_share_fixed_columns_guard`). Only `is_latest`, `predecessor_share_id`, `day_youth_seen` (store transaction, under the day lock), the key-detail and `projection_*` columns (sweep only, under the day lock, row still `FAILED`) and `projection_tried_at` (sweep only, after every attempt, any status) are ever updated; on the day row only latest, count and `youth_seen` (data-model "What may change") | PASS |
 | II. The payload is the source of truth | Text stored exactly as received, its byte size, SHA-256 over the UTF-8 text; every key-detail column is read from it and the sweep rebuilds from the text, never the parsed copy. No enrichment in 001 (`enrichment_applied` false) | PASS |
 | III. Consumers search indexed columns | No read path in 001. Key details are normalised nullable columns; the consumer indexes arrive with the read API in spec 003 | PASS (not exercised) |
 | IV. No business rules | Facts recorded as stated: `jurisdiction_type` with no value check, `youth_court_id` as stated, nothing derived from `youthCourtDefendantIds`. The youth flags are three-valued records of `isYouth`, agreed with Sachin (D1, D3), not a youth rule | PASS |
@@ -84,6 +84,11 @@ the table above. Points checked again:
   acknowledged, so V holds; the narrowing of FR-008's "with the message text" is noted for
   `/speckit-analyze`.
 - Adding the Prometheus registry adds no endpoint (the exposure list already names it).
+
+**Re-check after implementation (T016): PASS.** V4 adds `projection_tried_at`, a `projection_*`
+column written by the sweep alone (Principle I's sweep-only list); it is stamped whatever the row's
+status, so it is outside `hearing_share_projection_guard`'s `FAILED`-only list (FR-044). The
+`sweepSchedule` liveness contributor adds no endpoint. No gate is violated.
 
 ## Project Structure
 
@@ -126,7 +131,7 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + ExtractionFailureKind.java    # MISSING, WRONG_TYPE, INVALID_UUID, UNEXPECTED (+ tag)
 │   ├── + IntakeOutcome.java            # STORED, DUPLICATE, NOT_A_SHARE, ALREADY_SETTLED (+ tags)
 │   ├── + IntakeFailureCause.java       # LOCK_TIMEOUT, STATEMENT_TIMEOUT, DATABASE, OTHER (+ fromSqlState(String))
-│   └── + SweepRowOutcome.java          # FIXED, FAILED_AGAIN, SKIPPED, ERROR (+ tag)
+│   └── + SweepRowOutcome.java          # FIXED, FAILED_AGAIN, SKIPPED, ERROR, CANCELLED (+ tag)
 ├── application/
 │   ├── + IntakeCommand.java            # record: messageId (nullable), deliveryCount, text (nullable)
 │   ├── + IntakeResult.java             # record: outcome + ids for the MDC
@@ -135,9 +140,10 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + IntakeService.java            # parse, extract, receipt tx, store tx, observer after commit
 │   ├── + EventReceipts.java            # port: recordArrival(...) -> ReceiptState
 │   ├── + ReceiptState.java             # record: status, shareId, attempts, inserted
-│   ├── + ShareStore.java               # port: store(StoreRequest) -> StoreResult; sweep candidates; applySweep(...)
-│   ├── + StoreRequest.java             # record: identity, shareId, days, checksum, text, parsedCopyAllowed, projection, messageId
-│   ├── + StoreResult.java              # sealed: Stored(shareId, storedAt, outOfOrder) | Duplicate(existingShareId)
+│   ├── + ShareStore.java               # port: store(StoreRequest) -> StoreResult; sweepCandidates, payloadText,
+│   │                                   #   recordReextraction, recordSweepAttempt
+│   ├── + StoreRequest.java             # record: messageId, identity, shareId, days, checksum, text, projection
+│   ├── + StoreResult.java              # sealed: Stored(shareId, storedAt, outOfOrder, parsedCopySkipped) | Duplicate(existingShareId)
 │   ├── + IntakeObserver.java           # port: one method per metric event
 │   ├── + RetryableIntakeException.java # carries stage + IntakeFailureCause; thrown by the persistence adapters
 │   │                                   #   (they classify the SQLSTATE and rethrow); IntakeService counts it and rethrows
@@ -158,7 +164,10 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + IntakeProperties.java         # resultsstore.intake.* (contracts/configuration.md)
 │   ├── + SweepProperties.java          # resultsstore.sweep.*
 │   ├── + IntakeConfig.java             # registers properties, validates relations, wires TransactionTemplates and Sleeper
-│   ├── + SweepSchedulingConfig.java    # dedicated TaskScheduler; @Scheduled trigger; @ConditionalOnProperty(sweep.enabled)
+│   ├── + SweepSchedulingConfig.java    # the sweep and its schedule, only when publicevents and sweep are enabled
+│   ├── + SweepSchedule.java            # dedicated scheduler, fixed delay; stop() waits a bounded time
+│   ├── + SweepScheduleHealthIndicator.java # always registered: `sweepSchedule` in the liveness group;
+│   │                                   #   DOWN once an Error ended the schedule, UP with no sweep
 │   └── + MicrometerIntakeObserver.java # IntakeObserver -> Micrometer; no branches
 └── filters/ActionHeaderFilter.java     # unchanged
 
@@ -167,7 +176,8 @@ src/main/resources/
 └── db/migration/
     ├── V1__create_event_receipt.sql    # unchanged, never edited
     ├── + V2__reshape_event_receipt.sql
-    └── + V3__create_share_store.sql
+    ├── + V3__create_share_store.sql
+    └── + V4__projection_tried_at.sql   # the sweep's try stamp and its candidate index (T012)
 
 src/test/java/uk/gov/hmcts/cp/resultsstore/
 ├── domain/        + ShareIdTest, PayloadChecksumTest, SharedDaysTest, NonShareReasonTest,

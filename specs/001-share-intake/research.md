@@ -240,18 +240,26 @@ binding to a typed model (the technical rules forbid it).
 
 **Decision.**
 - **Escaped `\u0000` inside JSON** (six characters): valid JSON that PostgreSQL `jsonb` refuses
-  ("unsupported Unicode escape sequence"). Before the store transaction, Java checks the text for
-  the escape (case-insensitive `\u0000`) and for an unpaired surrogate escape (`\uD800`–`\uDFFF`
-  not in a valid pair), which `jsonb` also refuses. If either is found, `payload_json` is written
-  as NULL and `resultsstore.intake.parsed.copy.skipped` goes up. The text is stored as it arrived
-  (FR-015). The check may be over-cautious (for example a literal `\\u0000`); the only effect is
-  an empty parsed copy, which nothing in 001 reads.
+  ("unsupported Unicode escape sequence"). Before the payload insert, `NulSafety` checks the text
+  for the escape `\u0000` (hex digits in either case) and for an unpaired surrogate escape
+  (`\uD800`–`\uDFFF` not in a valid pair), which `jsonb` also refuses. It reads escapes exactly as
+  JSON does: a backslash and the character after it are one escape, so an escaped backslash
+  followed by `u0000` (`\\u0000`) is plain text and does not trip the check. If either is found,
+  `payload_json` is written as NULL and `resultsstore.intake.parsed.copy.skipped` goes up. The text
+  is stored as it arrived (FR-015).
+- **Any other `jsonb` refusal** (SQLSTATE class 22, for example a number beyond `numeric`'s range):
+  the payload insert with the parsed copy runs under a savepoint; on a class-22 failure the
+  savepoint is rolled back and the row is written without the parsed copy, counted the same way.
+  Any other failure rolls the whole store transaction back.
 - **A raw U+0000 character** in the message: PostgreSQL `text` cannot hold it at all, in any
   column. JSON does not allow it unescaped, so such a body is never a share. It is recorded
   `UNREADABLE` with reason `NUL_CHARACTER` and **no** message text, so the receipt write itself
   cannot fail. This is a narrow addition to FR-008 ("with the message text"): the text cannot be
   stored, and storing a changed copy would misrepresent it.
 - `payload_json` is filled with `CAST(:payload AS jsonb)` in the payload insert.
+- **Precision of `shared_at`**: `timestamptz` keeps microseconds, so `sharedTime` is cut to six
+  fraction digits and truncated to the microsecond before it is stored (R7); the share id still
+  hashes the string as sent (R4).
 - **Escaped `\u0000` or an unpaired surrogate escape inside a string key detail**
   (`hearing.courtCentre.lja.ljaCode`, `hearing.jurisdictionType`): the parsed value holds U+0000 or a
   lone UTF-16 surrogate, which the `text` key-detail column cannot hold, so the insert would fail on
@@ -264,9 +272,10 @@ binding to a typed model (the technical rules forbid it).
 **Rationale.** Never refuse to store (Principle V). Without the pre-check, one such payload would
 fail the store transaction on every delivery and end on the dead-letter queue.
 
-**Alternatives considered.** `payload_json NOT NULL` (breaks "never refuse"); a savepoint around
-the cast (works, but adds nested transactions for a case the pre-check already covers); dropping
-the parsed copy (the page keeps it for R2 and rebuilds).
+**Alternatives considered.** `payload_json NOT NULL` (breaks "never refuse"); a savepoint alone,
+with no pre-check (works, but makes the common `\u0000` case a database round trip and a rollback;
+the savepoint is kept only for the refusals the pre-check cannot foresee); dropping the parsed copy
+(the page keeps it for R2 and rebuilds).
 
 ---
 
@@ -349,7 +358,9 @@ A round:
 
 1. Select candidates without locks: `projection_status = 'FAILED' AND (projection_version <
    :current OR (projection_reason LIKE 'UNEXPECTED%' AND projection_attempts < :maxAttempts))
-   ORDER BY stored_seq LIMIT :batch`, remembering each row's `projection_attempts`.
+   ORDER BY projection_tried_at NULLS FIRST, stored_seq LIMIT :batch` (never tried first, then the
+   longest since tried; index `hearing_share_sweep_ix`, V4), remembering each row's
+   `projection_attempts`.
 2. For each row: read the stored `payload_text` (outside any transaction; it never changes) and
    extract.
 3. In one transaction per row: timeouts, lock the day row `FOR UPDATE`, lock the share row
@@ -357,7 +368,20 @@ A round:
    If not, skip it (another pod got there first). Otherwise write the result: on success the
    key-detail columns, `OK`, version, attempts + 1, the defendant rows, then the youth recompute
    (R15); on failure the new reason, version and attempts + 1.
-4. Catch a failure per row, count it, carry on (FR-037). Never catch `Throwable`.
+4. Catch a failure per row, count it, carry on (FR-037). Never catch `Throwable`. Two kinds:
+   - the row's own: a missing payload row, JSON that does not read, or the extractor throwing.
+     Recorded as a failed attempt, `UNEXPECTED:<class>`, so it stops at the retry limit; counted
+     `failed_again`.
+   - operational: the database failing the payload read (classified `RetryableIntakeException`) or
+     the write transaction. Nothing about the projection changes and no attempt is spent; counted
+     `error`.
+5. After every attempt, whatever the outcome, stamp `projection_tried_at = now()` in its own short
+   transaction holding only the row's lock, so a row that keeps failing rotates behind the others
+   instead of holding the head of every batch. If the stamp fails the row stays as it is.
+6. Stopping (`ExtractionSweep.stop()`, or the thread interrupted): no transaction is opened for a
+   row, neither its write nor its stamp, and no further row is started; a row cut short is counted
+   `cancelled`. A round that throws is counted `resultsstore.sweep.rounds.failed`; an `Error` ends
+   the schedule and takes the liveness group `DOWN` (quickstart §6).
 
 **Rationale.** Correctness comes from the per-row re-check under the locks, not from who runs.
 Checking the attempts value seen makes each row processed at most once per round even with
@@ -464,8 +488,10 @@ keeps it framework-free (design rules).
   methods return boolean; no `var`.
 - `AvoidCatchingThrowable` and `AvoidCatchingNPE` (errorprone) apply: the extractor catches
   `RuntimeException` only.
-- `GuardLogStatement` is excluded; `AvoidCatchingGenericException` sits in `design.xml`, which is
-  not enabled, so `catch (RuntimeException)` is allowed.
+- `GuardLogStatement` is excluded. `AvoidCatchingGenericException` is in `errorprone.xml` in PMD
+  7.22, which is enabled, so every `catch (RuntimeException)` carries a
+  site suppression with its reason (catch-to-record or catch-to-count): the extractor
+  (`KeyDetailsExtractor`), `IntakeService`, the listener, and the sweep's three per-row steps.
 
 **Rationale.** SC-011. Fixing the shape late costs more than writing it right.
 

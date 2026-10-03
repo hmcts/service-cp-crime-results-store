@@ -395,14 +395,21 @@ reason, the message text (non-shares only), and the share id once stored or foun
 ### Hearing day (`hearing_day_head`)
 
 One row per (`hearing_id`, `hearing_day`). The lock point for every write to that day. Holds the
-latest share, the number of shares stored and the day's youth flag.
+latest share, the number of shares stored and the day's youth flag. `latest_share_id` is NULL
+exactly when `share_count` is 0 (`hearing_day_head_latest_ck`): inside the transaction that creates
+the row, and for any day row with no shares, which the CHECK allows (in 001 none is ever committed:
+the transaction that inserts a day row stores its first share or rolls back). V3's column comment says only the first case; V3 is on `main`, so
+its text is left as it is (a comment edit would change the migration's checksum).
 
 ### Share (`hearing_share`)
 
 One row per share, i.e. per version of a hearing day. `share_id` is computed (R4); the unique key
-on the three identity values is the whole idempotency mechanism. Holds both clocks (`shared_at`;
-`stored_at` and `stored_seq`), both calendar days, the checksum, the key details, the youth facts,
-the chain columns, the extraction status, and `expires_at` (empty).
+on the three identity values is the whole idempotency mechanism. Holds both clocks (`shared_at`,
+`sharedTime` cut to six fraction digits and truncated to the microsecond, R7; `stored_at` and
+`stored_seq`), both calendar days, the checksum, the key details, the youth facts, the chain
+columns, the extraction status, when the sweep last tried it (`projection_tried_at`, V4), and
+`expires_at` (empty). Fixed at insert: identity, `shared_at`, both days, `stored_at`, `stored_seq`,
+checksum, `arrived_out_of_order` and `enrichment_applied` (`hearing_share_fixed_columns_guard`).
 
 ### Payload (`hearing_share_payload`)
 
