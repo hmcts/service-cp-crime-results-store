@@ -496,6 +496,30 @@ class JdbcShareStoreIT {
     @Test
     void parsed_copy_failure_that_is_not_a_data_exception_should_leave_nothing_and_the_receipt_received() {
         final StoreRequest request = received("ID:1", SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME));
+
+        assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(request);
+
+        assertNothingWritten();
+    }
+
+    /**
+     * Only a data exception (SQLSTATE class 22) on the enriched copy is "refused". A statement timeout
+     * on the same insert is an operational failure: it must escape as a retryable store failure, not
+     * turn into a silent fallback to the arrived copy.
+     */
+    @Test
+    void enriched_copy_failure_that_is_not_a_data_exception_should_throw_retryable_and_leave_nothing() {
+        final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, SHARED_TIME, APPLICATION_ID);
+        final StoreRequest request = enriched("ID:1", text, SampleShares.finalised("Granted"));
+        assertThat(request.enrichmentApplied()).isTrue();
+
+        assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(request);
+
+        assertNothingWritten();
+    }
+
+    /** A test-only trigger refuses any payload row with a parsed copy as a statement timeout (57014). */
+    private void assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(final StoreRequest request) {
         jdbc.sql("""
                 CREATE FUNCTION test_refuse_parsed_copy() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
@@ -520,12 +544,6 @@ class JdbcShareStoreIT {
             jdbc.sql("DROP TRIGGER IF EXISTS test_refuse_parsed_copy_tg ON hearing_share_payload").update();
             jdbc.sql("DROP FUNCTION test_refuse_parsed_copy()").update();
         }
-
-        assertThat(count("hearing_share")).isZero();
-        assertThat(count("hearing_share_payload")).isZero();
-        assertThat(count("share_defendant")).isZero();
-        assertThat(count("hearing_day_head")).isZero();
-        assertThat(receipt("ID:1")).containsEntry("status", "RECEIVED").containsEntry("share_id", null);
     }
 
     @Test
