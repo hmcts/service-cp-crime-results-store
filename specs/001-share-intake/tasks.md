@@ -848,6 +848,12 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     `ExtractionSweepIT` 16 (new: payload table renamed away for the test, the row counts `error`, the row is
     unchanged but for its try stamp and is fixed next round; a share with no payload row throws
     `EmptyResultDataAccessException` unclassified), `JdbcShareStoreIT` 14, 0 failures.
+  - Verification gate, ruling 2 (no sleeps in tests): `SweepScheduleTest.second_start_should_not_leave_rounds_running_after_stop`
+    waited with `TimeUnit.MILLISECONDS.sleep`; it now uses `await().during(SHORT × 10).atMost(WITHIN)`, as the
+    `Error` test does. A grep of src/test for `Thread.sleep` / `TimeUnit.*.sleep` / `.sleep(` finds no other.
+    RED (seam: `SweepSchedule.stop()` skips `scheduler.shutdown()`): `SweepScheduleTest` 2 completed, 1
+    failed (failFast), `second_start_should_not_leave_rounds_running_after_stop`: `ConditionTimeoutException:
+    Condition … was not fulfilled within 5 seconds`. GREEN (seam removed): `SweepScheduleTest` 9, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

@@ -107,7 +107,7 @@ class SweepScheduleTest {
     }
 
     @Test
-    void second_start_should_not_leave_rounds_running_after_stop() throws InterruptedException {
+    void second_start_should_not_leave_rounds_running_after_stop() {
         when(sweep.runRound()).thenAnswer(invocation -> {
             rounds.incrementAndGet();
             return List.of();
@@ -119,9 +119,9 @@ class SweepScheduleTest {
         await().atMost(WITHIN).until(() -> rounds.get() >= 3);
         underTest.stop();
         final int atStop = rounds.get();
-        TimeUnit.MILLISECONDS.sleep(SHORT.toMillis() * 10);
 
-        assertThat(rounds.get()).isEqualTo(atStop);
+        // Several fixed delays pass with no further round.
+        await().during(SHORT.multipliedBy(10)).atMost(WITHIN).until(() -> rounds.get() == atStop);
     }
 
     @Test
