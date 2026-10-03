@@ -113,7 +113,7 @@ Every operations route admits "Second Line Support" only. A "System Users" calle
 
 1. **Given** a "System Users" caller, **Then** every operations route gives `403`.
 2. **Given** a caller with no `CJSCPPUID`, **Then** `401`.
-3. **Given** `/operations/anything`, **Then** `404 route_not_found` before authentication; `GET` on the rerun route gives `405` with `Allow: POST`.
+3. **Given** `/operations/anything`, **Then** `404 route_not_found` before authorisation; `GET` on the rerun route gives `405` with `Allow: POST`.
 4. **Given** a rerun with a reason, **Then** the reason is stored, and never appears in a response, a log line or a metric.
 
 ---
@@ -163,8 +163,13 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 **Rerun request**
 
-- **FR-005**: `POST /operations/extraction/rerun` MUST take a JSON object of at most 64 KiB with the fields `reason`, `storedFrom`, `storedTo`, `hearingIds` and `shareIds`. Any other field MUST give `400 unknown_field`; a body that is empty, not JSON, not an object, or has a field of the wrong JSON type MUST give `400 unreadable_body`; a larger body MUST give `400 body_too_large`; a `Content-Type` other than JSON MUST give `415 unsupported_content_type`. Query parameters MUST give `400 unknown_parameter`.
-- **FR-006**: The body MUST name exactly one selector: a stored range (`storedFrom` and `storedTo`), `hearingIds`, or `shareIds`. None, or more than one, MUST give `400 selector_not_exactly_one`.
+- **FR-005**: `POST /operations/extraction/rerun` MUST take a JSON object of at most 64 KiB with the fields `reason`, `storedFrom`, `storedTo`, `hearingIds` and `shareIds`. It MUST refuse:
+  - any other field with `400 unknown_field`;
+  - a body that is empty, not JSON, not an object, or has a field of the wrong JSON type with `400 unreadable_body`;
+  - a larger body with `400 body_too_large`;
+  - a `Content-Type` other than JSON with `415 unsupported_content_type`;
+  - any query parameter with `400 unknown_parameter`.
+- **FR-006**: The body MUST name exactly one selector: a stored range (`storedFrom` and `storedTo`), `hearingIds`, or `shareIds`. None, or more than one, MUST give `400 selector_not_exactly_one`. For this check either of `storedFrom` and `storedTo` alone counts as the stored-range selector, and this check runs before the range checks of FR-007. So `storedFrom` with `hearingIds` gives `selector_not_exactly_one`, and `storedFrom` alone gives `range_invalid`.
 - **FR-007**: A stored range MUST be two RFC 3339 instants with an offset and at most six fraction digits, read as the half-open range [`storedFrom`, `storedTo`) of `storedAt`, with `storedFrom` before `storedTo`, and `storedTo` at or before the database's current time minus the read API's visibility lag (003 FR-017). Any breach, or only one of the two fields, MUST give `400 range_invalid`. A span longer than `resultsstore.operations.rerun.max-range` (default 31 days) MUST give `400 range_too_long`. The contract MUST say why: a share stored inside the lag may still be committing, and a range that ended before it can no longer gain a share.
 - **FR-008**: `hearingIds` MUST hold 1 to `max-hearing-ids` (default 200) canonical UUIDs, duplicates removed, and select every share of every day of those hearings. An empty or longer list MUST give `400 hearing_ids_out_of_range`; a bad id `400 invalid_hearing_id`.
 - **FR-009**: `shareIds` MUST hold 1 to `max-share-ids` (default 1,000) canonical UUIDs, duplicates removed. An empty or longer list MUST give `400 share_ids_out_of_range`; a bad id `400 invalid_share_id`. Ids the store does not hold MUST be counted in `unknownShareIds`, not refused.
@@ -178,7 +183,7 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 **The sweep works rerun items**
 
-- **FR-017**: Each sweep round MUST first work `FAILED` rows as today (spec 001), then claim up to `resultsstore.sweep.rerun-batch-size` (default 200) pending items, never-tried first, then oldest claim, then oldest queued. Claiming MUST stamp the claim time and skip items another pod holds, so two pods never work the same items in one round.
+- **FR-017**: Each sweep round MUST first work `FAILED` rows as today (spec 001), then claim up to `resultsstore.sweep.rerun-batch-size` (default 200) pending items, never-tried first, then oldest claim, then oldest queued. Claiming MUST stamp the claim time and skip items another pod holds. Once the untried queue is short, a second pod may claim an item the first pod still holds and re-read it too; the per-item pending check (`SKIPPED`) then stops the second write, so two pods never write the same item.
 - **FR-018**: For each item the sweep MUST read the share's working copy (002 FR-033) and extract outside any transaction, then write in one transaction under the hearing-day lock, then the item's lock, then the share's lock, ending with exactly one of these outcomes:
 
   | Outcome | When | Share written |
@@ -194,8 +199,8 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
   | `REEXTRACTED` | the share is `OK` and the re-read differs | yes, in place |
 
   Every outcome but `SKIPPED` MUST mark the item done with its outcome in the same transaction.
-- **FR-019**: An `OK` share MUST stay `OK`. A re-read that fails MUST leave its key details as they were.
-- **FR-020**: A share's extraction MUST never go back: the stored extractor version never goes down, the attempts go up by one on every write of the projection columns, and the extraction time never goes back.
+- **FR-019**: In short: an `OK` share stays `OK`, and a re-read that fails leaves its key details as they were. The rules are FR-018 (`KEPT`) and the database backstop FR-029; this line adds none.
+- **FR-020**: A share's extraction MUST never go back: the stored extractor version never goes down, the attempts go up on every write of the projection columns (by one in every statement the store runs), and the extraction time never goes back.
 - **FR-021**: A youth subject that is `true` MUST never be lowered. A move from `false` to `true` MUST be held: nothing written, outcome `YOUTH_RAISE_HELD`, counted and listed in the status, until a later spec adds a youth-raised feed (D-YOUTH-RAISE, pending Sachin). A move from unknown to `false` or `true` MUST be written. A move from `false` to unknown MUST be written (D-NEVER-BLANK default, pending Sachin).
 - **FR-022**: Any other key detail MAY move from a value to null when the re-read no longer finds it (D-NEVER-BLANK, default allow, pending Sachin). The claim the store makes is "never moved to `FAILED`", not "never blank".
 - **FR-023**: Defendant rows MUST be add-only: rows the re-read finds and the share lacks are added; none is removed or changed.
@@ -212,7 +217,14 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 **Extraction status**
 
-- **FR-031**: `GET /operations/extraction/status` MUST take no parameters and return: the serving pod's extractor version and retry limit; counts of `FAILED` rows due a retry, out of retries, and waiting for a new extractor, worked out with the sweep's own rule and the serving pod's version; pending items, open requests, abandoned items and held items, the last two with up to 50 share ids each; the 20 most recent requests, any status, with their counts, pending items and outcome counts; and each pod's last sweep round. Lists over their cap MUST say `truncated`.
+- **FR-031**: `GET /operations/extraction/status` MUST take no parameters. It MUST return:
+  - the serving pod's extractor version and retry limit;
+  - counts of `FAILED` rows due a retry, out of retries, and waiting for a new extractor, worked out with the sweep's own rule and the serving pod's version;
+  - counts of pending items, open requests, abandoned items and held items, with up to 50 share ids each for abandoned and held items;
+  - the 20 most recent requests, any status, with their counts, pending items and outcome counts;
+  - each pod's last sweep round.
+
+  Lists over their cap MUST say `truncated`.
 - **FR-032**: Every pod's sweep MUST record its last round, one row per pod, after every round, empty rounds included, with the round's times read from the database clock and the pod's extractor version. A pod's row MUST be dropped once it is older than `resultsstore.operations.status.pod-recent` (default 1 day). A failure to record MUST be counted and MUST NOT fail the round.
 - **FR-033**: The status MUST show pods whose last round finished within `pod-recent`, most recent first, at most 20.
 
@@ -225,7 +237,11 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 **Daily reconciliation**
 
 - **FR-037**: `GET /operations/reconciliation/daily` MUST take `date` (`yyyy-MM-dd`, required). A missing date MUST give `400 missing_parameter`, a bad one `400 invalid_date`, a date after today in London `400 date_in_future`.
-- **FR-038**: The window MUST be [the date at 00:00 Europe/London, the next date at 00:00 Europe/London), as instants (D-RECON-CLOCK, pending Sachin). The answer MUST hold the date, the clock, the window, `partial` (true while the window has not ended), counts of receipts first received in the window by their current status, counts of shares stored in the window (all, out of order, extraction `FAILED`, `FAILED` and out of retries, read by an older extractor), the R1 finding and the R2 counts, and `computedAt`.
+- **FR-038**: The window MUST be [the date at 00:00 Europe/London, the next date at 00:00 Europe/London), as instants (D-RECON-CLOCK, pending Sachin). The answer MUST hold:
+  - the date, the clock, the window, `computedAt`, and `partial` (true while the window has not ended);
+  - counts of receipts first received in the window: the total, then by their current status;
+  - counts of shares stored in the window: all, out of order, extraction `FAILED`, `FAILED` and out of retries, read by an older extractor;
+  - the R1 finding and the R2 counts.
 - **FR-039**: R1 MUST be the receipts first received in the window that are still `RECEIVED` and whose last delivery is older than `resultsstore.operations.reconciliation.received-give-up` (default 1 hour; D-R1-WINDOW, pending Sachin), with their count and up to 50 message ids, oldest first.
 - **FR-040**: R2 MUST be counts only (`extractionFailed`, `staleVersion`), marked `sampled: false` (D-R2, pending Sachin).
 - **FR-041**: Nothing MUST be stored by the reconciliation. The contract MUST say that today is partial and that shares inside the visibility lag are still being stored.
@@ -234,7 +250,12 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 - **FR-042**: The actions MUST be `results-store-operations.rerun-extraction`, `results-store-operations.get-extraction-status`, `results-store-operations.list-receipts` and `results-store-operations.get-daily-reconciliation`, derived from method and path by spec 003's action filter.
 - **FR-043**: Each action MUST have one allow rule admitting "Second Line Support" only, which also matches the route's method and path. "System Users" MUST be refused on every operations route. Every read-API rule MUST keep admitting both groups (constitution VII: support staff *read payloads through the read API under its own rules*).
-- **FR-044**: Spec 003's edge MUST apply to `/operations`: an unmapped path `404 route_not_found` before authorisation; a known path with another method, `HEAD` and `OPTIONS` included, `405 method_not_allowed` with `Allow`; `multipart/*` `415 unsupported_content_type`; a caller's `CPP-ACTION` overwritten and vendor media types answered as `application/json`; the service refusing to start with authorisation off outside the test profile (003 FR-050; D-AUTHZ-REQUIRED, pending Sachin).
+- **FR-044**: Spec 003's edge MUST apply to `/operations`:
+  - an unmapped path gives `404 route_not_found`, before authorisation;
+  - a known path with another method, `HEAD` and `OPTIONS` included, gives `405 method_not_allowed` with `Allow`;
+  - `multipart/*` gives `415 unsupported_content_type`;
+  - a caller's `CPP-ACTION` is overwritten, and vendor media types are answered as `application/json`;
+  - the service refuses to start with authorisation off outside the test profile (003 FR-050; D-AUTHZ-REQUIRED, pending Sachin).
 - **FR-045**: Every operations request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`; refusals before the audit filter MUST be counted, not audited (D-REFUSALS-UNAUDITED, D-VII-AUDIT-WORDING, pending Sachin). Whether the library records the rerun request's body (and so the reason) has not been verified; a test MUST pin what it does, and the OpenAPI description MUST tell operators the reason must hold no personal data.
 
 **Errors**
@@ -256,7 +277,7 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 **Documentation (performed by the last task, not now)**
 
-- **FR-051**: The constitution MUST move from 2.2.0 to 2.3.0 (MINOR; D-PRINCIPLE-I-BUMP, pending Sachin), with Principle I saying that the sweep re-reads an `OK` share only while a pending rerun item names it, that the share stays `OK`, that its extraction never goes back, and that a `true` youth subject stays `true`.
+- **FR-051**: The constitution MUST gain a MINOR bump: 2.3.0, or the next free MINOR after spec 003's amendments (D-PRINCIPLE-I-BUMP, pending Sachin), with Principle I saying that the sweep re-reads an `OK` share only while a pending rerun item names it, that the share stays `OK`, that its extraction never goes back, and that a `true` youth subject stays `true`.
 - **FR-052**: The design rules, spec 001's forward references ("`OK` is final in 001", "marking rows for a rerun is spec 004"), spec 003's consumer contract (values that change in place) and the page notes MUST be brought in line; the design page itself is not edited.
 
 **End to end**
@@ -289,7 +310,7 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 - **SC-001**: In the rerun integration tests, 100 % of `OK` shares named by a request stay `OK`, keep their `storedSeq`, and are returned by a court search throughout, before, during and after their item is worked.
 - **SC-002**: 0 database updates of an `OK` share's key details or `projection_*` columns succeed without a pending item naming it, and 0 succeed that move it to `FAILED`, lower its extractor version, or lower a `true` youth subject (each guard proved by its own named case).
-- **SC-003**: With two sweeps running against one queue of 1,000 items, each item is written at most once and every item is done within the rounds its batch sizes allow (no item worked by both).
+- **SC-003**: With two sweeps running against one queue of 1,000 items, each item is written at most once and every item is done within the rounds its batch sizes allow.
 - **SC-004**: Repeating a request while it is open writes 0 rows and returns the same `rerunId` in 100 % of cases, including two identical requests sent at once (one request results).
 - **SC-005**: A request at the maximum size (200,000 matched shares) is written within its transaction timeout in the integration test, and one share over the maximum writes nothing.
 - **SC-006**: The status, receipts and reconciliation answers match seeded data exactly in 100 % of the integration cases, including both 2026 clock-change days.
@@ -302,7 +323,7 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 ## Decisions pending Sachin
 
-Each is applied with its default in every 004 document and marked "pending Sachin" where it shows. Changing one changes the named requirement and task only.
+Each is applied with its default in every 004 document and marked "pending Sachin" where it shows. Changing one changes the requirements named in its row and the tasks named for it in tasks.md *Pending decisions*.
 
 | Id | Question | Default applied | Alternatives |
 |---|---|---|---|
@@ -310,7 +331,7 @@ Each is applied with its default in every 004 document and marked "pending Sachi
 | D-NEVER-BLANK | May a rerun move a key detail from a value to null? | Allow; the claim is "never moved to `FAILED`" (FR-022), and a youth subject may move from `false` to unknown (FR-021) | Forbid any value-to-null move in the guard (an extractor fix that correctly drops a value then cannot land) |
 | D-YOUTH-RAISE | May a rerun move a youth subject in place? | `true` never lowered (guard); `false` to `true` held, listed and counted until a youth-raised feed exists; unknown to `false` or `true` written and stated in 003's contract (FR-021, FR-028). `false` to unknown is written under D-NEVER-BLANK; it makes the day unknown again with no new `storedSeq` | Write `false` to `true` now (a consumer's cursor never sees the day become youth-relevant); add the youth-raised feed in 004; hold `false` to unknown as well |
 | D-RERUN-CANCEL | How does a stuck item end? | An attempt limit (3) and outcome `ABANDONED`, counted and shown (FR-025); no cancel endpoint | An operator cancel endpoint, alone or as well (a later spec) |
-| D-RERUN-BOUNDS | Request and pacing limits | Range ≤ 31 days; `hearingIds` 1 to 200; `shareIds` 1 to 1,000; matched ≤ 200,000; reason 10 to 500 characters; 200 items per round; chunks of 5,000; 3 attempts; one sweep row per pod; pods shown for 1 day (FR-007 to FR-012, FR-017, FR-025, FR-032) | Other values; all but the reason length are settings |
+| D-RERUN-BOUNDS | Request, pacing and answer limits | Range ≤ 31 days; `hearingIds` 1 to 200; `shareIds` 1 to 1,000; matched ≤ 200,000; reason 10 to 500 characters; 200 items per round; chunks of 5,000; 3 attempts; pods shown for 1 day; receipts per answer 200 (FR-007 to FR-012, FR-017, FR-025, FR-032, FR-035). The shape of the round record is D-SWEEP-ROUND | Other values; all but the reason length are settings |
 | D-RECON-CLOCK | Which day does the reconciliation use? | The London day, as `shared_day_london` and support staff do (FR-038) | The UTC day |
 | D-R1-WINDOW | When is a receipt still `RECEIVED` a finding? | 1 hour after its last delivery, a setting, until the broker's redelivery give-up time is confirmed with the platform team (FR-039) | The broker's own give-up time once known |
 | D-R2 | What does R2 check on demand? | Counts only (FR-040) | Re-extract a sample of the day's payloads and compare (a `GET` would then parse payloads; better in a nightly job) |

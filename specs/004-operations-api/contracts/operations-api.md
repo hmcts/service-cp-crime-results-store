@@ -50,7 +50,7 @@ unique key.
 - Query parameter names are case-sensitive. An unknown name → `400 unknown_parameter`; a name given
   twice → `400 repeated_parameter`.
 - Ids are canonical UUIDs (`8-4-4-4-12`, hex). Dates are `yyyy-MM-dd`.
-- A path not listed in §1 under `/operations` → `404 route_not_found`, before authentication. A listed
+- A path not listed in §1 under `/operations` → `404 route_not_found`, before authorisation. A listed
   path with another method, `HEAD` and `OPTIONS` included → `405 method_not_allowed` with `Allow`.
 
 ### 2.3 Responses
@@ -307,7 +307,7 @@ and `partial`.
   "to": "2026-10-02T23:00:00.000000Z",
   "partial": false,
   "computedAt": "2026-10-03T09:15:00.120000Z",
-  "receipts": { "received": 4822, "stored": 4790, "duplicate": 29, "unreadable": 1, "noIdentity": 0, "stillReceived": 2 },
+  "receipts": { "total": 4822, "stored": 4790, "duplicate": 29, "unreadable": 1, "noIdentity": 0, "stillReceived": 2 },
   "shares": { "stored": 4791, "outOfOrder": 12, "extractionFailed": 3, "failedExhausted": 1, "staleVersion": 0 },
   "findings": {
     "r1": { "giveUpAfter": "PT1H", "count": 1, "messageIds": ["ID:def-456"], "truncated": false },
@@ -320,7 +320,7 @@ and `partial`.
 |---|---|
 | `from`, `to` | the window as instants: the date's London midnight to the next. 23 hours on the day clocks go forward, 25 on the day they go back |
 | `partial` | `true` while `to` is after `computedAt`: the day is not over. Shares stored in the last 110 seconds (the read API's visibility lag) may still be committing |
-| `receipts` | messages **first received** in the window: `received` all of them, then by their **current** status |
+| `receipts` | messages **first received** in the window: `total` all of them, then by their **current** status (`stillReceived` is status `RECEIVED`) |
 | `shares` | shares **stored** in the window: all; out of order; extraction `FAILED`; `FAILED` with no attempts left; read by an older extractor than the answering pod's |
 | `findings.r1` | receipts first received in the window, still `RECEIVED`, whose **last delivery** is older than `giveUpAfter` (1 hour, pending Sachin, to be set from the broker's redelivery give-up time): the count, the oldest 50 message ids, `truncated` |
 | `findings.r2` | counts only (pending Sachin): `extractionFailed` and `staleVersion` as in `shares`; `sampled` is always `false` |
@@ -351,8 +351,8 @@ on `status` and `reason`.
 | 400 | `unreadable_body` | the body is empty, not JSON, not an object, or a field has the wrong JSON type | rerun |
 | 400 | `body_too_large` | the body is over 64 KiB | rerun |
 | 400 | `unknown_field` | a body field other than the five | rerun |
-| 400 | `selector_not_exactly_one` | no selector, or more than one | rerun |
-| 400 | `range_invalid` | only one of `storedFrom`/`storedTo`; not an RFC 3339 instant with an offset; more than six fraction digits; `storedFrom` not before `storedTo`; `storedTo` inside the visibility lag | rerun |
+| 400 | `selector_not_exactly_one` | no selector, or more than one. `storedFrom` or `storedTo` alone counts as the stored-range selector, and this check comes before `range_invalid`: `storedFrom` with `hearingIds` gives this reason | rerun |
+| 400 | `range_invalid` | only one of `storedFrom`/`storedTo` and no other selector; not an RFC 3339 instant with an offset; more than six fraction digits; `storedFrom` not before `storedTo`; `storedTo` inside the visibility lag | rerun |
 | 400 | `range_too_long` | the range is longer than 31 days | rerun |
 | 400 | `hearing_ids_out_of_range` | `hearingIds` empty or over 200 | rerun |
 | 400 | `share_ids_out_of_range` | `shareIds` empty or over 1,000 | rerun |

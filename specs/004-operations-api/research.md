@@ -421,8 +421,9 @@ OpenAPI description of `reason` says it must hold no personal data; nothing can 
 
 `OperationsQueriesPlanIT` runs `EXPLAIN (FORMAT JSON)` over the `JdbcOperationsQueries` and
 `JdbcRerunRequests` constants, with `enable_seqscan` off on a connection the test owns (as 003's
-`ReadQueriesPlanIT`), and asserts each uses its intended index, and that R1 uses a `RECEIVED` partial
-index. Plain `CREATE INDEX` (pre go-live; `CONCURRENTLY` in the risks).
+`ReadQueriesPlanIT`), and asserts each uses its intended index by name. R1 must use `event_receipt_stale_ix`: the test seeds
+many `RECEIVED` rows delivered recently and a few delivered long ago, runs `ANALYZE`, and picks a cut-off
+that only the old ones pass, so the new index is the selective one. Plain `CREATE INDEX` (pre go-live; `CONCURRENTLY` in the risks).
 
 ---
 

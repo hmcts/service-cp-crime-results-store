@@ -444,7 +444,7 @@ SELECT count(*)                                                        AS stored
 **R1**: `SELECT message_id FROM event_receipt WHERE status = 'RECEIVED' AND first_received_at >= :from AND
 first_received_at < :to AND last_received_at < now() - make_interval(secs => :giveUpSeconds) ORDER BY
 first_received_at, message_id LIMIT 51`, and a `count(*)` with the same predicate (a `RECEIVED`
-partial index: `event_receipt_open_ix` or `event_receipt_stale_ix`).
+`event_receipt_stale_ix`, the index V6 adds for it; `OperationsQueriesPlanIT` asserts that index by name).
 
 ## In-memory types
 

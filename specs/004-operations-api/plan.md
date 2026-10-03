@@ -56,8 +56,10 @@ Sachin* with its default applied.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Constitution 2.2.0 (after spec 003's T012). T011 amends it to 2.3.0 (MINOR; research R21); the check
-below holds against both, with the deviation recorded under *Complexity Tracking*.
+Constitution 2.1.0 in this tree; 2.2.0 once spec 003's T012 lands. The check below is made against the
+2.2.0 wording. T011 amends it to 2.3.0 (MINOR; research R21); the check holds against both, with the
+deviations recorded under *Complexity Tracking* (Principle I, and Principle VII's dependency on 003's
+wording).
 
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|
@@ -67,7 +69,7 @@ below holds against both, with the deviation recorded under *Complexity Tracking
 | IV. No business rules | The store re-reads what the payload states. Holding a `false`-to-`true` youth change is about how a change reaches consumers, not about the case; the held share is listed and counted (research R9). Note: while held, that column lags its payload | PASS (with the note) |
 | V. Never refuse to store | Intake unchanged. A rerun never moves a share to `FAILED` or drops it | PASS |
 | VI. Idempotent, transactional intake | Intake unchanged. Rerun writes take the hearing-day lock first, as intake does (`RerunConcurrencyIT`) | PASS |
-| VII. Default-deny authorisation | One allow rule per action, "Second Line Support" only, matching method and path; `deny-when-no-rules` true; actions derived by 003's filter; no operations response holds a payload; audited by the library; refusals counted (2.2.0 wording) | PASS |
+| VII. Default-deny authorisation | One allow rule per action, "Second Line Support" only, matching method and path; `deny-when-no-rules` true; actions derived by 003's filter; no operations response holds a payload; audited by the library; refusals counted (2.2.0 wording). The checked-in 2.1.0 says *every request is audited*; this PASS depends on 003's 2.2.0 wording (D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, pending Sachin; see *Complexity Tracking*) | PASS, pending 003's 2.2.0 wording |
 | VIII. Observability through Azure Monitor | Rerun requests, queued shares, refusals, every item outcome, abandoned and held items, finished requests, failed round records: all registered at start; R1 and R2 visible on demand. The "reconciliation does not run" alert waits for the nightly job (D-NIGHTLY) | PASS |
 | IX. Artemis only for legacy integration | Nothing published by the store; the audit library publishes as it already does | PASS |
 | X. Test-driven development | Every task names its tests first; red run quoted before green (phase gate) | PASS |
@@ -75,7 +77,8 @@ below holds against both, with the deviation recorded under *Complexity Tracking
 | XII. Estate conventions | Gradle, Java 25, Boot 4; constructor injection; records; explicit imports; typed validated properties; Conventional Commits; no attribution | PASS |
 | Quality gates | `build pmdMain pmdTest jacocoTestReport` green per phase; OpenAPI and allow rules before the code that serves them (T001 before T008); reviewers code-reviewer, qa, spec-validator, and Codex | PASS |
 
-**Initial gate: PASS**, with one recorded deviation (Principle I, the `OK` re-read), justified below.
+**Initial gate: PASS**, with one recorded deviation (Principle I, the `OK` re-read) and one recorded
+dependency (Principle VII, on spec 003's 2.2.0 audit wording), both justified below.
 
 **Re-check after Phase 1 design: PASS.** Points checked again:
 
@@ -208,15 +211,15 @@ green on its own before the next starts.
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T004 | `JdbcRerunRequestsIT`, `JdbcOperationsQueriesIT`, `OperationsSqlTest`, `OperationsQueriesPlanIT` | `JdbcRerunRequests`, `JdbcOperationsQueries` | FR-004, FR-007, FR-012–FR-016, FR-031, FR-034–FR-036, FR-038–FR-041; SC-004, SC-005 |
+| T004 | `JdbcRerunRequestsIT`, `JdbcOperationsQueriesIT`, `OperationsSqlTest`, `OperationsQueriesPlanIT` | `JdbcRerunRequests`, `JdbcOperationsQueries` | FR-004, FR-007, FR-012–FR-016, FR-031, FR-033 (data half), FR-034–FR-036, FR-038–FR-041; SC-004, SC-005, SC-006 (data half) |
 | T005 | `ExtractionSweepTest`, `RerunSweepIT`, `RerunConcurrencyIT`, `MicrometerSweepObserverTest`, `SweepObserverConfigTest`, `ConfigurationValidationTest`, `SweepSchedulingConfigTest` | the rerun path in the sweep and the store; `SweepObserver` | FR-017–FR-028; SC-001, SC-003 |
-| T006 | `JdbcSweepRoundsIT`, `ExtractionSweepTest`, `MicrometerSweepObserverTest`, `ConfigurationValidationTest` | `JdbcSweepRounds`, the round record | FR-032 |
+| T006 | `JdbcSweepRoundsIT`, `ExtractionSweepTest`, `MicrometerSweepObserverTest`, `ConfigurationValidationTest` | `JdbcSweepRounds`, the round record | FR-032 (FR-033's data half is in T004) |
 
 ### Phase C: services, web, end to end
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T007 | `RerunServiceTest`, `ExtractionStatusServiceTest`, `ReceiptsServiceTest`, `ReconciliationServiceTest`, `MicrometerOperationsObserverTest`, `OperationsConfigTest`, `ConfigurationValidationTest` | services, observer, `OperationsProperties`, `OperationsConfig` | FR-005–FR-016 (service half), FR-031–FR-041, FR-047, FR-049, FR-050; SC-009, SC-010 |
+| T007 | `RerunServiceTest`, `ExtractionStatusServiceTest`, `ReceiptsServiceTest`, `ReconciliationServiceTest`, `MicrometerOperationsObserverTest`, `OperationsConfigTest`, `ConfigurationValidationTest` | services, observer, `OperationsProperties`, `OperationsConfig` | FR-005–FR-016 (service half), FR-031, FR-033, FR-035, FR-037–FR-041, FR-047, FR-049, FR-050; SC-009, SC-010 |
 | T008 | `RerunBodyParserTest`, `OperationsParametersTest`, three controller slices, `ReadApiExceptionHandlerTest`, `ProblemReasonTest`, `OpenApiContractTest` | controllers, parsers, responses, advice changes; markers removed | FR-002–FR-016 (web half), FR-034, FR-037, FR-046 |
 | T009 | `OperationsApiIT`, `AuditIT`, `NoPayloadInLogsIT` | fixes found | US1–US6 end to end; FR-045; SC-006–SC-008 |
 
@@ -276,3 +279,4 @@ before green.
 | Deviation | Why needed | Simpler alternative rejected because |
 |---|---|---|
 | Constitution I (2.2.0) and V3's guard comment say an `OK` share's key details are final ("OK is final in 001"); from T002 the schema, and from T005 the sweep, rewrite an `OK` share in place while a pending rerun item names it. The 2.3.0 wording lands in T011 | An extractor fix must reach shares already stored `OK`; that is the purpose of the rerun (spec 001: "marking rows for a rerun is spec 004"). Reviewers of T002 to T010 read this row as the written justification the constitution asks for | Moving rows to `FAILED` to reuse the existing retry: blanks their key details (`hearing_share_failed_is_empty_ck`) and drops them from consumers' searches while they wait. Amending the constitution first, in T001: the wording should describe what was built and tested; T011 checks it against the code |
+| Constitution VII as checked in (2.1.0) says *every request is audited*. FR-045 counts refusals before the audit filter (`401`, `403`, `404`, `405`, `415`) and does not audit them. The VII PASS above rests on spec 003's 2.2.0 wording (*every request that reaches an endpoint is audited; refusals before authorisation are counted*), which exists only once 003's T012 lands and Sachin accepts D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED (both pending Sachin) | The audit library sits after authorisation, so a refused request never reaches it; counting refusals keeps them visible without a second audit path | If Sachin refuses either decision, refusals must be audited by a filter of our own before authorisation. Then FR-045, contracts/operations-api.md §2.4 and T009's `AuditIT` case `a_403_on_an_operations_route_should_publish_nothing` change: the case becomes "a `403` on an operations route should publish one refusal event", and that filter is added to T009 |

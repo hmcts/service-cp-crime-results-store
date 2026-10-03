@@ -31,7 +31,7 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lo
   (`hearing_share_rerun_guard`), moved to `FAILED` (`hearing_share_projection_guard`), a `true` youth
   subject lowered (`hearing_share_youth_guard`), a version lowered or attempts not raised
   (`hearing_share_projection_version_guard`).
-- `RerunSweepIT.two_sweeps_should_never_work_one_item_twice` runs two sweeps over one queue.
+- `RerunSweepIT.two_sweeps_should_never_write_one_item_twice` runs two sweeps over one queue.
 - `OperationsApiIT` seeds marker strings in `message_text`, `payload_text`, `payload_json` and a rerun
   reason, and checks no response body holds one.
 
