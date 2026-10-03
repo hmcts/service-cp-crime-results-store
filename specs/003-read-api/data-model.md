@@ -3,8 +3,8 @@
 **Feature**: `003-read-api` | **Date**: 2026-10-03 | **Plan**: [plan.md](plan.md)
 
 003 adds no table and no column. It adds one migration, `V5__read_api.sql`: a trigger that sets
-`hearing_share.stored_at` after the row's sequence number is taken, and two partial indexes for the read
-queries. V1 to V4 are not edited. Every rule of
+`hearing_share.stored_at` after the row's sequence number is taken, and three partial indexes for the
+read queries. V1 to V4 are not edited. Every rule of
 [../001-share-intake/contracts/schema.md](../001-share-intake/contracts/schema.md) and
 [../002-enrichment/contracts/schema.md](../002-enrichment/contracts/schema.md) still binds.
 
@@ -40,17 +40,25 @@ CREATE INDEX hearing_share_youth_feed_ix
     ON hearing_share (stored_seq)
     WHERE day_youth_seen IS NOT FALSE;
 
--- 3. Search by court and London shared day, keyset on (shared_day_london, shared_at, share_id), in
---    that order, so no sort step. Partial: FAILED rows have no court and never match
---    court_centre_id = :courtCentreId.
-CREATE INDEX hearing_share_centre_day_ix
-    ON hearing_share (court_centre_id, shared_day_london, shared_at, share_id)
+-- 3. Pull with courtCentreId: an exact match (FAILED rows, which have no court, are never returned),
+--    so one range scan in stored_seq order serves it and stops after limit + 1 rows.
+CREATE INDEX hearing_share_centre_feed_ix
+    ON hearing_share (court_centre_id, stored_seq)
+    WHERE court_centre_id IS NOT NULL;
+
+-- 4. Search by court over a shared_at range, keyset on (shared_at, share_id), so no sort step. Both
+--    search forms use it: the service turns London days into a [from, to) shared_at range.
+--    Partial: FAILED rows have no court and never match court_centre_id = :courtCentreId.
+CREATE INDEX hearing_share_centre_shared_at_ix
+    ON hearing_share (court_centre_id, shared_at, share_id)
     WHERE court_centre_id IS NOT NULL;
 
 COMMENT ON INDEX hearing_share_youth_feed_ix IS
     'Read API pull, dayYouthSeen=notFalse|true (spec 003)';
-COMMENT ON INDEX hearing_share_centre_day_ix IS
-    'Read API search by court centre and London shared day (spec 003)';
+COMMENT ON INDEX hearing_share_centre_feed_ix IS
+    'Read API pull by court centre, exact match (spec 003)';
+COMMENT ON INDEX hearing_share_centre_shared_at_ix IS
+    'Read API search by court centre over a shared_at range, both forms (spec 003)';
 COMMENT ON TRIGGER hearing_share_stored_at_tg ON hearing_share IS
     'stored_at read after stored_seq is taken; pull safety (spec 003)';
 ```
@@ -106,8 +114,8 @@ The item is a read view of `hearing_share`. No payload.
 | `projectedAt` | `projected_at` | never |
 | `versionNumber` | `(SELECT count(*) FROM hearing_share v WHERE v.hearing_id = s.hearing_id AND v.hearing_day = s.hearing_day AND v.shared_at <= s.shared_at)`; `row_number() OVER (ORDER BY shared_at)` in the day query | never |
 
-Not exposed: `payload_sha256` (the checksum of the arrived text; phase D serves it as that endpoint's
-`ETag`), `projection_reason` (an internal bounded code; spec 004's status endpoint shows extraction
+Not exposed: `payload_sha256` (the checksum of the arrived text with `_metadata`; never served and never
+an `ETag`, because no served body includes `_metadata`), `projection_reason` (an internal bounded code; spec 004's status endpoint shows extraction
 detail to support staff), `projection_attempts`, `projection_tried_at`, `expires_at` (always NULL).
 
 ## Read queries (shape; the SQL constants live in `JdbcShareQueries`)
@@ -134,7 +142,7 @@ SELECT bound.visible_up_to, bound.max_seq, page.*
            AND s.stored_seq <= bound.max_seq
            [AND s.day_youth_seen IS NOT FALSE]                         -- notFalse
            [AND s.day_youth_seen IS NOT FALSE AND s.day_youth_seen]    -- true
-           [AND (s.court_centre_id = :courtCentreId OR s.projection_status = 'FAILED')]
+           [AND s.court_centre_id = :courtCentreId]                     -- exact; FAILED rows never match
          ORDER BY s.stored_seq
          LIMIT :limitPlusOne) page ON TRUE
 ```
@@ -144,17 +152,19 @@ One row comes back even when the page is empty (the `LEFT JOIN` on the one-row `
 `nextStoredAfterSeq` (the last item's `storedSeq` when `hasMore`, else `max(storedAfterSeq, max_seq)`,
 with a null `max_seq` meaning "stay") and `visibleUpTo`.
 
-**Search:**
+**Search** (one statement for both forms; the day form arrives as instants, London midnight to London
+midnight, worked out by `SharedDays`):
 
 ```sql
 SELECT <item columns>, <versionNumber subquery>
   FROM hearing_share s
  WHERE s.court_centre_id = :courtCentreId
-   AND s.shared_day_london BETWEEN :sharedDayFrom AND :sharedDayTo
+   AND s.shared_at >= :sharedFrom
+   AND s.shared_at <  :sharedTo
    [AND s.is_latest]
    [AND <dayYouthSeen variant: IS NOT FALSE | IS NOT FALSE AND day_youth_seen | IS FALSE>]
-   [AND (s.shared_day_london, s.shared_at, s.share_id) > (:cursorDay, :cursorAt, :cursorId)]
- ORDER BY s.shared_day_london, s.shared_at, s.share_id
+   [AND (s.shared_at, s.share_id) > (:cursorAt, :cursorId)]
+ ORDER BY s.shared_at, s.share_id
  LIMIT :limitPlusOne
 ```
 
@@ -163,19 +173,22 @@ SELECT <item columns>, <versionNumber subquery>
 **Day's versions:** `… , row_number() OVER (ORDER BY s.shared_at) FROM hearing_share s WHERE
 s.hearing_id = :hearingId AND s.hearing_day = :hearingDay ORDER BY s.shared_at`.
 
-**Payload** (the only query that names `hearing_share_payload`):
+**Payload** (with the arrived text, the only queries that name `hearing_share_payload`). `_metadata` is
+removed in the database for the working copy; for the text form the service removes it
+(`EnvelopeMetadata`) before hashing:
 
 ```sql
 SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applied,
-       COALESCE(p.payload_json::text, p.payload_text) AS body,
+       CASE WHEN p.payload_json IS NULL THEN p.payload_text
+            ELSE (p.payload_json - '_metadata')::text END AS body,
        p.payload_json IS NULL AS arrived_text
   FROM hearing_share s
   JOIN hearing_share_payload p ON p.share_id = s.share_id
  WHERE s.share_id = :shareId
 ```
 
-**Arrived text (phase D only):** the same identity columns with `p.payload_text` and
-`s.payload_sha256`.
+**Arrived text (phase D):** the same identity columns with `p.payload_text`; the service removes
+`_metadata` and hashes the bytes it serves. `payload_sha256` is not read.
 
 ## In-memory read types
 
@@ -183,9 +196,11 @@ SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applie
 |---|---|---|
 | `ShareView` | `domain/` | every column of the item table plus `versionNumber`; `keyDetails` as `KeyDetails` or null when `FAILED` |
 | `DayYouthFilter` | `domain/` | `ANY`, `NOT_FALSE`, `TRUE`, `FALSE`; `fromValue` refuses anything else (case-sensitive) |
-| `SearchCursor` | `domain/` | London day, `shared_at` (epoch microseconds), `shareId`; `encode()` and a strict `decode()` |
-| `StoredPayload` | `domain/` | identity, `enrichmentApplied`, body text, `PayloadForm` (`WORKING_COPY`, `ARRIVED_TEXT`), and the stored checksum (phase D) |
-| `PullQuery`, `SearchQuery` | `application/` | the validated parameters |
+| `SearchCursor` | `domain/` | `shared_at` (epoch microseconds), `shareId`; `encode()` and a strict `decode()` |
+| `StoredPayload` | `domain/` | identity, `enrichmentApplied`, body text as read, `PayloadForm` (`WORKING_COPY`, `ARRIVED_TEXT`) |
+| `EnvelopeMetadata` | `domain/` | removes the top-level `_metadata` member from a JSON text (Jackson 3; exact numbers; key order kept) |
+| `SharedDays` | `domain/` | + the London day range as a [from, to) `shared_at` range (`Europe/London`) |
+| `PullQuery`, `SearchQuery` | `application/` | the validated parameters; `SearchQuery` always holds the instant range |
 | `PullPage`, `SearchPage`, `ServedPayload` | `application/` | what the service answers: items and cursor values; bytes, `ETag`, identity, flag, form |
 
 ## Invariants the tests hold
@@ -197,5 +212,10 @@ SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applie
 3. `keyDetails` is null exactly when `projectionStatus` is `FAILED` (`ShareViewTest`, `JdbcShareQueriesIT`).
 4. No pull, search, share or day query names `hearing_share_payload` (`JdbcShareQueriesTest` on the
    constants; `ReadQueriesPlanIT` on the plans).
-5. The `ETag` of `/payload` is the SHA-256 of exactly the bytes served (`ShareReadServiceTest`,
+5. The `ETag` of `/payload` (and of `/payload/arrived`) is the SHA-256 of exactly the bytes served
+   (`ShareReadServiceTest`, `ReadApiIT`), and never `payload_sha256`.
+6. No served body has a top-level `_metadata` member (`JdbcShareQueriesIT`, `ShareReadServiceTest`,
    `ReadApiIT`).
+7. A court-filtered pull never returns a `FAILED` row (`JdbcShareQueriesIT`).
+8. The day form and the time form of search over the same London days return the same rows
+   (`JdbcShareQueriesIT`).

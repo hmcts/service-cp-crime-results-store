@@ -6,10 +6,12 @@ Each entry gives the decision, why, and what else was looked at. R1 to R3 settle
 routes, rules); R4 to R8 the pull and what a consumer may rely on; R9 to R12 search, the payload and its
 headers; R13 and R14 errors and audit; R15 to R18 the schema, times, metrics and settings; R19 the
 arrived text; R20 the constitution; R21 and R22 the day's versions and the build traps. Every open point
-is settled here, or is a row of spec.md *Decisions pending Sachin* with its default applied.
+is settled here, or is a decision in spec.md *Decisions taken with Sachin (2026-10-03)*; the production
+PostgreSQL version stays a risk (R4).
 
 Sources: the design review of spec 003 and its critique; the orchestrator's rulings on both
-(2026-10-03), which win where they differ; the fact-finding reports on the store's read side (this
+(2026-10-03), which win where they differ; the decisions taken with Sachin (2026-10-03, rulings section
+E), which win over everything; the fact-finding reports on the store's read side (this
 repository at `c21a901`, including `javap` of `cp-auth-rules-filter` 1.0.7 and
 `cp-audit-filter-springboot` 1.0.5) and on YOT as the first consumer, with probation's asks; specs 001
 and 002; and this repository's code as read for this document (`V3__create_share_store.sql`,
@@ -121,8 +123,10 @@ no way to read a payload, against VII's wording. A youth-scoped action: supersed
 
 **Decision.** A pull returns only shares with `storedSeq` at or below the **visibility bound** `S`: the
 highest `stored_seq` among shares whose `stored_at` is at or before `now() − lag`, both from the
-database clock, in the same statement as the page. The default lag is 110 seconds (D-LAG-VALUE, pending
-Sachin). A V5 `BEFORE INSERT` trigger sets `stored_at := clock_timestamp()`.
+database clock, in the same statement as the page. The default lag is 90 seconds (D-LAG-VALUE, E3). To
+make 90 s provable, 003 lowers two intake defaults (spec 001 settings): `statement-timeout` 20 s → 10 s and
+`lock-timeout` 10 s → 5 s; `transaction-timeout` (60 s) and `idle-in-transaction-timeout` (10 s) stay. A V5
+`BEFORE INSERT` trigger sets `stored_at := clock_timestamp()`.
 
 **The race.** `stored_seq` is taken inside the store transaction (`INSERT_SHARE`,
 `JdbcShareStore.java:78-90`), and that transaction goes on to write the payload, defendants, chain and
@@ -136,19 +140,35 @@ never earlier than the moment its number was taken. The proof needs exactly that
 `FlywayMigrationIT` proves `stored_at` is at or after a clock read taken just before the insert.
 
 **The bound chain.** Every store transaction ends within this time of its start (all limits enforced by
-PostgreSQL or by Spring before a statement, none by the driver's client-side cancel):
+PostgreSQL or by Spring before a statement, none by the driver's client-side cancel; values are the new
+defaults):
 
 | Segment | Bound (default) | Enforced by |
 |---|---|---|
 | Every statement starts before the Spring deadline | `transaction-timeout` (60 s) from the start | the `TransactionTemplate` timeout (`IntakeConfig.java:91-92`); `StoreTimeoutIT` proves the give-up |
-| The last statement, started just before the deadline | `statement-timeout` (20 s) | PostgreSQL `statement_timeout`, set per transaction (`JdbcShareStore.SET_TIMEOUTS`) |
+| The last statement, started just before the deadline | `statement-timeout` (10 s) | PostgreSQL `statement_timeout`, set per transaction (`JdbcShareStore.SET_TIMEOUTS`). A lock wait inside it ends sooner (`lock_timeout` 5 s ≤ statement) |
 | The JVM's gap before `COMMIT` | `idle-in-transaction-timeout` (10 s) | PostgreSQL ends the session and aborts the transaction |
-| `COMMIT`, with the deferred constraint triggers | `statement-timeout` (20 s) | PostgreSQL applies `statement_timeout` to `COMMIT` (design review; not re-checked against the PostgreSQL source) |
+| `COMMIT`, with the deferred constraint triggers | `statement-timeout` (10 s) | PostgreSQL applies `statement_timeout` to `COMMIT` (design review; not re-checked against the PostgreSQL source) |
 
-Sum: 60 + 20 + 10 + 20 = **110 s**. The design review's 91 s replaced the last-statement row with "1 s
-past the deadline", which is the JDBC query timeout that pgjdbc enforces on the client by sending a
-cancel over a new connection. A GC pause, a failed cancel connection or a pooler that does not route
-cancel keys lets the statement run to the server's 20 s, so 91 s is not a bound PostgreSQL guarantees.
+Sum: 60 + 10 + 10 + 10 = **90 s** = transaction + 2 × statement + idle-in-transaction. The rule the
+service checks at start is therefore lag ≥ transaction + 2 × statement + idle-in-transaction, with
+lock ≤ statement kept from 001 (a lock wait is inside a statement, so it adds nothing to the sum).
+
+Why not 91 s at the old timeouts: the design review replaced the last-statement row with "1 s past the
+deadline", which is the JDBC query timeout that pgjdbc enforces on the client by sending a cancel over a
+new connection. A GC pause, a failed cancel connection or a pooler that does not route cancel keys lets
+the statement run to the server's limit, so a client-side cancel is never part of the bound. Sachin chose
+to reach 90 s by lowering the server-side limits instead (E3).
+
+**The pool backstop (E3).** Every connection the pool opens also starts with `SET statement_timeout`
+equal to the intake statement timeout (Hikari's connection-init SQL, FR-062). It covers the read API and
+anything that forgets its own limit. It is not part of the proof: the store transaction's own
+`set_config(..., true)` values are what the chain above rests on, and they are set inside the
+transaction whatever the session default is. The init SQL is built in Java from the bound `Duration`
+(`SET statement_timeout = '<n>ms'`), not written in `application.yaml` from the same environment
+variable, because Spring and PostgreSQL read duration strings differently (`1m` is a minute to Spring
+and an error to PostgreSQL; `PT10S` is valid only to Spring); an init SQL PostgreSQL rejects would fail
+every connection.
 
 **Proof sketch.** Let `S` be the highest `stored_seq` with `stored_at_S ≤ now() − lag`. Take any row
 `W` with `stored_seq_W ≤ S`. Identity values are handed out in time order (the identity sequence has
@@ -176,13 +196,13 @@ Two consequences:
 - (c) A database clock step backwards.
 - If production uses synchronous replication (Azure HA), the wait for the standby sits inside the
   commit segment; it holds only if `statement_timeout` actually cancels that wait, and a cancel there
-  makes the commit visible anyway (D-PG-VERSION / HA, pending Sachin; not blocking).
+  makes the commit visible anyway (D-PG-VERSION / HA, E11: unknown, a recorded risk, not blocking).
 
 Detection: the overrun counter (R6) covers (a) for transactions the client sees complete. Consumer
 reconciliation (re-pull from an older cursor, R8) is the only cover for (b).
 
 **PostgreSQL 17.** `transaction_timeout` would make the first segment server-enforced. The production
-version is unknown (001 research R2); nothing in 003 depends on it.
+version is unknown (001 research R2; E11); nothing in 003 depends on it. It is a later tightening.
 
 **Alternatives considered.** R5.
 
@@ -206,7 +226,7 @@ version is unknown (001 research R2); nothing in 003 depends on it.
   correct but not proven: it assumes `xact_start` is published before the transaction takes anything
   and cleared only after it ends (not checked in the PostgreSQL source), and that the app role can see
   other sessions' rows. Any long transaction anywhere in the database (the sweep, a report, `pg_dump`)
-  holds the feed back. Kept as a possible later improvement with a dedicated race test if a 110 s delay
+  holds the feed back. Kept as a possible later improvement with a dedicated race test if a 90 s delay
   becomes a problem.
 
 None is both proven and simpler than the lag; all share holes (b) and (c).
@@ -225,11 +245,14 @@ overload beside the existing three-argument one.
 **The check is per process.** The writers are whichever pods have the subscription on. With read-only
 pods, a rolling deploy that raises an intake timeout, or two deployments with different values, the
 reader checks against its own values while writers hold numbers longer. So
-`contracts/configuration.md` states: every pod shares `resultsstore.intake.store.*`; raise the lag
-before raising any intake timeout; lower the timeouts before lowering the lag (D-READONLY-PODS, pending
-Sachin).
+`contracts/configuration.md` states: every pod runs the same `resultsstore.intake.store.*` values (no
+read-only pods, no pods with other timeouts: D-READONLY-PODS = no, E10); raise the lag before raising any
+intake timeout; lower the timeouts before lowering the lag. The 003 change itself lowers timeouts and the
+lag together. That is safe only because the read API is new: no consumer pulls until every pod runs
+003, so no new pod's 90 s lag is ever checked against an old pod's 20 s statement timeout. Any later
+change follows the rollout order.
 
-**The runtime check (D-OVERRUN, pending Sachin).** Intake counts `resultsstore.intake.visibility.overrun`
+**The runtime check (D-OVERRUN = yes, E4).** Intake counts `resultsstore.intake.visibility.overrun`
 when a store transaction's time from sending the share insert to its commit returning is at or above
 the lag. The send happens before the number is taken and the return after the commit, so the measure
 can only over-state the time the proof needs: it may give a false alarm, never miss a completed
@@ -243,8 +266,8 @@ Until T009 lands the read settings, `IntakeConfig` passes the derived default fr
 as the threshold (T008); T009 switches it to the effective lag.
 
 **Alternatives considered.** Writers recording their effective bound in a database row that readers
-check: closes the per-process gap, but adds a table and a write per pod; deferred unless
-D-READONLY-PODS says such deployments exist.
+check: closes the per-process gap, but adds a table and a write per pod; not needed, because no such
+deployment exists (E10).
 
 ---
 
@@ -285,12 +308,15 @@ Consequences written into `contracts/read-api.md` as normative text:
 
 - `dayYouthSeen=notFalse` is complete for youth-relevant days: a day goes from `FALSE` to `TRUE` only
   through a new share (higher `storedSeq`), and `NULL` days are already visible.
-- `dayYouthSeen=true` and `courtCentreId` can miss a share the sweep fills later. Hence
-  D-COURT-FAILED (a court-filtered pull also returns `FAILED` rows, default yes) and D-PULL-TRUE
-  (`true` kept, with the warning).
+- `dayYouthSeen=true` and `courtCentreId` can miss a share the sweep fills later. `true` is kept with the
+  warning (D-PULL-TRUE). A court-filtered pull is an exact match and never returns a `FAILED` row
+  (D-COURT-FAILED = no, E5): a share whose court the sweep fills in later is behind the cursor and is not
+  presented to it. A consumer that needs completeness uses the unfiltered pull or `notFalse` and filters
+  by court itself.
 - **The unknown-row obligation**: *a share presented with `projectionStatus` `FAILED` or `dayYouthSeen`
   null is not final in its key details; re-read `GET /shares/{shareId}` until `projectionStatus` is
-  `OK` (or the day's successor arrives) before deciding it is not yours.*
+  `OK` (or the day's successor arrives) before deciding it is not yours.* Such shares come from the
+  unfiltered pull and from `notFalse`; a court-filtered pull never presents a `FAILED` one.
 - An out-of-order share may not be the latest: read the day's versions. This matters for YOT's "skip
   unless latest" rule.
 - Reconciliation: re-pulling from an older cursor is safe (filters at read time); it is the consumer's
@@ -300,21 +326,45 @@ Consequences written into `contracts/read-api.md` as normative text:
 
 ## R9. Search
 
-**Decision.** `courtCentreId`, `sharedDayFrom` and `sharedDayTo` required; the range filters
-`shared_day_london` (the register day), both ends included, at most 31 days; `dayYouthSeen` accepts
-`notFalse`, `true` and `false`; `latestOnly` adds `is_latest`. Order: `shared_day_london`, `shared_at`,
-`share_id`, ascending, which is the same as (`shared_at`, `share_id`) because the London day is a
-function of `shared_at`. Keyset paging on those three values; the cursor is base64url without padding of
-`v1|<sharedDayLondon>|<shared_at epoch microseconds>|<shareId>`, at most 128 characters, decoded
+**Decision (E6).** The pull stays on `storedSeq`, the only complete cursor. Search requires
+`courtCentreId` and exactly one of two range forms:
+
+- **Day form**: `sharedDayFrom` and `sharedDayTo`, London register days, both ends included, at most 31
+  days counting both ends (`day_range_too_long`, `day_range_reversed`, `invalid_shared_day`).
+- **Time form**: `sharedFrom` and `sharedTo`, instants on `shared_at`, half-open [`sharedFrom`,
+  `sharedTo`), `sharedTo` after `sharedFrom` and at most 31 days (P31D) after it (`time_range_too_long`,
+  `time_range_reversed`). Each is ISO-8601 UTC with `Z` and at most six fraction digits; anything else is
+  `invalid_shared_from` or `invalid_shared_to`. Six digits because `shared_at` holds microseconds.
+- A parameter of each form in one call is `conflicting_parameters`; neither form complete is
+  `missing_parameter`.
+
+The service turns the day form into the time form in Java: `domain/SharedDays` gives London midnight at
+the start of `sharedDayFrom` and London midnight at the start of the day after `sharedDayTo`
+(`Europe/London`, so a 23- or 25-hour day at a clock change is covered exactly). Because
+`shared_day_london` is the London date of `shared_at`, this selects exactly the rows the old
+`shared_day_london BETWEEN` filter selected. `JdbcShareQueriesIT` proves the equality for a 00:30 BST
+share and for days at both clock changes.
+
+`dayYouthSeen` accepts `notFalse`, `true` and `false`; `latestOnly` adds `is_latest`. Order: `shared_at`,
+then `share_id`, ascending, in both forms. Keyset paging on those two values; the cursor is base64url
+without padding of `v1|<shared_at epoch microseconds>|<shareId>`, at most 128 characters, decoded
 strictly (each part checked; a different version prefix is invalid). `{ items, nextCursor }`, with
 `nextCursor` null when the `limit + 1` read shows no further row. No visibility lag.
 
-**Rationale.** Required court and range keep every search on one index range
-(`hearing_share_centre_day_ix`); keyset paging is stable under inserts; the opaque cursor leaves the
-store free to change its key.
+**Index.** One index serves both forms: `hearing_share_centre_shared_at_ix (court_centre_id, shared_at,
+share_id) WHERE court_centre_id IS NOT NULL` (R15). It replaces the planned
+`hearing_share_centre_day_ix (court_centre_id, shared_day_london, shared_at, share_id)`: with the day
+range turned into instants the day column adds nothing, and an index that led with the day could not
+serve the time form without a sort step. One index is smaller and keeps one plan for search.
 
-**Alternatives considered.** Offset paging (unstable under inserts, slow at depth); a court-less search
-(no index; no consumer asked).
+**Rationale.** YOT's 18:00 cross-check wants the shares shared up to a moment, which the day form cannot
+say. A required court and range keep every search on one index range; keyset paging is stable under
+inserts; the opaque cursor leaves the store free to change its key.
+
+**Alternatives considered.** A shared-time cursor on pull (incomplete: a share stored late with an early
+`sharedTime` would be behind it); offset paging (unstable under inserts, slow at depth); a court-less
+search (no index; no consumer asked); two indexes, one per form (twice the write cost for one query
+shape).
 
 ---
 
@@ -322,14 +372,24 @@ store free to change its key.
 
 **Decision.**
 
-- The body is `String.getBytes(UTF_8)` of the text the database returns for
-  `COALESCE(payload_json::text, payload_text)` (the expression `JdbcShareStore.PAYLOAD_FOR_EXTRACTION`
-  already uses), written unchanged as `ResponseEntity<byte[]>` through `ByteArrayHttpMessageConverter`.
-- The `ETag` is the quoted lower-case SHA-256 hex of that same byte array. `PayloadChecksum` gains a
-  `sha256Hex(byte[])` overload (today it hashes a `String`).
-- `Content-Type: application/json` with no charset parameter; `_metadata` kept.
-- `payload_sha256` is never this endpoint's `ETag` (002 FR-041): it is over `payload_text`, and the
-  working copy is not byte-identical to it.
+- **No `_metadata` (E8).** No legacy CP query service returns the message envelope, so the store does
+  not either. Nothing stored changes; only what is served omits it.
+- **Working copy.** The query returns `(payload_json - '_metadata')::text`: the jsonb `-` operator removes
+  the top-level key in the database, and the result is written as text exactly as for the whole copy.
+  The body is `String.getBytes(UTF_8)` of that text, written unchanged as `ResponseEntity<byte[]>`
+  through `ByteArrayHttpMessageConverter`.
+- **Text fallback** (`payload_json` is NULL, for example a `\u0000` escape jsonb cannot hold). The query
+  returns `payload_text`; `domain/EnvelopeMetadata` parses it with Jackson 3 (which can hold `\u0000`),
+  removes the top-level `_metadata` member and writes the tree back as compact JSON text. Numbers are
+  read as exact decimals so no digit is lost; key order is kept; spacing and escape forms are Jackson's.
+  Every stored share's text was parsed as JSON at intake (001 FR-008), so the parse cannot fail in
+  practice; if it ever does, the answer is `500 internal_error`, never the text with `_metadata`.
+- The `ETag` is the quoted lower-case SHA-256 hex of the byte array served, in every case.
+  `PayloadChecksum` gains a `sha256Hex(byte[])` overload (today it hashes a `String`).
+- `Content-Type: application/json` with no charset parameter.
+- `payload_sha256` is never an `ETag` (002 FR-041): it is over `payload_text`, `_metadata` included, and
+  no served body is byte-identical to that text. This holds for the arrived endpoint too (R19).
+- The `Results-Store-*` headers stay: they are the store's own facts, not the envelope's.
 - `server.compression` stays off: a strong `ETag` is per representation. A test asserts no
   `Content-Encoding`, a `Content-Length` equal to the byte count and no chunked encoding with the audit
   filter's response wrapper in place.
@@ -338,11 +398,15 @@ store free to change its key.
 duplicate keys collapsed, fixed `", "` and `": "` spacing, numbers with their stored scale. It is not
 documented as stable across PostgreSQL major versions (nor across a dump and restore into one). So the
 contract promises stability only within a major version, and tells consumers to verify each response
-against its own `ETag` and to compare content, not bytes, across an upgrade (D-JSONB-PROMISE, pending
-Sachin; probation DV-19 to be told).
+against its own `ETag` and to compare content, not bytes, across an upgrade (D-JSONB-PROMISE, E7;
+probation DV-19 to be told). The texts the service writes itself (the fallback and the arrived endpoint)
+are deterministic for one Jackson version; the contract says a library upgrade may change their bytes in
+the same way.
 
 **Alternatives considered.** Storing the served text and its hash once (a later migration; would make
-the bytes stable for ever); `payload_sha256` as the `ETag` (wrong for the working copy).
+the bytes stable for ever); `payload_sha256` as the `ETag` (wrong for every served body); stripping
+`_metadata` from the working copy in Java as well (one more parse per read for no gain: the jsonb `-`
+operator does it in the query).
 
 ---
 
@@ -368,8 +432,8 @@ response event for an empty body, so a `304` has a request event only; the metri
 - The payload endpoint's body is the payload, so identity and `enrichmentApplied` travel as headers:
   `Results-Store-Share-Id`, `-Hearing-Id`, `-Hearing-Day`, `-Shared-Time`, `-Enrichment-Applied`,
   `-Payload-Form` (`working-copy` or `arrived-text`). `Cache-Control: no-store`.
-- Probation S12 (a user-id flag): no flag. The body keeps `_metadata`, so the consumer reads
-  `_metadata.context.user` from the same response; an absent key means no user (D-S12, pending Sachin).
+- Probation S12 (a user-id flag): not addressed in 003 (E9). The store exposes no envelope metadata;
+  whether a message carried a user id is not served. It is a consumer concern for the probation design.
 - YOT needs INT versus SJP per item: no `eventType` field. `keyDetails.isSjp` is the source: `true` =
   SJP, `false` = INT, `null` = unknown while `FAILED`.
 - `sharedTime` in every item is the stored `shared_at` (cut to the microsecond), not the string as sent.
@@ -432,7 +496,7 @@ The `AuditFilter` and `AuditPayloadGenerationService` beans are `@ConditionalOnM
 | Endpoint | Response event carries |
 |---|---|
 | pull, search, day versions, one share | the JSON page: ids, court, youth flags, key details; up to 500 items (an estimate of 0.3 to 0.5 MB, not measured) |
-| payload `200` | the whole working copy: special-category and youth data; 39 KB on average, 265 KB at the 99th percentile, 2.4 MB or more as text |
+| payload `200` | without option 4, the whole served body: special-category and youth data; 39 KB on average, 265 KB at the 99th percentile, 2.4 MB or more as text. With option 4 (decided), the marker |
 | payload `304` | nothing (empty body) |
 | `400`/`404`/`500` from the advice | the bounded problem body |
 
@@ -442,11 +506,11 @@ The `AuditFilter` and `AuditPayloadGenerationService` beans are `@ConditionalOnM
 them reaches the audit filter. They are counted (`resultsstore.read.refused`: our filters count their
 own; `BoundedErrorController` counts `401` and `403`). Constitution VII's "every request is audited"
 becomes *every request that reaches an endpoint is audited; a request refused by a filter or by
-authorisation is counted* (D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, pending Sachin). The rulings'
+authorisation is counted* (D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED accepted, E13). The rulings'
 text said "refusals before authorisation are counted"; it is reworded because a `415` and a `403` are
 not refused before authorisation.
 
-**D-AUDIT (pending Sachin).**
+**D-AUDIT (decided, E1).**
 
 1. Accept, record in the DPIA. No code; youth and special-category data copied to the audit topic and
    store, outside this service's retention; messages of several MB on Artemis.
@@ -462,27 +526,32 @@ not refused before authorisation.
    upgrade that changes them.
 5. Serve from a path the filter skips. Rejected: unaudited.
 
-**Default applied: option 4 now, option 2 in parallel (then delete 4), recorded in the DPIA.** List
-pages keep their bodies (ids and flags, no prompt values). T011 builds option 4; option 1 is its
-alternative branch. `AuditIT` pins whichever is chosen.
+**Decision: option 4 now, option 2 in parallel (then delete 4), recorded in the DPIA (E1).** List
+pages keep their bodies (ids and flags, no prompt values). T011 builds option 4 and `AuditIT` pins it.
 
 ---
 
 ## R15. Indexes (V5) and the plan tests
 
-**Decision.** V5 adds two partial indexes, each tied to its query (full DDL in data-model.md):
+**Decision.** V5 adds three partial indexes, each tied to its query (full DDL in data-model.md):
 
 - `hearing_share_youth_feed_ix (stored_seq) WHERE day_youth_seen IS NOT FALSE`: pull with
   `dayYouthSeen=notFalse` or `true` (`true` written as `day_youth_seen IS NOT FALSE AND day_youth_seen`
   so the planner can prove the partial predicate). A range scan in seq order that stops after
   `limit + 1` rows.
-- `hearing_share_centre_day_ix (court_centre_id, shared_day_london, shared_at, share_id) WHERE
-  court_centre_id IS NOT NULL`: search; serves the keyset order with no sort step. Partial because
-  `FAILED` rows have no court and can never match `court_centre_id = :cc`.
+- `hearing_share_centre_feed_ix (court_centre_id, stored_seq) WHERE court_centre_id IS NOT NULL`: pull
+  with `courtCentreId` (with or without a youth filter). **Now justified (E5)**: the court arm is a plain
+  equality, so one index range scan returns that court's rows in `stored_seq` order and stops after
+  `limit + 1`. Without it, a court pull from an old cursor walks `hearing_share_stored_seq_uk` through
+  every court's rows (about 150 courts) to find a page of one court's rows, which a catch-up over weeks
+  could push past the 5 s read timeout. The cost is one small index written on insert.
+- `hearing_share_centre_shared_at_ix (court_centre_id, shared_at, share_id) WHERE court_centre_id IS NOT
+  NULL`: both search forms (R9); serves the keyset order with no sort step. Partial because `FAILED` rows
+  have no court and can never match `court_centre_id = :cc`.
 
-Served by existing indexes: unfiltered pull and court-only pull (`hearing_share_stored_seq_uk`); the
+Served by existing indexes: unfiltered pull (`hearing_share_stored_seq_uk`); the
 visibility bound (a backward scan of `hearing_share_stored_seq_uk` that stops at the first row older
-than the lag; the rows inside the lag are the tail, about six at 110 s and the observed rate); one share
+than the lag; the rows inside the lag are the tail, about five at 90 s and the observed rate); one share
 (`hearing_share_pk`); the payload (`hearing_share_payload_pk`); the day's versions and the
 `versionNumber` count (`hearing_share_identity_uk`).
 
@@ -494,9 +563,9 @@ intake inserts while it builds: fine before go-live, seconds at today's volume. 
 capture, the fallback is `-- flyway:executeInTransaction=false` with `CREATE INDEX CONCURRENTLY`
 (risks).
 
-**Rejected.** A court-centre variant of the pull index (cannot serve the `OR projection_status =
-'FAILED'` arm without a `UNION`; add after NFT if needed). A court-less search index (search requires a
-court). `share_defendant(defendant_id)` (no 003 endpoint reads it).
+**Rejected.** A search index that leads with `shared_day_london` (cannot serve the time form without a
+sort; R9). A court-less search index (search requires a court). `share_defendant(defendant_id)` (no 003
+endpoint reads it).
 
 ---
 
@@ -530,25 +599,28 @@ records page sizes and payload bytes. The service never catches an exception to 
 
 **Decision.** Two settings (`contracts/configuration.md`): `resultsstore.read.pull.visibility-lag`
 (derived default, R6) and `resultsstore.read.statement-timeout` (5 s; > 0 and below the driver's socket
-timeout, the same rule `IntakeConfig` applies to the intake statement timeout). Everything a consumer
+timeout, the same rule `IntakeConfig` applies to the intake statement timeout). 003 also changes two
+intake defaults (statement 10 s, lock 5 s; R4) and adds the pool backstop (R4). Everything a consumer
 builds against is a **constant**, not a setting, so the contract cannot drift per environment: the base
-path, default and maximum `limit` (100 and 500), the search span (31 days), the cursor length (128),
+path, default and maximum `limit` (100 and 500), the search span (31 days, both forms), the cursor length (128),
 `Retry-After` (5 s), the route table and the action names. The service refuses to start with
-`authz.http.enabled` false unless the `test` profile is active (D-AUTHZ-REQUIRED, pending Sachin):
+`authz.http.enabled` false unless the `test` profile is active (D-AUTHZ-REQUIRED = yes, E12):
 checked in `ApiWebConfig`. A controller that reads `CJSCPPUID` itself would still refuse a missing one;
 no 003 controller does.
 
 ---
 
-## R19. The arrived text (phase D, D-RAW)
+## R19. The arrived text (phase D, D-RAW accepted)
 
-**Decision (if D-RAW is accepted).** `GET /shares/{shareId}/payload/arrived`, its own action
-`results-store.get-share-arrived-payload` and rule, body `payload_text` exactly as stored, `ETag` the
-quoted `payload_sha256`. That equals the SHA-256 of the served bytes because `PayloadChecksum` hashes the
-UTF-8 text and the text is served as UTF-8; the test asserts the equality. Same identity headers, with
-`Results-Store-Payload-Form: arrived-text`. Audit follows the D-AUDIT choice (option 4 covers this route
-too). Constitution II gains the endpoint in 2.2.0 if D-RAW is accepted before T012
-starts, otherwise in T013's own later amendment (R20).
+**Decision (E2, E8).** `GET /shares/{shareId}/payload/arrived`, its own action
+`results-store.get-share-arrived-payload` and rule. The body is `payload_text` parsed with Jackson 3,
+`_metadata` removed and written back as JSON text (`domain/EnvelopeMetadata`, the same code as the
+`/payload` fallback): the text as it arrived, without the envelope metadata. No application results are
+added. The `ETag` is the quoted SHA-256 of the bytes served. It is **not** `payload_sha256`: that checksum
+is over the text with `_metadata`, so it never equals a hash of this body; a test asserts they differ.
+Same identity headers, with `Results-Store-Payload-Form: arrived-text`; `304` as for `/payload`. Audit
+option 4 covers this route too. Constitution II gains the endpoint in 2.2.0, written by T012 (R20); T013
+touches no constitution.
 
 **Alternatives considered.** `?variant=arrived` on `/payload`: one action for two kinds of data, and the
 action filter would have to read the query string. A list of enriched application ids instead: probation
@@ -570,13 +642,13 @@ would rebuild the arrived text itself.
 - "Every request is audited by `cp-audit-filter-springboot`, with the library's default settings."
   becomes: *Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; a
   request refused by a filter or by authorisation is counted. The payload endpoints' response body is replaced in the audit event
-  by a fixed marker.* (The last sentence only under D-AUDIT option 4.)
+  by a fixed marker.* (E1, E13)
 
-Principle II, only if D-RAW: "The read API serves the working copy, and the text when the working copy
-is empty." gains *, and, on its own endpoint, the text as it arrived, with its checksum as the `ETag`*.
-This clause is in 2.2.0 only if D-RAW is accepted by the time T012 starts; T013 then touches no
-constitution. If D-RAW is accepted later, T013 adds the clause as its own amendment with its own MINOR
-bump (the constitution asks for one bump per amendment), so 2.2.0 is never edited twice.
+Principle II: "The read API serves the working copy, and the text when the working copy is empty."
+becomes *The read API serves the working copy without the message envelope's metadata (`_metadata`), and
+the text, likewise without it, when the working copy is empty* (E8), and gains *, and, on its own
+endpoint, the text as it arrived, likewise without the envelope metadata* (E2). Both are written in 2.2.0
+by T012, so 2.2.0 is never edited twice and T013 touches no constitution.
 
 The Sync Impact Report records the change; spec 004 bumps to 2.3.0 for its own Principle I change.
 

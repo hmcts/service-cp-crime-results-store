@@ -41,8 +41,9 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk ./gradlew bootJar
 docker compose up -d --build
 ```
 
-The compose app runs with short intake timeouts (T012), so the derived lag is about 11 seconds rather
-than 110. Publish a share as in 001 quickstart §4, wait for the lag, then (`00000000-…` is the compose's
+The compose app runs with short intake timeouts (T012: transaction 6 s, statement 2 s, lock 1 s,
+idle-in-transaction 1 s), so the derived lag is 6 + 2 × 2 + 1 = 11 seconds rather than 90, and every
+pooled connection starts with a 2-second `statement_timeout`. Publish a share as in 001 quickstart §4, wait for the lag, then (`00000000-…` is the compose's
 synthetic "System Users" caller; any id the WireMock default mapping answers):
 
 ```bash
@@ -52,9 +53,13 @@ U='CJSCPPUID: 00000000-0000-0000-0000-000000000000'
 curl -s -H "$U" "$BASE/shares?storedAfterSeq=0&limit=10" | jq .
 SHARE=$(curl -s -H "$U" "$BASE/shares?storedAfterSeq=0" | jq -r '.items[0].shareId')
 curl -s -H "$U" "$BASE/shares/$SHARE" | jq .
+COURT=$(curl -s -H "$U" "$BASE/shares/$SHARE" | jq -r '.keyDetails.courtCentreId')
+curl -s -H "$U" "$BASE/shares?courtCentreId=$COURT&sharedDayFrom=$(date -u +%F)&sharedDayTo=$(date -u +%F)" | jq '.items | length'
+curl -s -H "$U" "$BASE/shares?courtCentreId=$COURT&sharedFrom=$(date -u -d '-1 day' +%FT%TZ)&sharedTo=$(date -u -d '+1 hour' +%FT%TZ)" | jq '.items | length'
 curl -s -D /tmp/h -o /tmp/body -H "$U" "$BASE/shares/$SHARE/payload"
 grep -i '^etag\|^results-store' /tmp/h
 sha256sum /tmp/body                       # equals the ETag without its quotes
+jq 'has("_metadata")' /tmp/body           # false: no envelope metadata is served
 ETAG=$(grep -i '^etag' /tmp/h | cut -d' ' -f2 | tr -d '\r')
 curl -s -o /dev/null -w '%{http_code}\n' -H "$U" -H "If-None-Match: $ETAG" "$BASE/shares/$SHARE/payload"   # 304
 ```
@@ -65,6 +70,7 @@ Refusals:
 curl -s "$BASE/shares?storedAfterSeq=0" | jq .                                  # 401 unauthenticated
 curl -s -H 'CJSCPPUID: 11111111-1111-4111-8111-111111111111' "$BASE/shares/$SHARE" | jq .   # 403 forbidden (the no-group mapping)
 curl -s -H "$U" "$BASE/anything" | jq .                                         # 404 route_not_found
+curl -s -H "$U" "$BASE/shares?courtCentreId=$COURT&sharedDayFrom=2026-10-01&sharedDayTo=2026-10-02&sharedFrom=2026-10-01T00:00:00Z" | jq .reason   # conflicting_parameters
 curl -s -X OPTIONS -D - -o /dev/null -H "$U" "$BASE/shares"                      # 405, Allow: GET
 curl -s -H "$U" -H 'Accept: application/vnd.results-store.get-share-payload+json' \
   "$BASE/shares?storedAfterSeq=0" -o /dev/null -w '%{http_code}\n'              # 200: the vendor Accept chose nothing
@@ -78,7 +84,7 @@ Metrics:
 curl -s localhost:8082/actuator/prometheus | grep -E 'resultsstore_read_|visibility_overrun'
 ```
 
-## 4. Watching the lag
+## 4. Watching the lag and the pool backstop
 
 ```bash
 docker compose exec postgres psql -U resultsstore -d resultsstore -c \
@@ -89,8 +95,16 @@ A share whose age is below the lag is not yet in pull (unless a later-numbered s
 lag, which cannot happen in a single-writer local stack). Each pull answer's `visibleUpTo` is the
 database's clock minus the lag.
 
+The pool backstop: a pooled connection's own `statement_timeout` equals the intake statement timeout
+(2 s on the compose stack, 10 s by default). `PooledStatementTimeoutIT` (T008) proves it; on the stack,
+the app's connections show it in `pg_settings` only from inside the app, so check the test instead:
+
+```bash
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lock \
+  ./gradlew test --tests '*PooledStatementTimeoutIT' --tests '*StatementTimeoutBackstopTest'
+```
+
 ## 5. Phase gate
 
 As 001 quickstart §7, with `specDir` `…/specs/003-read-api` and the phase ranges of tasks.md
-(*Phase-gate invocations*): A = T001–T003, B = T004–T008, C = T009–T012, D = T013 (only if D-RAW is
-accepted).
+(*Phase-gate invocations*): A = T001–T003, B = T004–T008, C = T009–T012, D = T013 (D-RAW accepted).

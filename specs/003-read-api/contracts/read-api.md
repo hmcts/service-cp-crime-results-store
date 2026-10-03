@@ -3,8 +3,8 @@
 **For**: teams that read results from the store (YOT results distribution, probation results
 distribution, court register, support staff). This is the document to review for gate G2.
 **Owner**: the Results Store (`service-cp-crime-results-store`).
-**Status**: Draft with spec 003. Points marked *pending Sachin* carry the default shown and may change
-before release; spec.md *Decisions pending Sachin* lists them.
+**Status**: Draft with spec 003. Every decision in it is taken (spec.md *Decisions taken with Sachin
+(2026-10-03)*); nothing is pending.
 **Machine-readable form**: `src/main/resources/results-store-openapi.yaml` in the store's repository
 (written by spec 003, task T001). Where the two disagree, this document is corrected.
 
@@ -18,11 +18,11 @@ The words MUST, MUST NOT, SHOULD and MAY are used in their usual sense. "The sto
 | # | Method and path | Purpose | Action |
 |---|---|---|---|
 | 1 | `GET /results-store/v1/shares?storedAfterSeq=…` | **Pull**: shares stored after a sequence number, in stored order, key details only. The feed | `results-store.pull-shares` |
-| 2 | `GET /results-store/v1/shares?courtCentreId=…&sharedDayFrom=…&sharedDayTo=…` | **Search**: shares of one court over London days. A query, not a feed | `results-store.search-shares` |
+| 2 | `GET /results-store/v1/shares?courtCentreId=…&sharedDayFrom=…&sharedDayTo=…` or `…&sharedFrom=…&sharedTo=…` | **Search**: shares of one court over London days, or over a range of `sharedTime`. A query, not a feed | `results-store.search-shares` |
 | 3 | `GET /results-store/v1/shares/{shareId}` | One share's current key details, chain and youth facts | `results-store.get-share` |
-| 4 | `GET /results-store/v1/shares/{shareId}/payload` | The payload the store holds for one share, with an `ETag` | `results-store.get-share-payload` |
+| 4 | `GET /results-store/v1/shares/{shareId}/payload` | The payload the store holds for one share, without the envelope metadata, with an `ETag` | `results-store.get-share-payload` |
 | 5 | `GET /results-store/v1/hearings/{hearingId}/days/{hearingDay}/shares` | Every version of one hearing day, in `sharedTime` order | `results-store.list-hearing-day-shares` |
-| 6 | `GET /results-store/v1/shares/{shareId}/payload/arrived` | The text exactly as hearing sent it. **Only if D-RAW is accepted** (pending Sachin) | `results-store.get-share-arrived-payload` |
+| 6 | `GET /results-store/v1/shares/{shareId}/payload/arrived` | The text as hearing sent it, before enrichment, without the envelope metadata. Delivered in phase D of spec 003 | `results-store.get-share-arrived-payload` |
 
 Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 
@@ -56,7 +56,9 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 - Query parameter names are **case-sensitive**. An unknown name → `400 unknown_parameter` (so a typo
   such as `storedAfterseq` never quietly turns a pull into a search). A name given twice →
   `400 repeated_parameter`.
-- Ids are canonical UUIDs (`8-4-4-4-12`, hex). Dates are `yyyy-MM-dd`.
+- Ids are canonical UUIDs (`8-4-4-4-12`, hex). Dates are `yyyy-MM-dd`. Instants you send (search's
+  `sharedFrom` and `sharedTo`) are ISO-8601 UTC with `Z` and at most six fraction digits, for example
+  `2026-10-03T18:00:00Z` or `2026-10-03T18:00:00.000000Z`.
 - A path the store does not serve → `404 route_not_found`, before authentication. A served path with
   another method, `HEAD` and `OPTIONS` included → `405 method_not_allowed` with an `Allow` header.
 
@@ -76,8 +78,8 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 Every request that reaches an endpoint is audited by the estate's audit library, with your user id and
 the action. A request refused by the store's filters (`404 route_not_found` and `405` before
 authorisation, `415` after it) or by authorisation (`401`, `403`) never reaches the audit filter: it is
-counted, not audited (pending Sachin). The payload endpoints' audit record holds a
-fixed marker in place of the payload body (D-AUDIT, pending Sachin; the default).
+counted, not audited. The payload endpoints' audit record holds a fixed marker in place of the payload
+body (D-AUDIT option 4); the store has asked the audit library's owners for a switch that does the same.
 
 ---
 
@@ -168,9 +170,10 @@ The presence of `storedAfterSeq` makes the call a pull.
 | `storedAfterSeq` | yes | integer ≥ 0; exclusive | — | `400 invalid_stored_after_seq` |
 | `limit` | no | integer 1 to 500 | 100 | `400 limit_out_of_range` |
 | `dayYouthSeen` | no | `notFalse` (day flag not `false`; unknown stays in), `true` (day flag `true`) | absent = every day | `400 invalid_day_youth_seen` (`false` is not accepted on pull) |
-| `courtCentreId` | no | UUID. Selects that court's shares **and every `FAILED` share** (court unknown) (D-COURT-FAILED, pending Sachin) | absent = every court | `400 invalid_court_centre_id` |
+| `courtCentreId` | no | UUID. Selects only shares whose court is exactly this court. A `FAILED` share (court unknown) is **never** returned to a court-filtered pull (section 5.4) | absent = every court | `400 invalid_court_centre_id` |
 
-`sharedDayFrom`, `sharedDayTo`, `latestOnly` or `cursor` with `storedAfterSeq` → `400 conflicting_parameters`.
+`sharedDayFrom`, `sharedDayTo`, `sharedFrom`, `sharedTo`, `latestOnly` or `cursor` with `storedAfterSeq` →
+`400 conflicting_parameters`.
 
 **Response `200`:**
 
@@ -210,32 +213,44 @@ you would never see 101.
 The store therefore returns only shares numbered at or below the highest number stored more than the
 **visibility lag** ago. Every store transaction ends within the lag (it is checked against the
 store's own timeouts at start), so every share at or below that number is committed or gone for good.
-The default lag is **110 seconds** (D-LAG-VALUE, pending Sachin). In practice a share reaches pull about
-two minutes after it was stored. Search, one share and the day's versions apply no lag.
+The default lag is **90 seconds**: the store's transaction timeout (60 s), plus twice its statement
+timeout (2 × 10 s), plus its idle-in-transaction timeout (10 s), all enforced by the database. In
+practice a share reaches pull about a minute and a half after it was stored. Search, one share and the day's versions apply no lag.
 
 What this does not cover: a database crash or failover in the middle of a commit, a disk stall longer
 than the lag, or the database clock stepping back. The store counts any write that took longer than the
 lag (its operators are alerted). Your cover for these rare cases is reconciliation (section 5.6).
 
-### 4.2 Search: `GET /results-store/v1/shares?courtCentreId=…&sharedDayFrom=…&sharedDayTo=…`
+### 4.2 Search: `GET /results-store/v1/shares?courtCentreId=…` with a day range or a time range
 
-Without `storedAfterSeq` the call is a search.
+Without `storedAfterSeq` the call is a search. Give `courtCentreId` and **exactly one** of two range
+forms:
+
+- **Day form**: `sharedDayFrom` and `sharedDayTo`, London register days, both ends included.
+- **Time form**: `sharedFrom` and `sharedTo`, instants on `sharedTime`, from included, to excluded:
+  `sharedFrom` ≤ `sharedTime` < `sharedTo`. For example, everything shared on 3 October up to 18:00
+  London time (BST) is `sharedFrom=2026-10-02T23:00:00Z&sharedTo=2026-10-03T17:00:00Z`.
+
+A parameter of each form in one call → `400 conflicting_parameters`. Neither form complete →
+`400 missing_parameter`. The store serves the day form as the time range from London midnight at the
+start of `sharedDayFrom` to London midnight at the end of `sharedDayTo`, so both forms return exactly
+the same shares for the same days, clock changes included.
 
 | Parameter | Required | Values | Default | Bad value |
 |---|---|---|---|---|
 | `courtCentreId` | yes | UUID | — | missing: `400 missing_parameter`; bad: `400 invalid_court_centre_id` |
-| `sharedDayFrom` | yes | date, London shared day, inclusive | — | missing: `400 missing_parameter`; bad: `400 invalid_shared_day` |
-| `sharedDayTo` | yes | date, inclusive; not before `sharedDayFrom`; at most 31 days after it counting both ends | — | `400 invalid_shared_day`, `400 day_range_reversed`, `400 day_range_too_long` |
+| `sharedDayFrom` | day form | date, London shared day, inclusive | — | `400 invalid_shared_day` |
+| `sharedDayTo` | day form | date, inclusive; not before `sharedDayFrom`; at most 31 days after it counting both ends | — | `400 invalid_shared_day`, `400 day_range_reversed`, `400 day_range_too_long` |
+| `sharedFrom` | time form | instant, inclusive | — | `400 invalid_shared_from` |
+| `sharedTo` | time form | instant, exclusive; after `sharedFrom`; at most 31 days after it | — | `400 invalid_shared_to`, `400 time_range_reversed`, `400 time_range_too_long` |
 | `dayYouthSeen` | no | `notFalse`, `true`, `false` | absent = every day | `400 invalid_day_youth_seen` |
 | `latestOnly` | no | `true`, `false` | `false` | `400 invalid_latest_only` |
 | `limit` | no | 1 to 500 | 100 | `400 limit_out_of_range` |
 | `cursor` | no | the `nextCursor` of the previous page | first page | `400 invalid_cursor` |
 
-A call with neither `storedAfterSeq` nor all three required search parameters → `400 missing_parameter`.
+**Response `200`:** `{ "items": [ <share item>, … ], "nextCursor": "djF8MTc1OTQyMzI2NzUxMjAwMHw…" }`
 
-**Response `200`:** `{ "items": [ <share item>, … ], "nextCursor": "djF8MjAyNi0xMC0wMnwxNzU5…" }`
-
-- Order: `sharedDayLondon`, then `sharedTime`, then `shareId`, ascending.
+- Order: `sharedTime`, then `shareId`, ascending, in both forms.
 - `nextCursor` is `null` on the last page. Otherwise pass it back unchanged with the same parameters.
 - The cursor is opaque text of at most 128 characters. Do not build or change it; an altered one is
   refused. It marks a position, so it stays valid while new shares are stored.
@@ -251,19 +266,22 @@ A call with neither `storedAfterSeq` nor all three required search parameters �
 
 ### 4.4 The payload: `GET /results-store/v1/shares/{shareId}/payload`
 
-**Body.** The payload the store holds, as `application/json` (no charset parameter; UTF-8):
+**Body.** The payload the store holds, as `application/json` (no charset parameter; UTF-8),
+**without the message envelope's metadata**:
 
 - the **working copy**: the message as hearing sent it, with any finalised court-application results
   from progression added at intake (without `amendmentDate`, `amendmentReason` and
   `amendmentReasonId`); held by the database as `jsonb`, so key order and spacing are the database's,
   not hearing's; or
-- the **text exactly as it arrived**, when the database could not hold a working copy (rare: for
-  example a `\u0000` in the text).
+- the **text as it arrived**, when the database could not hold a working copy (rare: for example a
+  `\u0000` in the text). The store parses it, removes `_metadata` and writes it back as JSON, so its
+  spacing and escape forms are the store's; key order and values are hearing's.
 
-The body is the whole JSON envelope, **`_metadata` included**. The top level holds `hearing`,
-`hearingDay`, `sharedTime` and `isReshare` beside `_metadata`. The sharer's user id, when the source had
-one, is `_metadata.context.user`; if the key is absent there was none. There is no separate field or
-header for it (D-S12, pending Sachin).
+**No `_metadata`.** The top level holds `hearing`, `hearingDay`, `sharedTime` and `isReshare`; the
+`_metadata` block of the message envelope is removed. Why: no legacy CP query service returns the
+message envelope, and the store follows the estate convention. Envelope facts (for example the
+sharer's user id) are not served by the store, in the body or in a header. The `Results-Store-*`
+headers below are the store's own facts about the share, not envelope data.
 
 **Headers on `200`:**
 
@@ -280,18 +298,19 @@ header for it (D-S12, pending Sachin).
 | `Content-Length` | the body's byte count. No `Content-Encoding`; no chunked transfer |
 
 **Checking the body.** Compute SHA-256 over the bytes you received and compare it with the `ETag`
-without its quotes. The `ETag` is **not** the store's checksum of the arrived message (that checksum is
-over a different text).
+without its quotes. The `ETag` is **not** the store's checksum of the arrived message: that checksum is
+over the text with `_metadata`, which the store never serves.
 
 **Conditional fetch.** Send `If-None-Match` with an `ETag` you hold (alone, in a list, weak `W/"…"`, or
 `*`). If it matches: `304 Not Modified`, the `ETag` header, no body. Only the `ETag` is promised on a
 `304`. Otherwise `200` as above.
 
-**Stability promise** (D-JSONB-PROMISE, pending Sachin). For a given share the body and its `ETag` stay
-the same while the store's PostgreSQL major version is unchanged. A database upgrade (or a dump and
-restore) may write the same content with other bytes, which changes the `ETag` but never the content.
-Verify each response against its own `ETag`; across fetches separated by an upgrade, compare content,
-not bytes.
+**Stability promise.** For a given share the body and its `ETag` stay the same while the store's
+PostgreSQL major version is unchanged. A database upgrade (or a dump and restore) may write the same
+content with other bytes, which changes the `ETag` but never the content. The same holds for a body the
+store writes itself (`Results-Store-Payload-Form: arrived-text`, and section 4.6) when the store
+upgrades its JSON library. Verify each response against its own `ETag`; across fetches separated by an
+upgrade, compare content, not bytes.
 
 **Errors:** `400 invalid_share_id`; `404 share_not_found`.
 
@@ -303,12 +322,18 @@ not bytes.
   share.
 - No visibility lag.
 
-### 4.6 The arrived text: `GET /results-store/v1/shares/{shareId}/payload/arrived` (only if D-RAW is accepted)
+### 4.6 The arrived text: `GET /results-store/v1/shares/{shareId}/payload/arrived`
 
-- Body: the message text exactly as hearing sent it, byte for byte, `application/json`.
-- `ETag`: `"<the store's SHA-256 checksum of that text>"`, which is also the SHA-256 of the body bytes.
+Delivered in phase D of spec 003, after the other endpoints.
+
+- Body: the message as hearing sent it, **before** enrichment, **without `_metadata`**, as
+  `application/json`. The store parses the text, removes `_metadata` and writes it back as JSON, so it
+  is not byte-identical to what hearing sent: key order and values are hearing's; spacing and escape
+  forms are the store's.
+- `ETag`: `"<64 lower-case hex>"`, the SHA-256 of exactly the bytes of this body. It is **not** the
+  store's checksum of the arrived message (that is over the text with `_metadata`).
 - Headers as section 4.4, with `Results-Store-Payload-Form: arrived-text`.
-- Conditional fetch and errors as section 4.4. Its own action and allow rule.
+- Conditional fetch, stability promise and errors as section 4.4. Its own action and allow rule.
 
 ---
 
@@ -321,6 +346,13 @@ columns in place.
 
 `dayYouthSeen` and `courtCentreId` are checked against the values **at the time of your call**. A share
 already behind your cursor is **never presented again**, even if it would match now.
+
+**Consequence for `courtCentreId`.** A court-filtered pull returns exact court matches only. A share
+whose key details could not be read at first (`FAILED`, court unknown) is not returned. When the store's
+sweep later fills in its court, the share's `storedSeq` is already behind your cursor, so a court-filtered
+pull **never presents it**. If you need every share of your court, use the unfiltered pull (or
+`dayYouthSeen=notFalse`) and filter by `keyDetails.courtCentreId` yourself, re-reading unknown shares as
+section 5.4 says.
 
 ### 5.2 New versions come as new shares
 
@@ -342,8 +374,8 @@ need completeness.
 details. Re-read `GET /shares/{shareId}` until `projectionStatus` is `OK` (or the day's successor
 arrives) before deciding it is not yours.**
 
-This matters most with `courtCentreId`: a court-filtered pull also returns every `FAILED` share from any
-court, because its court is not yet known (D-COURT-FAILED, pending Sachin).
+Such shares reach you through the unfiltered pull and through `dayYouthSeen=notFalse`. A court-filtered
+pull never presents a `FAILED` share (section 5.1).
 
 ### 5.5 Values that change in place
 
@@ -387,7 +419,7 @@ included: there is no HTML error page. Branch on `status` and `reason`.
 |---|---|---|---|
 | 400 | `unknown_parameter` | a query parameter the endpoint does not take | no |
 | 400 | `repeated_parameter` | a query parameter given more than once | no |
-| 400 | `conflicting_parameters` | pull and search parameters together | no |
+| 400 | `conflicting_parameters` | pull and search parameters together, or a day-form and a time-form search parameter together | no |
 | 400 | `missing_parameter` | a required parameter is absent | no |
 | 400 | `invalid_stored_after_seq` | not an integer ≥ 0 | no |
 | 400 | `limit_out_of_range` | not an integer from 1 to 500 | no |
@@ -396,6 +428,10 @@ included: there is no HTML error page. Branch on `status` and `reason`.
 | 400 | `invalid_shared_day` | `sharedDayFrom` or `sharedDayTo` not a date | no |
 | 400 | `day_range_reversed` | `sharedDayFrom` after `sharedDayTo` | no |
 | 400 | `day_range_too_long` | more than 31 days | no |
+| 400 | `invalid_shared_from` | `sharedFrom` not an ISO-8601 UTC instant with `Z` and at most six fraction digits | no |
+| 400 | `invalid_shared_to` | `sharedTo` not such an instant | no |
+| 400 | `time_range_reversed` | `sharedTo` not after `sharedFrom` | no |
+| 400 | `time_range_too_long` | `sharedTo` more than 31 days after `sharedFrom` | no |
 | 400 | `invalid_latest_only` | not `true` or `false` | no |
 | 400 | `invalid_cursor` | not a cursor the store issued | no |
 | 400 | `invalid_share_id` | not a canonical UUID | no |
@@ -420,6 +456,7 @@ included: there is no HTML error page. Branch on `status` and `reason`.
 | Need | Use |
 |---|---|
 | Every share, once, in order (feeds, bridges) | pull, cursor `nextStoredAfterSeq`, idempotency on `shareId` |
+| Every share of one court, complete | unfiltered pull (or `dayYouthSeen=notFalse`), filter on `keyDetails.courtCentreId` yourself, re-read unknown shares |
 | Youth-relevant days only, complete | pull with `dayYouthSeen=notFalse` |
 | Wait for everything stored before 18:00 | pull until `hasMore` is `false` and `visibleUpTo` ≥ 18:00 |
 | INT or SJP | `keyDetails.isSjp` |
@@ -427,6 +464,7 @@ included: there is no HTML error page. Branch on `status` and `reason`.
 | Is this the day's latest? | `GET /hearings/{hearingId}/days/{hearingDay}/shares` |
 | The payload, checked | `/payload`, SHA-256 of the body equals the `ETag` |
 | Whether application results were added | `Results-Store-Enrichment-Applied` header (also `enrichmentApplied` in the item) |
-| The sharer's user id | `_metadata.context.user` in the payload body |
-| The raw event text | `/payload/arrived`, only if D-RAW is accepted |
-| A court's shares over some days | search |
+| Envelope facts (`_metadata`, for example the sharer's user id) | not served by the store |
+| The event as it arrived, before enrichment | `/payload/arrived` (without `_metadata`) |
+| A court's shares over some days | search, day form |
+| A court's shares shared before a moment (for example 18:00) | search, time form |

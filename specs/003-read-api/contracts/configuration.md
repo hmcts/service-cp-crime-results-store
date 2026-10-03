@@ -6,12 +6,47 @@ Same conventions: a typed `@ConfigurationProperties` record in `config/`, Spring
 checked at start; a bad value stops the service, proved by `ConfigurationValidationTest` and
 `ReadApiConfigTest`. The read beans are built whatever `resultsstore.publicevents.enabled` says.
 
+## `resultsstore.intake.store.*`: new defaults (spec 001 settings, changed by 003; E3)
+
+003 lowers two intake defaults so the 90-second lag is provable (research R4). Changed in
+`application.yaml` and in `IntakeProperties.Store`'s `@DefaultValue`s together (T008).
+
+| Property | Default before 003 | Default from 003 | Environment variable | Rule (unchanged) |
+|---|---|---|---|---|
+| `resultsstore.intake.store.transaction-timeout` | `60s` | `60s` | `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT` | at least each timeout below |
+| `resultsstore.intake.store.statement-timeout` | `20s` | **`10s`** | `RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT` | > 0; ≤ transaction; below the socket timeout |
+| `resultsstore.intake.store.lock-timeout` | `10s` | **`5s`** | `RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT` | > 0; ≤ statement; ≤ transaction |
+| `resultsstore.intake.store.idle-in-transaction-timeout` | `10s` | `10s` | `RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT` | > 0; ≤ transaction |
+
+The lag rule (below) ties them to the read side: **lag ≥ transaction + 2 × statement +
+idle-in-transaction**, and **lock ≤ statement**. At the defaults: 60 + 2 × 10 + 10 = 90 s.
+
+## Pool backstop: Hikari connection-init SQL (E3)
+
+| Setting | Value | Set by | Rule |
+|---|---|---|---|
+| `spring.datasource.hikari.connection-init-sql` | `SET statement_timeout = '<n>ms'`, n = `resultsstore.intake.store.statement-timeout` in milliseconds (`10000ms` by default) | `config/StatementTimeoutBackstop` (a `BeanPostProcessor` on the `HikariDataSource`), from the bound intake property, so the two cannot differ | not set in `application.yaml` and not settable on its own. A test proves the pooled value equals the intake property, at the default and at a custom value |
+
+Why in Java, not as a YAML line built from the same environment variable: Spring and PostgreSQL read
+duration strings differently (`1m` is a minute to Spring and an error to PostgreSQL; `PT10S` is valid
+only to Spring), and an init SQL PostgreSQL rejects would fail every connection.
+
+What it is for: a server-side limit on every statement on every pooled connection, the read API's
+included, as a backstop for anything that forgets its own. What it is not: part of the lag's proof. The
+store transaction still sets its own `statement_timeout`, `lock_timeout` and
+`idle_in_transaction_session_timeout` per transaction (`JdbcShareStore.SET_TIMEOUTS`), and the proof
+rests on those. Client-side timeouts (the JDBC query timeout, a Spring transaction timeout used as a
+client deadline) are never part of the bound.
+
+It also applies to Flyway migrations, the sweep and the receipt transaction. A migration or job that
+needs longer than the statement timeout sets `SET LOCAL statement_timeout` inside its own transaction.
+
 ## `resultsstore.read.*` (`ReadApiProperties`)
 
 | Property | Default | Environment variable | Rule |
 |---|---|---|---|
-| `resultsstore.read.pull.visibility-lag` | none set: derived as `transaction-timeout` + 2 × `statement-timeout` + `idle-in-transaction-timeout` of `resultsstore.intake.store.*` (110 s at their defaults) | `RESULTSSTORE_READ_PULL_VISIBILITYLAG` | ≥ that sum; ≤ 10 min (D-LAG-VALUE, pending Sachin) |
-| `resultsstore.read.statement-timeout` | `5s` | `RESULTSSTORE_READ_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (`spring.datasource.hikari.data-source-properties.socketTimeout`, 30 s) when one is set. Despite the name, this is the read `JdbcTemplate`'s JDBC query timeout: a client-side cancel, backed by the socket timeout. It is not PostgreSQL's server-side `statement_timeout` that intake sets. That is acceptable for reads: a read blocks no writer, and a late cancel only delays one answer (spec FR-045) |
+| `resultsstore.read.pull.visibility-lag` | none set: derived as `transaction-timeout` + 2 × `statement-timeout` + `idle-in-transaction-timeout` of `resultsstore.intake.store.*` (**90 s** at their defaults) | `RESULTSSTORE_READ_PULL_VISIBILITYLAG` | ≥ that sum; ≤ 10 min (D-LAG-VALUE, E3) |
+| `resultsstore.read.statement-timeout` | `5s` | `RESULTSSTORE_READ_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (`spring.datasource.hikari.data-source-properties.socketTimeout`, 30 s) when one is set. Despite the name, this is the read `JdbcTemplate`'s JDBC query timeout: a client-side cancel, backed by the socket timeout. It is not PostgreSQL's server-side `statement_timeout` that intake sets per transaction. That is acceptable for reads: a read blocks no writer, and a late cancel only delays one answer (spec FR-045). The pool backstop above (10 s) also applies to reads |
 
 `application.yaml`:
 
@@ -40,20 +75,24 @@ resultsstore:
     `IntakeConfig`'s for the intake statement timeout.
 - Messages name properties, never values from the environment.
 
-### The lag is checked per pod: rollout order (D-READONLY-PODS, pending Sachin)
+### The lag is checked per pod: rollout order (D-READONLY-PODS = no, E10)
 
 The lag is checked against **this pod's own** `resultsstore.intake.store.*`. The writers are the pods
 with the subscription on. The check proves nothing if pods disagree. So:
 
 1. **Every pod of every deployment that shares the database MUST have the same
-   `resultsstore.intake.store.*` values.** A read-only pod must still be given the writers' values.
+   `resultsstore.intake.store.*` values.** No deployment runs read-only pods or pods with other intake
+   timeouts (E10).
 2. **Raising an intake timeout:** first raise `resultsstore.read.pull.visibility-lag` (or leave it unset
    and roll the new timeouts to every pod at once, read-only pods first), then raise the timeout.
 3. **Lowering an intake timeout:** lower the timeout on every pod first; lower the lag after.
 4. The runtime check is `resultsstore.intake.visibility.overrun` (contracts/metrics.md): any increase
    means a store transaction outlived the lag.
+5. **The 003 deploy itself** lowers the statement and lock timeouts and the derived lag together. That is
+   safe only because the read API is new: consumers start pulling after every pod runs 003. Any later
+   change follows steps 2 and 3.
 
-## `authz.http.enabled` must be on (D-AUTHZ-REQUIRED, pending Sachin)
+## `authz.http.enabled` must be on (D-AUTHZ-REQUIRED = yes, E12)
 
 `ApiWebConfig` stops the service at start when `authz.http.enabled` is not `true` and the `test`
 profile is not active: `IllegalStateException` naming `authz.http.enabled`. The default in
@@ -78,7 +117,7 @@ profile is not active: `IllegalStateException` naming `authz.http.enabled`. The 
 
 | Variable | Value | Why |
 |---|---|---|
-| `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT`, `…_STATEMENTTIMEOUT`, `…_LOCKTIMEOUT`, `…_IDLEINTRANSACTIONTIMEOUT` | short values through `${VAR:-default}` (for example 6 s, 2 s, 1 s, 1 s) | so the smoke's lag is about 11 s, not 110 s |
+| `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT`, `…_STATEMENTTIMEOUT`, `…_LOCKTIMEOUT`, `…_IDLEINTRANSACTIONTIMEOUT` | short values through `${VAR:-default}`: transaction 6 s, statement 2 s, lock 1 s, idle-in-transaction 1 s (lock ≤ statement holds) | so the smoke's derived lag is 6 + 2 × 2 + 1 = 11 s, not 90 s; the pool backstop follows the 2 s statement timeout |
 | `RESULTSSTORE_READ_PULL_VISIBILITYLAG` | left unset | the smoke checks the derived default |
 
 ## Constants that are deliberately not settings
@@ -90,7 +129,7 @@ They are the consumer contract (contracts/read-api.md); a setting would let it d
 | base path | `filters/ApiRoute` | `/results-store/v1` |
 | routes and action names | `filters/ApiRoute` | spec.md FR-001, FR-046 |
 | default and maximum `limit` | `application/ShareReadService` | 100 and 500 (pull and search) |
-| search span | `application/ShareReadService` | 31 days, both ends counted |
+| search span | `application/ShareReadService` | day form: 31 days, both ends counted; time form: at most 31 days (P31D), half-open |
 | cursor length | `domain/SearchCursor` | 128 characters |
 | `Retry-After` on `503` | `api/ReadApiExceptionHandler` | 5 seconds |
 | lag upper bound | `config/ReadApiConfig` | 10 minutes |
