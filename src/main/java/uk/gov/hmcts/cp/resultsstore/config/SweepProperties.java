@@ -5,7 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
 /**
- * {@code resultsstore.sweep.*} (contracts/configuration.md). The sweep itself arrives with T012.
+ * {@code resultsstore.sweep.*} (contracts/configuration.md), read by {@link SweepSchedulingConfig}.
  *
  * @param enabled      whether the scheduled sweep runs
  * @param initialDelay the wait before the first round

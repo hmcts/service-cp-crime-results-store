@@ -28,6 +28,7 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
+import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
@@ -222,7 +223,7 @@ class IntakeServiceTest {
             final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
             final InOrder order = inOrder(shareStore, observer);
             order.verify(shareStore).store(request.capture());
-            order.verify(observer).extractionFailed(ExtractionFailureKind.INVALID_UUID);
+            order.verify(observer).extractionFailed(ExtractionStage.INTAKE, ExtractionFailureKind.INVALID_UUID);
             assertThat(request.getValue().projection()).isInstanceOf(Projection.Failed.class);
         }
 
@@ -259,7 +260,7 @@ class IntakeServiceTest {
             assertThat(result.shareId()).isEqualTo(existing);
             verify(observer).duplicate();
             verify(observer, never()).stored(anyBoolean(), any());
-            verify(observer, never()).extractionFailed(any());
+            verify(observer, never()).extractionFailed(any(), any());
         }
 
         @Test

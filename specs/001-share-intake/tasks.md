@@ -695,12 +695,45 @@ Depends on phase 3.
 **Independent test**: `ExtractionSweepIT` turns a `FAILED` row `OK`; `MicrometerIntakeObserverTest`
 and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke proves the real stack.
 
-- [ ] T012 [US5] Test first: `ExtractionSweepTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweepTest.java, `ExtractionSweepIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ExtractionSweepIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweep.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/SweepRowOutcome.java, sweep methods on src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java and src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepSchedulingConfig.java
+- [X] T012 [US5] Test first: `ExtractionSweepTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweepTest.java, `ExtractionSweepIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ExtractionSweepIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweep.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/SweepRowOutcome.java, sweep methods on src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java and src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepSchedulingConfig.java
   - Cases: selects `FAILED` rows only, retried when `projection_version` is older or the reason is `UNEXPECTED` below `max-attempts`; extraction outside the row transaction from `payload_text`, never `payload_json`; per row: day lock, share `FOR UPDATE`, still-`FAILED` re-check, else `SKIPPED`; success fills key details and defendant rows and sets `OK`; failure records the new reason, version and attempts + 1; one row's exception is counted `ERROR` and the round continues; `FAILED` → `OK` after a version raise; `UNEXPECTED` stops at 3 attempts; two sweeps at once (held day lock, latch) process each row once; dedicated `TaskScheduler`, bean absent when `resultsstore.sweep.enabled=false`; no ShedLock.
   - Covers: FR-033–FR-037; SC-006.
   - Done when: both test classes green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (`JdbcShareStore.sweepCandidates` returning no rows, `payloadText` "",
+    `recordReextraction` `SKIPPED`; `ExtractionSweep.runRound` returning no outcomes; an empty
+    `SweepSchedulingConfig` and a `SweepSchedule` that schedules nothing), each class run on its own:
+    `./gradlew test --tests '*ExtractionSweepTest'`: 3 completed, 2 failed,
+    `readable_row_should_be_recorded_with_the_details_read_from_its_stored_text_and_counted_fixed`:
+    `Expecting actual: [] to contain exactly (and in same order): [FIXED]`; `--tests '*ExtractionSweepIT'`:
+    2 completed, 1 failed (failFast), `selection_should_take_only_failed_rows_due_a_retry_oldest_first`:
+    `Expecting actual: [] to contain exactly (and in same order): [7654d9bc-…]`;
+    `--tests '*SweepSchedulingConfigTest'`: 4 completed, 1 failed, `stopped_context_should_stop_the_schedule`:
+    `Expecting: <Started application …> to have a single bean of type: <…SweepSchedule> but found no beans of
+    that type`.
+  - GREEN: `ExtractionSweepTest` 7 tests, `ExtractionSweepIT` 8 tests, `SweepSchedulingConfigTest` 4 tests,
+    `SweepRowOutcomeTest` 4, `ExtractionStageTest` 2, 0 failures; the gate exits 0: 618 tests, 0 failures;
+    JaCoCo (gate scope) line 0.994, branch 0.996.
+  - Notes: `ShareStore` gains `sweepCandidates(currentVersion, maxAttempts, limit)` (R13 step 1, unlocked,
+    `ORDER BY stored_seq`, on `hearing_share_failed_ix`), `payloadText(shareId)` (read outside any
+    transaction) and `recordReextraction(candidate, projection, version)`: one store-bounded transaction
+    (the store's `set_config` timeouts and `TransactionTemplate`), day lock, then the share row
+    `FOR UPDATE`, re-checked `FAILED` with the attempts seen at selection, else `SKIPPED`; success writes
+    the key details, `OK`, version, attempts + 1, `projected_at = clock_timestamp()`, the defendant rows
+    and the youth recompute; failure writes the new reason, version, attempts + 1 and `projected_at`. Its
+    failures are not classified as intake failures; the sweep counts them as the row's `error`.
+    `ExtractionSweep` re-reads the stored text through `ShareIdentityParser` (text that no longer reads as
+    a share is that row's `error`), extracts outside the transaction, reports `sweepRow(outcome)` after each
+    row and `extractionFailed(SWEEP, kind)` after a `FAILED_AGAIN`, and logs a row's failure by share id and
+    exception class only. The running version is a setting of the sweep (`ExtractionSweep.Settings`,
+    `KeyDetailsExtractor.EXTRACTOR_VERSION` in production) so `ExtractionSweepIT` can raise it past the
+    schema's `projection_version >= 1`. Decision (least behaviour): `IntakeObserver.extractionFailed` takes
+    the stage (`domain/ExtractionStage`, the contract's `stage` tag) and gains `sweepRow(SweepRowOutcome)`;
+    intake reports `INTAKE` where it reported the kind alone. `config/SweepSchedulingConfig` (on
+    `resultsstore.publicevents.enabled` and `resultsstore.sweep.enabled`) builds the sweep and
+    `config/SweepSchedule`, a `SmartLifecycle` holding a one-thread `ThreadPoolTaskScheduler`
+    (`extraction-sweep-`) that is not a bean, so no `Executor` bean appears beside Boot's own; a round that
+    throws is logged by class chain and the next round runs. No ShedLock. The two-sweeps case holds the
+    day row on a second connection and releases it once `pg_stat_activity` shows both sweeps waiting.
 
 - [ ] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

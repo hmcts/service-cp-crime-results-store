@@ -8,6 +8,7 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
@@ -123,7 +124,7 @@ public class IntakeService {
             observer.parsedCopySkipped();
         }
         if (projection instanceof Projection.Failed failed) {
-            observer.extractionFailed(failed.kind());
+            observer.extractionFailed(ExtractionStage.INTAKE, failed.kind());
         }
         return result(IntakeOutcome.STORED, messageId, stored.shareId(), identity);
     }

@@ -2,12 +2,14 @@ package uk.gov.hmcts.cp.resultsstore.application;
 
 import java.time.Duration;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
+import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
+import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 
 /**
- * What intake reports for metrics (contracts/metrics.md). Each event that describes a transaction is
+ * What intake and the extraction sweep report for metrics (contracts/metrics.md). Each event that describes a transaction is
  * reported only after that transaction commits; a failure after its rollback (FR-040).
  */
 public interface IntakeObserver {
@@ -43,11 +45,20 @@ public interface IntakeObserver {
     void parsedCopySkipped();
 
     /**
-     * A share was stored with its key details unread ({@code FAILED}).
+     * Key details could not be read, and the {@code FAILED} row that says so is committed: a share
+     * stored at intake, or a row the sweep retried.
      *
-     * @param kind why
+     * @param stage where
+     * @param kind  why
      */
-    void extractionFailed(ExtractionFailureKind kind);
+    void extractionFailed(ExtractionStage stage, ExtractionFailureKind kind);
+
+    /**
+     * The extraction sweep finished one row (after its transaction, if any, ended).
+     *
+     * @param outcome how
+     */
+    void sweepRow(SweepRowOutcome outcome);
 
     /**
      * An intake attempt failed and the message goes back to the broker.

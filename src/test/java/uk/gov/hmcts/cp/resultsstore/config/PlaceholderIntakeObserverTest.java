@@ -8,9 +8,11 @@ import java.time.Duration;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
+import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
+import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
 
 /**
@@ -39,7 +41,8 @@ class PlaceholderIntakeObserverTest {
             observer.stored(true, Duration.ofSeconds(1));
             observer.duplicate();
             observer.parsedCopySkipped();
-            observer.extractionFailed(ExtractionFailureKind.WRONG_TYPE);
+            observer.extractionFailed(ExtractionStage.SWEEP, ExtractionFailureKind.WRONG_TYPE);
+            observer.sweepRow(SweepRowOutcome.ERROR);
             observer.intakeFailed(IntakeStage.STORE, IntakeFailureCause.LOCK_TIMEOUT);
 
             assertThat(log.events()).hasSize(1).extracting(ILoggingEvent::getLevel).containsExactly(Level.WARN);

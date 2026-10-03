@@ -3,8 +3,10 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.dao.DataAccessException;
@@ -16,11 +18,13 @@ import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult;
+import uk.gov.hmcts.cp.resultsstore.application.SweepCandidate;
 import uk.gov.hmcts.cp.resultsstore.domain.DefendantRef;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.KeyDetails;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
+import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 
 /**
  * The share tables, written in one store transaction per share (FR-013 to FR-017, research R9 to R11).
@@ -37,6 +41,10 @@ import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
  * key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
  * {@link uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException}.
+ *
+ * <p>The extraction sweep's writes take the same locks in the same order, day then share, inside the
+ * same bounded transaction, and change only a {@code FAILED} row's key details and {@code projection_*}
+ * columns, its first defendant rows and the day's youth flags (FR-034, FR-036, FR-044).
  */
 public class JdbcShareStore implements ShareStore {
 
@@ -91,6 +99,49 @@ public class JdbcShareStore implements ShareStore {
             VALUES (:shareId, :caseId, :defendantId, :masterDefendantId)
             """;
 
+    /**
+     * The sweep's candidates (research R13): unlocked, oldest stored first, on the partial index of
+     * {@code FAILED} rows.
+     */
+    private static final String SWEEP_CANDIDATES = """
+            SELECT share_id, hearing_id, hearing_day, projection_attempts FROM hearing_share
+             WHERE projection_status = 'FAILED'
+               AND (projection_version < :currentVersion
+                    OR (projection_reason LIKE 'UNEXPECTED%' AND projection_attempts < :maxAttempts))
+             ORDER BY stored_seq
+             LIMIT :limit
+            """;
+
+    private static final String PAYLOAD_TEXT = """
+            SELECT payload_text FROM hearing_share_payload WHERE share_id = :shareId
+            """;
+
+    /** Taken after the day lock, the store transaction's lock order. */
+    private static final String LOCK_SHARE = """
+            SELECT projection_status = 'FAILED' AND projection_attempts = :attempts AS as_selected
+              FROM hearing_share
+             WHERE share_id = :shareId
+               FOR UPDATE
+            """;
+
+    private static final String SET_EXTRACTED = """
+            UPDATE hearing_share
+               SET is_reshare = :reshare, court_centre_id = :courtCentreId, court_room_id = :courtRoomId,
+                   lja_code = :ljaCode, jurisdiction_type = :jurisdictionType, is_sjp = :sjp,
+                   is_group_proceedings = :groupProceedings, youth_court_id = :youthCourtId,
+                   any_subject_is_youth = :anySubjectIsYouth, projection_status = 'OK', projection_reason = NULL,
+                   projection_version = :projectionVersion, projection_attempts = projection_attempts + 1,
+                   projected_at = clock_timestamp()
+             WHERE share_id = :shareId
+            """;
+
+    private static final String SET_FAILED_AGAIN = """
+            UPDATE hearing_share
+               SET projection_reason = :projectionReason, projection_version = :projectionVersion,
+                   projection_attempts = projection_attempts + 1, projected_at = clock_timestamp()
+             WHERE share_id = :shareId
+            """;
+
     /** SQLSTATE class 22, data exception: {@code jsonb} refused the text (e.g. 22003, 22P05). */
     private static final String DATA_EXCEPTION_CLASS = "22";
 
@@ -101,6 +152,12 @@ public class JdbcShareStore implements ShareStore {
     private static final String HEARING_DAY = "hearingDay";
 
     private static final String SHARED_AT = "sharedAt";
+
+    private static final String PROJECTION_VERSION = "projectionVersion";
+
+    private static final String PROJECTION_REASON = "projectionReason";
+
+    private static final String ANY_SUBJECT_IS_YOUTH = "anySubjectIsYouth";
 
     private final JdbcClient jdbc;
 
@@ -151,7 +208,7 @@ public class JdbcShareStore implements ShareStore {
     private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status) {
         final ShareIdentity identity = request.identity();
         setTimeouts();
-        lockDay(identity);
+        lockDay(identity.hearingId(), identity.hearingDay());
         final ShareChain.Place place = chain.place(identity);
         final Optional<Instant> storedAt = insertShare(request, place);
         final StoreResult result;
@@ -160,7 +217,9 @@ public class JdbcShareStore implements ShareStore {
             if (!parsed) {
                 insertPayload(request, null);
             }
-            insertDefendants(request);
+            if (request.projection() instanceof Projection.Extracted extracted) {
+                insertDefendants(request.shareId(), extracted);
+            }
             chain.join(identity, request.shareId(), place);
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
@@ -173,6 +232,77 @@ public class JdbcShareStore implements ShareStore {
         return result;
     }
 
+    @Override
+    public List<SweepCandidate> sweepCandidates(final int currentVersion, final int maxAttempts, final int limit) {
+        return jdbc.sql(SWEEP_CANDIDATES)
+                .param("currentVersion", currentVersion)
+                .param("maxAttempts", maxAttempts)
+                .param("limit", limit)
+                .query((row, rowNumber) -> new SweepCandidate(row.getObject(1, UUID.class),
+                        row.getObject(2, UUID.class), row.getObject(3, LocalDate.class), row.getInt(4)))
+                .list();
+    }
+
+    @Override
+    public String payloadText(final UUID shareId) {
+        return jdbc.sql(PAYLOAD_TEXT).param(SHARE_ID, shareId).query(String.class).single();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Bounded by the store transaction's own timeouts. A failure is not classified: it is the
+     * sweep's, not an intake's, and the sweep counts it as the row's {@code error}.
+     */
+    @Override
+    public SweepRowOutcome recordReextraction(final SweepCandidate candidate, final Projection projection,
+            final int version) {
+        return storeTransaction.execute(status -> reextractLocked(candidate, projection, version));
+    }
+
+    private SweepRowOutcome reextractLocked(final SweepCandidate candidate, final Projection projection,
+            final int version) {
+        setTimeouts();
+        lockDay(candidate.hearingId(), candidate.hearingDay());
+        final boolean asSelected = jdbc.sql(LOCK_SHARE)
+                .param(SHARE_ID, candidate.shareId())
+                .param("attempts", candidate.attempts())
+                .query(Boolean.class)
+                .single();
+        final SweepRowOutcome outcome;
+        if (asSelected) {
+            outcome = switch (projection) {
+                case Projection.Extracted extracted -> fixed(candidate, extracted, version);
+                case Projection.Failed failed -> failedAgain(candidate.shareId(), failed, version);
+            };
+        } else {
+            outcome = SweepRowOutcome.SKIPPED;
+        }
+        return outcome;
+    }
+
+    private SweepRowOutcome fixed(final SweepCandidate candidate, final Projection.Extracted extracted,
+            final int version) {
+        withKeyDetails(jdbc.sql(SET_EXTRACTED), extracted.keyDetails())
+                .param(ANY_SUBJECT_IS_YOUTH, extracted.anySubjectIsYouth())
+                .param(PROJECTION_VERSION, version)
+                .param(SHARE_ID, candidate.shareId())
+                .update();
+        // A FAILED share was stored with no defendant rows, so these are its first.
+        insertDefendants(candidate.shareId(), extracted);
+        youth.recompute(candidate.hearingId(), candidate.hearingDay());
+        return SweepRowOutcome.FIXED;
+    }
+
+    private SweepRowOutcome failedAgain(final UUID shareId, final Projection.Failed failed, final int version) {
+        jdbc.sql(SET_FAILED_AGAIN)
+                .param(PROJECTION_REASON, failed.reason())
+                .param(PROJECTION_VERSION, version)
+                .param(SHARE_ID, shareId)
+                .update();
+        return SweepRowOutcome.FAILED_AGAIN;
+    }
+
     private void setTimeouts() {
         jdbc.sql(SET_TIMEOUTS)
                 .param("lockTimeout", milliseconds(timeouts.lock()))
@@ -183,17 +313,14 @@ public class JdbcShareStore implements ShareStore {
     }
 
     /** Takes the hearing-day lock, creating the day row for its first share (research R10). */
-    private void lockDay(final ShareIdentity identity) {
-        jdbc.sql(INSERT_DAY).param(HEARING_ID, identity.hearingId()).param(HEARING_DAY, identity.hearingDay())
-                .update();
-        jdbc.sql(LOCK_DAY).param(HEARING_ID, identity.hearingId()).param(HEARING_DAY, identity.hearingDay())
-                .query(Integer.class).single();
+    private void lockDay(final UUID hearingId, final LocalDate hearingDay) {
+        jdbc.sql(INSERT_DAY).param(HEARING_ID, hearingId).param(HEARING_DAY, hearingDay).update();
+        jdbc.sql(LOCK_DAY).param(HEARING_ID, hearingId).param(HEARING_DAY, hearingDay).query(Integer.class).single();
     }
 
     private Optional<Instant> insertShare(final StoreRequest request, final ShareChain.Place place) {
         final ShareIdentity identity = request.identity();
-        final KeyDetails details = keyDetails(request.projection());
-        return jdbc.sql(INSERT_SHARE)
+        return withKeyDetails(jdbc.sql(INSERT_SHARE), keyDetails(request.projection()))
                 .param(SHARE_ID, request.shareId())
                 .param(HEARING_ID, identity.hearingId())
                 .param(HEARING_DAY, identity.hearingDay())
@@ -201,6 +328,21 @@ public class JdbcShareStore implements ShareStore {
                 .param("sharedDayLondon", request.sharedDays().london())
                 .param("sharedDayUtc", request.sharedDays().utc())
                 .param("checksum", request.checksum())
+                .param(ANY_SUBJECT_IS_YOUTH, anySubjectIsYouth(request.projection()))
+                .param("predecessor", place.predecessor())
+                .param("outOfOrder", place.isLate())
+                .param("projectionStatus", request.projection().status().name())
+                .param(PROJECTION_REASON, reason(request.projection()))
+                .param(PROJECTION_VERSION, KeyDetailsExtractor.EXTRACTOR_VERSION)
+                .query(OffsetDateTime.class)
+                .optional()
+                .map(OffsetDateTime::toInstant);
+    }
+
+    /** Binds the eight key-detail columns' parameters, shared by the insert and the sweep's update. */
+    private static JdbcClient.StatementSpec withKeyDetails(final JdbcClient.StatementSpec statement,
+            final KeyDetails details) {
+        return statement
                 .param("reshare", details.reshare())
                 .param("courtCentreId", details.courtCentreId())
                 .param("courtRoomId", details.courtRoomId())
@@ -208,16 +350,7 @@ public class JdbcShareStore implements ShareStore {
                 .param("jurisdictionType", details.jurisdictionType())
                 .param("sjp", details.sjp())
                 .param("groupProceedings", details.groupProceedings())
-                .param("youthCourtId", details.youthCourtId())
-                .param("anySubjectIsYouth", anySubjectIsYouth(request.projection()))
-                .param("predecessor", place.predecessor())
-                .param("outOfOrder", place.isLate())
-                .param("projectionStatus", request.projection().status().name())
-                .param("projectionReason", reason(request.projection()))
-                .param("projectionVersion", KeyDetailsExtractor.EXTRACTOR_VERSION)
-                .query(OffsetDateTime.class)
-                .optional()
-                .map(OffsetDateTime::toInstant);
+                .param("youthCourtId", details.youthCourtId());
     }
 
     /**
@@ -261,16 +394,14 @@ public class JdbcShareStore implements ShareStore {
         return sqlState != null && sqlState.startsWith(DATA_EXCEPTION_CLASS);
     }
 
-    private void insertDefendants(final StoreRequest request) {
-        if (request.projection() instanceof Projection.Extracted extracted) {
-            for (final DefendantRef defendant : extracted.defendants()) {
-                jdbc.sql(INSERT_DEFENDANT)
-                        .param(SHARE_ID, request.shareId())
-                        .param("caseId", defendant.caseId())
-                        .param("defendantId", defendant.defendantId())
-                        .param("masterDefendantId", defendant.masterDefendantId())
-                        .update();
-            }
+    private void insertDefendants(final UUID shareId, final Projection.Extracted extracted) {
+        for (final DefendantRef defendant : extracted.defendants()) {
+            jdbc.sql(INSERT_DEFENDANT)
+                    .param(SHARE_ID, shareId)
+                    .param("caseId", defendant.caseId())
+                    .param("defendantId", defendant.defendantId())
+                    .param("masterDefendantId", defendant.masterDefendantId())
+                    .update();
         }
     }
 
