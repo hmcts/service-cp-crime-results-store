@@ -80,6 +80,18 @@ class BoundedErrorControllerTest {
         assertThat(observer.refusals()).isEmpty();
     }
 
+    /** contracts/read-api.md §6: {@code application/problem+json}, except {@code 401} and {@code 403}. */
+    @ParameterizedTest
+    @ValueSource(ints = {400, 404, 405, 415, 500, 503})
+    void any_status_but_401_and_403_should_be_written_as_problem_json(final int status) throws IOException {
+        final MockHttpServletResponse response = error(status, "text/html");
+
+        assertThat(response.getStatus()).isEqualTo(status);
+        assertThat(response.getContentType()).isEqualTo("application/problem+json");
+        final JsonNode body = JsonMapper.builder().build().readTree(response.getContentAsString());
+        assertThat(body.propertyNames()).containsExactly("type", "title", "status", "reason");
+    }
+
     @ParameterizedTest
     @ValueSource(ints = {400, 404, 405, 500, 503})
     void any_other_status_should_not_be_counted(final int status) throws IOException {

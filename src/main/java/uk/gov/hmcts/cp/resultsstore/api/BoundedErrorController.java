@@ -17,7 +17,9 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
 
 /**
  * The service's {@code /error} page (FR-043, research R13): one handler for every method and every
- * {@code Accept}, {@code text/html} included, writing the four-field body as {@code application/json}. As an
+ * {@code Accept}, {@code text/html} included, writing the four-field body: as {@code application/json} for a
+ * {@code 401} or {@code 403} and as {@code application/problem+json} for any other status (contracts/read-api.md
+ * §6). As an
  * {@link ErrorController} bean it makes Boot's {@code BasicErrorController}, whose HTML handler would answer
  * {@code Accept: text/html} with no view, back off. The body is written here, with no content negotiation, so
  * no {@code Accept} can turn it into a {@code 406} or an HTML page.
@@ -62,12 +64,18 @@ public class BoundedErrorController implements ErrorController, Controller {
         final int status = ((Number) body.get("status")).intValue();
         final byte[] bytes = MAPPER.writeValueAsBytes(body);
         response.setStatus(status);
-        response.setContentType(MediaType.APPLICATION_JSON_VALUE);
+        response.setContentType(mediaType(status));
         response.setContentLength(bytes.length);
         response.getOutputStream().write(bytes);
         response.flushBuffer();
         count(ProblemReason.forErrorStatus(status));
         return null;
+    }
+
+    /** contracts/read-api.md §6: {@code 401} and {@code 403} as {@code application/json}, the rest as problem JSON. */
+    private static String mediaType(final int status) {
+        return status == HttpServletResponse.SC_UNAUTHORIZED || status == HttpServletResponse.SC_FORBIDDEN
+                ? MediaType.APPLICATION_JSON_VALUE : MediaType.APPLICATION_PROBLEM_JSON_VALUE;
     }
 
     private void count(final ProblemReason reason) {
