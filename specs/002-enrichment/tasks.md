@@ -531,7 +531,7 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     the 10 s read timeout. Test-only change; green.
 
 - [X] T008 [P] [US1] Test first: `ExtractionSweepTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweepTest.java, `ExtractionSweepIT` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ExtractionSweepIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ExtractionSweep.java (reads `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareStore.java (`payloadText` removed; javadoc of `payloadForExtraction`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java (`payloadText` removed)
-  - Cases: `ExtractionSweepTest`: extracts from `payloadForExtraction`; a missing payload row still counts its own failure; a database failure reading the copy counts `error`. `ExtractionSweepIT`: a `FAILED` row whose `payload_json` carries a defendant the `payload_text` lacks (rows inserted directly, as the suite's fixtures do) is re-extracted from `payload_json` and indexes that defendant; a `FAILED` row with NULL `payload_json` is re-extracted from the text; the sweep makes no progression request (no `ProgressionApplications` bean in the sweep context, and a WireMock verify of 0 requests when one is present); `EXTRACTOR_VERSION` unchanged.
+  - Cases: `ExtractionSweepTest`: extracts from `payloadForExtraction`; a missing payload row still counts its own failure; a database failure reading the copy counts `error`. `ExtractionSweepIT`: a `FAILED` row whose `payload_json` carries a defendant the `payload_text` lacks (rows inserted directly, as the suite's fixtures do) is re-extracted from `payload_json` and indexes that defendant; a `FAILED` row with NULL `payload_json` is re-extracted from the text; the sweep makes no progression request (since gate round 1 in `IntakeIT`, whose context has enrichment on and the client pointed at `ProgressionStub`: a WireMock verify of 0 requests there); `EXTRACTOR_VERSION` unchanged.
   - Covers: FR-033, FR-034.
   - Done when: both test classes green; the gate green.
   - RED (the three production files at phase C's base, 5c08ab3, where the sweep still reads
@@ -550,6 +550,20 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
   - GREEN: `ExtractionSweepTest` 19, `ExtractionSweepIT` 18, `JdbcShareStoreIT` 26, 0 failures.
     `payloadText` is gone from `ShareStore` and `JdbcShareStore`; the sweep reads `payloadForExtraction`
     (`COALESCE(payload_json::text, payload_text)`), so the T005 stop-gap duplication is removed.
+  - Gate round 1 (no-progression-request case made able to fail): the old
+    `sweep_should_make_no_progression_request_and_keep_the_extractor_version` started a `ProgressionStub`
+    that nothing in its context pointed at (the test profile has enrichment off), so its 0-request check
+    could not fail. It is split: `ExtractionSweepIT.extractor_version_should_stay_at_one` keeps the
+    FR-034 pin, and `IntakeIT.sweep_should_make_no_progression_request_with_enrichment_wired_to_the_stub`
+    builds the sweep with `SweepSchedulingConfig.extractionSweep` from that context's own beans (enrichment
+    on, `resultsstore.progression.base-url` = the stub, the application answered `FINALISED` so a request
+    would succeed), stores a share naming an application without results as an `UNEXPECTED` failure,
+    runs a round, and checks it is `FIXED` with 0 stub requests for the application. Test-only: the
+    sweep does not change, so the case cannot be red on the code. Its power to fail was shown with a
+    temporary mutant (an extractor that calls the context's `ProgressionApplications.find` before
+    extracting, not committed): `sweep_should_make_no_progression_request_with_enrichment_wired_to_the_stub() FAILED`
+    `Expecting empty but was: [{"url" : "/progression-query-api/query/api/rest/progression/applications/bd867363-…", "method" : "GET", … "CJSCPPUID" : "7e57c0de-…-000000000002" …}]`.
+    GREEN: that `IntakeIT` case 1, `ExtractionSweepIT` 18, 0 failures.
 
 - [X] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
   - Covers: FR-039; SC-010.

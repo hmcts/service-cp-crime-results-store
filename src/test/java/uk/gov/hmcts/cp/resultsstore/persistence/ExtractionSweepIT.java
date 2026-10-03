@@ -29,7 +29,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.context.ApplicationContext;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
@@ -42,7 +41,6 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
-import uk.gov.hmcts.cp.resultsstore.application.ProgressionApplications;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
@@ -52,7 +50,6 @@ import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
-import uk.gov.hmcts.cp.resultsstore.support.ProgressionStub;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
@@ -96,9 +93,6 @@ class ExtractionSweepIT {
 
     @Autowired
     private DataSource dataSource;
-
-    @Autowired
-    private ApplicationContext context;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -349,20 +343,12 @@ class ExtractionSweepIT {
                 .param("text", text).param("shareId", shareId).query(Boolean.class).single()).isTrue();
     }
 
+    /**
+     * The sweep reads no progression and re-extracts with the 001 extractor as it stands (FR-034). That
+     * the sweep asks progression nothing with enrichment wired to a stub is proven in IntakeIT.
+     */
     @Test
-    void sweep_should_make_no_progression_request_and_keep_the_extractor_version() {
-        assertThat(context.getBeanProvider(ProgressionApplications.class).getIfAvailable()).isNull();
-        final UUID applicationId = UUID.fromString("a1a1a1a1-0000-4000-8000-0000000000aa");
-        try (ProgressionStub progression = ProgressionStub.start()) {
-            final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z",
-                    applicationId.toString());
-            stored(text, failed(COURT_CENTRE_REASON, ExtractionFailureKind.INVALID_UUID));
-
-            final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
-
-            assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
-            assertThat(progression.requestsFor(applicationId)).isEmpty();
-        }
+    void extractor_version_should_stay_at_one() {
         assertThat(KeyDetailsExtractor.EXTRACTOR_VERSION).isEqualTo(1);
     }
 

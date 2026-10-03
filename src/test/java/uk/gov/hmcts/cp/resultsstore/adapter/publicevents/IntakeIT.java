@@ -53,8 +53,20 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import uk.gov.hmcts.cp.resultsstore.application.Arrival;
+import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
+import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
+import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
+import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
+import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.config.PublicEventsConfig;
+import uk.gov.hmcts.cp.resultsstore.config.SweepProperties;
+import uk.gov.hmcts.cp.resultsstore.config.SweepSchedulingConfig;
+import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
+import uk.gov.hmcts.cp.resultsstore.domain.Projection;
+import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
 import uk.gov.hmcts.cp.resultsstore.support.FailingFirstCommitConnectionFactory;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
@@ -134,6 +146,24 @@ class IntakeIT {
     @Autowired
     @Qualifier(PublicEventsConfig.BOOT_CONNECTION_FACTORY)
     private ConnectionFactory bootConnectionFactory;
+
+    @Autowired
+    private JdbcReceiptStore receiptStore;
+
+    @Autowired
+    private ShareStore shareStore;
+
+    @Autowired
+    private ShareIdentityParser parser;
+
+    @Autowired
+    private KeyDetailsExtractor extractor;
+
+    @Autowired
+    private IntakeObserver observer;
+
+    @Autowired
+    private SweepProperties sweepProperties;
 
     @Value("${resultsstore.publicevents.selector}")
     private String selector;
@@ -530,6 +560,27 @@ class IntakeIT {
         assertEveryReceiptSettled();
     }
 
+    /**
+     * The sweep, built by the production factory from this context's beans, in the one configuration
+     * where a progression request could happen: enrichment on and the client pointed at the stub. A
+     * failed share naming an application without results is fixed, and progression is not asked
+     * (specs/002-enrichment FR-033, FR-034; T008).
+     */
+    @Test
+    void sweep_should_make_no_progression_request_with_enrichment_wired_to_the_stub() {
+        final UUID applicationId = UUID.randomUUID();
+        // Answered, so a request would succeed and only the request log could show it.
+        progression.answer(applicationId, finalised(applicationId));
+        storedFailed(shareWith("{\"id\":\"" + applicationId + "\"}"));
+        final ExtractionSweep sweep = new SweepSchedulingConfig().extractionSweep(shareStore, parser, extractor,
+                observer, sweepProperties);
+
+        final List<SweepRowOutcome> outcomes = sweep.runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        assertThat(progression.requestsFor(applicationId)).isEmpty();
+    }
+
     @Test
     void results_jsonb_cannot_hold_should_store_the_arrived_copy_with_the_flag_false_and_count_it() {
         final UUID applicationId = UUID.randomUUID();
@@ -561,6 +612,16 @@ class IntakeIT {
 
     private String shareWith(final String applications) {
         return SampleShares.shareWithApplications(hearingId, DAY, SHARED_TIME, applications);
+    }
+
+    /** Stores a share straight through the store, its extraction failed unexpectedly so the sweep retries it. */
+    private void storedFailed(final String text) {
+        final String messageId = "ID:sweep-" + hearingId;
+        receiptStore.recordArrival(SampleShares.arrival(messageId, text));
+        final StoreRequest request = SampleShares.request(messageId, text);
+        shareStore.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
+                request.sharedDays(), request.checksum(), request.text(),
+                new Projection.Failed("UNEXPECTED:IllegalStateException", ExtractionFailureKind.UNEXPECTED)));
     }
 
     private UUID awaitStored(final String text) {
