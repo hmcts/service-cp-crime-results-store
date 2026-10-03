@@ -48,6 +48,8 @@ public class MicrometerIntakeObserver implements IntakeObserver {
 
     private static final String SWEEP_ROWS_METER = PREFIX + "sweep.rows";
 
+    private static final String SWEEP_ROUNDS_FAILED_METER = PREFIX + "sweep.rounds.failed";
+
     private static final String LAG_METER = PREFIX + "intake.lag";
 
     private static final String ORDER = "order";
@@ -63,7 +65,8 @@ public class MicrometerIntakeObserver implements IntakeObserver {
      */
     public MicrometerIntakeObserver(final MeterRegistry registry) {
         this.registry = registry;
-        Arrays.stream(new String[] {RECEIVED_METER, DUPLICATE_METER, ALREADY_SETTLED_METER, MESSAGE_ID_MISSING_METER, PARSED_COPY_SKIPPED_METER})
+        Arrays.stream(new String[] {RECEIVED_METER, DUPLICATE_METER, ALREADY_SETTLED_METER, MESSAGE_ID_MISSING_METER,
+                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER})
                 .forEach(name -> Counter.builder(name).register(registry));
         Arrays.stream(ShareOrder.values()).forEach(order -> {
             stored(order);
@@ -130,6 +133,11 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     @Override
     public void sweepRow(final SweepRowOutcome outcome) {
         sweepRows(outcome).increment();
+    }
+
+    @Override
+    public void sweepRoundFailed() {
+        registry.counter(SWEEP_ROUNDS_FAILED_METER).increment();
     }
 
     private Counter stored(final ShareOrder order) {

@@ -5,6 +5,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.util.ErrorHandler;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
@@ -33,17 +34,34 @@ public class SweepSchedulingConfig {
     }
 
     @Bean
-    public SweepSchedule sweepSchedule(final ExtractionSweep extractionSweep, final SweepProperties sweep) {
+    public SweepSchedule sweepSchedule(final ExtractionSweep extractionSweep, final IntakeObserver observer,
+            final SweepProperties sweep) {
         return new SweepSchedule(extractionSweep, sweep.initialDelay(), sweep.fixedDelay(),
-                SweepSchedulingConfig::roundFailed);
+                roundFailureHandler(observer));
     }
 
     /**
-     * A round that threw before its rows (the candidate read): logged by class alone, as the intake's
-     * error handler does, and the next round runs at its time.
+     * What the schedule is told of a round that throws.
+     *
+     * @param observer the metrics port
+     * @return the handler
      */
-    private static void roundFailed(final Throwable failure) {
-        LOG.error("Extraction sweep round failed; the next round runs at its time. causes={}",
-                PublicEventsConfig.causeClasses(failure));
+    /* default */ static ErrorHandler roundFailureHandler(final IntakeObserver observer) {
+        return failure -> roundFailed(observer, failure);
+    }
+
+    /**
+     * A round that threw before its rows (the candidate read), or an {@link Error} from anywhere in it:
+     * counted on {@code resultsstore.sweep.rounds.failed} and logged by class alone, as the intake's
+     * error handler does. A runtime failure is then done with, and the next round runs at its time; an
+     * {@code Error} is thrown on, which ends the schedule's recurrence rather than carrying on in a
+     * state the JVM cannot vouch for.
+     */
+    private static void roundFailed(final IntakeObserver observer, final Throwable failure) {
+        observer.sweepRoundFailed();
+        LOG.error("Extraction sweep round failed. causes={}", PublicEventsConfig.causeClasses(failure));
+        if (failure instanceof Error error) {
+            throw error;
+        }
     }
 }

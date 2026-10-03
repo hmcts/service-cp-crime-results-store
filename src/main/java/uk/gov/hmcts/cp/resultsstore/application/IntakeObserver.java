@@ -60,6 +60,9 @@ public interface IntakeObserver {
      */
     void sweepRow(SweepRowOutcome outcome);
 
+    /** An extraction sweep round threw before its rows were worked (the candidate read, or an error). */
+    void sweepRoundFailed();
+
     /**
      * An intake attempt failed and the message goes back to the broker.
      *

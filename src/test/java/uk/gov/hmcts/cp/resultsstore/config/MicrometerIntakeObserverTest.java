@@ -58,6 +58,8 @@ class MicrometerIntakeObserverTest {
 
     private static final String SWEEP_ROWS = "resultsstore.sweep.rows";
 
+    private static final String SWEEP_ROUNDS_FAILED = "resultsstore.sweep.rounds.failed";
+
     private static final String LAG = "resultsstore.intake.lag";
 
     /** Every tag key the contract uses, with its allowed values. */
@@ -88,9 +90,9 @@ class MicrometerIntakeObserverTest {
                         Collectors.mapping(MicrometerIntakeObserverTest::tags, Collectors.toSet())));
 
         assertThat(registered).containsOnlyKeys(RECEIVED, STORED, NOT_SHARE, DUPLICATE, ALREADY_SETTLED, FAILED,
-                MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, LAG);
+                MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG);
         for (final String untagged : List.of(RECEIVED, DUPLICATE, ALREADY_SETTLED, MESSAGE_ID_MISSING,
-                PARSED_COPY_SKIPPED)) {
+                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED)) {
             assertThat(registered.get(untagged)).as(untagged).containsExactly(Map.of());
         }
         final Set<Map<String, String>> orders = Set.of(Map.of("order", "in_order"), Map.of("order", "out_of_order"));
@@ -138,7 +140,8 @@ class MicrometerIntakeObserverTest {
                 event("receipt failed", o -> o.intakeFailed(IntakeStage.RECEIPT, IntakeFailureCause.DATABASE),
                         FAILED, "stage", "receipt", "cause", "database"),
                 event("sweep row", o -> o.sweepRow(SweepRowOutcome.FAILED_AGAIN), SWEEP_ROWS,
-                        "outcome", "failed_again"));
+                        "outcome", "failed_again"),
+                event("sweep round failed", IntakeObserver::sweepRoundFailed, SWEEP_ROUNDS_FAILED));
     }
 
     private static Arguments event(final String name, final Consumer<IntakeObserver> event, final String meter,
@@ -216,6 +219,7 @@ class MicrometerIntakeObserverTest {
         observer.alreadySettled();
         observer.duplicate();
         observer.parsedCopySkipped();
+        observer.sweepRoundFailed();
         observer.stored(true, Duration.ofSeconds(2));
         observer.stored(false, Duration.ofSeconds(2));
         Arrays.stream(NonShareReason.values()).forEach(observer::notShare);

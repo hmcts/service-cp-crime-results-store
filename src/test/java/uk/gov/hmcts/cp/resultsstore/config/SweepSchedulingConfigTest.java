@@ -61,6 +61,8 @@ class SweepSchedulingConfigTest {
                                 .contains("Extraction sweep round failed")
                                 .contains(IllegalStateException.class.getName())
                                 .doesNotContain("no database in this test");
+                        assertThat(context.getBean(MeterRegistry.class).counter("resultsstore.sweep.rounds.failed")
+                                .count()).isPositive();
                         assertThat(context.getBean(SweepSchedule.class).isRunning()).isTrue();
                     });
         }
