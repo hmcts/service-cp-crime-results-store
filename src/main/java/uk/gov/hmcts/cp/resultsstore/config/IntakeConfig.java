@@ -83,7 +83,9 @@ public class IntakeConfig {
             final JdbcReceiptStore receipts, final IntakeProperties intake) {
         final TransactionTemplate storeTransaction = new TransactionTemplate(transactions);
         storeTransaction.setTimeout(seconds(intake.store().transactionTimeout()));
-        return new JdbcShareStore(jdbc, storeTransaction, receipts);
+        return new JdbcShareStore(jdbc, storeTransaction, receipts, new JdbcShareStore.Timeouts(
+                intake.store().lockTimeout(), intake.store().statementTimeout(),
+                intake.store().idleInTransactionTimeout()));
     }
 
     @Bean

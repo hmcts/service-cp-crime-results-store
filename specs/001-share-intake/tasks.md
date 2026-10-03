@@ -569,12 +569,25 @@ US1–US4 and US6 on Testcontainers Postgres.
     share of the day whose `day_youth_seen` differs, and sets the day row's `youth_seen` when it differs.
     `StoreResult.Stored.outOfOrder` is the place's `isLate()`. A duplicate takes the place but writes nothing.
 
-- [ ] T010 [US6] Test first: `StoreTimeoutIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/StoreTimeoutIT.java; then the per-transaction `set_config(…, true)` timeouts in src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
+- [X] T010 [US6] Test first: `StoreTimeoutIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/StoreTimeoutIT.java; then the per-transaction `set_config(…, true)` timeouts in src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: day row held by a second connection (latch) → the store gives up within lock timeout + 1 s with `lock_timeout` cause and no rows; the next transaction on the same pooled connection has the default timeouts (no leak).
   - Covers: FR-020; SC-009.
   - Done when: `StoreTimeoutIT` green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against the seam (`JdbcShareStore.Timeouts` taken by the constructor and not yet applied), with the
+    store on a `SingleConnectionDataSource`, a 1 s lock timeout and a 5 s transaction timeout:
+    `./gradlew test --tests '*StoreTimeoutIT'`: 3 completed, 1 failed,
+    `store_should_give_up_at_the_lock_timeout_while_the_day_is_held_and_leave_nothing`:
+    `expected: LOCK_TIMEOUT but was: STATEMENT_TIMEOUT` (the wait ran on to Spring's transaction timeout,
+    which cancels the statement). The two no-leak cases were green on the seam, as nothing was set yet; they
+    pin that the settings end with the transaction.
+  - GREEN: `StoreTimeoutIT` 3 tests (gives up within lock timeout + 1 s as `lock_timeout`, no share, the day
+    row's count unchanged, receipt `RECEIVED`; after a committed and after a failed store transaction the
+    same physical connection, in and out of a transaction, has the settings it had before), 0 failures;
+    `JdbcShareStoreIT`, `ShareChainIT`, `YouthSeenIT`, `HearingResultedEventListenerIT` still green.
+  - Notes: the first statement of the store transaction is one `SELECT set_config(…, :value, TRUE)` for
+    `lock_timeout`, `statement_timeout` and `idle_in_transaction_session_timeout`, each bound as
+    `<millis>ms`. `JdbcShareStore.Timeouts` (record; `DEFAULTS` for the persistence ITs) is built in
+    `IntakeConfig` from `resultsstore.intake.store.*`.
 
 - [ ] T011 [US1] [US2] [US3] [US4] [US6] Test first: `IntakeIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/EmbeddedBrokerSupport.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/SampleShares.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/FailingFirstCommitConnectionFactory.java; then any production fix the IT finds (in the files of T005–T010)
   - Cases: a share is stored and acknowledged; store fails once then `STORED` with attempts 2; first `session.commit()` fails → one share, receipt `STORED` on redelivery; unreadable and no-identity bodies acknowledged and not redelivered; a persistent failure ends on the dead-letter address with its attempts on the receipt; two listener containers on the one shared subscription with 50 out-of-order shares of one day → one latest, gapless chain, count 50; the same share twice at once → one `STORED`, one `DUPLICATE`; a message with no message id stored under its `sha256:` key; every receipt ends in an end state.

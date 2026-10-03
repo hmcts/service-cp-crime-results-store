@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -28,11 +29,23 @@ import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
  * identity, then its payload and defendant rows, links it into the chain ({@link ShareChain}),
  * recomputes the day's youth flag ({@link YouthFlags}) and marks the receipt {@code STORED}. A conflict means the identity is already stored: the
  * receipt is marked {@code DUPLICATE} with the stored share's id, looked up by the identity (FR-012).
- * The key details arrive in the request, read before the transaction opened (FR-021). Any failure
+ * The transaction first sets its own lock, statement and idle-in-transaction timeouts (FR-020). The
+ * key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
  * {@link uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException}.
  */
 public class JdbcShareStore implements ShareStore {
+
+    /**
+     * Transaction-local, the function form of {@code SET LOCAL} (research R2): the values end with the
+     * transaction, committed or rolled back, so the next borrower of the pooled connection has the
+     * server's defaults. Bound, never built from strings.
+     */
+    private static final String SET_TIMEOUTS = """
+            SELECT set_config('lock_timeout', :lockTimeout, TRUE),
+                   set_config('statement_timeout', :statementTimeout, TRUE),
+                   set_config('idle_in_transaction_session_timeout', :idleInTransactionTimeout, TRUE)
+            """;
 
     private static final String INSERT_DAY = """
             INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:hearingId, :hearingDay)
@@ -92,20 +105,24 @@ public class JdbcShareStore implements ShareStore {
 
     private final YouthFlags youth;
 
+    private final Timeouts timeouts;
+
     /**
      * Creates the store.
      *
      * @param jdbc             the database
      * @param storeTransaction the store transaction, bounded by its timeout
      * @param receipts         the receipt table, marked inside the store transaction
+     * @param timeouts         the PostgreSQL timeouts set for each store transaction
      */
     public JdbcShareStore(final JdbcClient jdbc, final TransactionOperations storeTransaction,
-            final JdbcReceiptStore receipts) {
+            final JdbcReceiptStore receipts, final Timeouts timeouts) {
         this.jdbc = jdbc;
         this.storeTransaction = storeTransaction;
         this.receipts = receipts;
         this.chain = new ShareChain(jdbc);
         this.youth = new YouthFlags(jdbc);
+        this.timeouts = timeouts;
     }
 
     /**
@@ -126,6 +143,7 @@ public class JdbcShareStore implements ShareStore {
 
     private StoreResult storeLocked(final StoreRequest request) {
         final ShareIdentity identity = request.identity();
+        setTimeouts();
         lockDay(identity);
         final boolean jsonbSafe = NulSafety.isJsonbSafe(request.text());
         final ShareChain.Place place = chain.place(identity);
@@ -144,6 +162,15 @@ public class JdbcShareStore implements ShareStore {
             result = new StoreResult.Duplicate(existing);
         }
         return result;
+    }
+
+    private void setTimeouts() {
+        jdbc.sql(SET_TIMEOUTS)
+                .param("lockTimeout", milliseconds(timeouts.lock()))
+                .param("statementTimeout", milliseconds(timeouts.statement()))
+                .param("idleInTransactionTimeout", milliseconds(timeouts.idleInTransaction()))
+                .query()
+                .singleRow();
     }
 
     /** Takes the hearing-day lock, creating the day row for its first share (research R10). */
@@ -239,8 +266,27 @@ public class JdbcShareStore implements ShareStore {
         return projection instanceof Projection.Failed failed ? failed.reason() : null;
     }
 
+    /** A PostgreSQL duration setting, in milliseconds with its unit. */
+    private static String milliseconds(final Duration timeout) {
+        return timeout.toMillis() + "ms";
+    }
+
     /** {@code timestamptz} bound as a {@code java.time} value at UTC. */
     private static OffsetDateTime utc(final Instant instant) {
         return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
+    }
+
+    /**
+     * The PostgreSQL timeouts of one store transaction ({@code resultsstore.intake.store.*}).
+     *
+     * @param lock              {@code lock_timeout}
+     * @param statement         {@code statement_timeout}
+     * @param idleInTransaction {@code idle_in_transaction_session_timeout}
+     */
+    public record Timeouts(Duration lock, Duration statement, Duration idleInTransaction) {
+
+        /** The defaults of contracts/configuration.md. */
+        public static final Timeouts DEFAULTS =
+                new Timeouts(Duration.ofSeconds(10), Duration.ofSeconds(20), Duration.ofSeconds(10));
     }
 }

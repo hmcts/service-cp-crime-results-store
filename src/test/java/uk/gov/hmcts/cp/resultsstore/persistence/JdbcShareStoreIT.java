@@ -76,7 +76,8 @@ class JdbcShareStoreIT {
         jdbc.sql("TRUNCATE event_receipt, share_defendant, hearing_share_payload, hearing_share, hearing_day_head")
                 .update();
         receipts = new JdbcReceiptStore(jdbc, new TransactionTemplate(transactionManager));
-        store = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager), receipts);
+        store = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager), receipts,
+                JdbcShareStore.Timeouts.DEFAULTS);
         hearingId = UUID.randomUUID();
     }
 
