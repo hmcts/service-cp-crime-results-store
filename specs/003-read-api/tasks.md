@@ -156,8 +156,12 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     `every_operation_should_declare_the_problem_body_for_4xx_and_5xx() FAILED` `Expecting actual not to be
     empty`.
   - GREEN: `ResultsStoreRulesTest` 33, `OpenApiDocumentTest` 6, `ApiRouteTest` 28, `ReadEndpointTest` 1,
-    `RouteRefusalTest` 1, 0 failures; the gate green (1002 tests passed, 1 skipped; coverage line 0.9956,
+    `RouteRefusalTest` 1, 0 failures; the gate green (1002 tests passed, 0 skipped; coverage line 0.9956,
     branch 0.9950).
+  - Gate round 1: `ApiRouteTest.every_route_should_name_its_endpoint_tag` added (the one uncovered line,
+    `ApiRoute.endpoint()`). RED with `GET_SHARE` swapped to `ReadEndpoint.PAYLOAD`: `every_route_should_name_
+    its_endpoint_tag() FAILED` `Expecting actual: … and others were not expected`; GREEN with the constant
+    restored (`ApiRouteTest` 29).
 
 - [X] T002 [US5] Test first: `ActionHeaderFilterTest` (rewritten) in src/test/java/uk/gov/hmcts/cp/resultsstore/filters/ActionHeaderFilterTest.java, `ActionRequestWrapperTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/filters/ActionRequestWrapperTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/filters/ActionHeaderFilter.java (rewritten over `ApiRoute`; `@Component` and `@Order` removed; sets the matched `ApiRoute` as a request attribute for the metrics interceptor of T010), src/main/java/uk/gov/hmcts/cp/resultsstore/filters/ActionRequestWrapper.java, src/main/java/uk/gov/hmcts/cp/resultsstore/filters/RefusalWriter.java, src/main/java/uk/gov/hmcts/cp/resultsstore/api/ProblemReason.java (every reason of contracts/read-api.md §6 with its status), src/main/java/uk/gov/hmcts/cp/resultsstore/application/RefusalObserver.java (port: `refused(RouteRefusal)`)
   - Cases (`ActionHeaderFilterTest`, parameterised over route × {caller `CPP-ACTION`, vendor `Content-Type`, vendor `Accept`, `Accept` list with one vendor entry}): `every_route_should_carry_its_derived_action_whatever_the_caller_sent`; `every_route_should_answer_application_json_for_a_vendor_content_type_or_accept`; `pull_and_search_should_derive_different_actions`; `stored_after_seq_should_be_looked_up_only_after_the_method_and_path_match` (a `POST` to an unknown path never calls `getParameter`); `an_unmapped_path_should_be_refused_404_route_not_found_without_calling_the_chain`; `a_known_path_with_another_method_including_head_and_options_should_be_refused_405_with_allow_get`; `actuator_and_error_should_pass_with_cpp_action_removed_and_media_types_untouched`; `the_refusal_body_should_be_the_four_fields_and_never_contain_the_requested_path`; `every_refusal_should_be_counted_once_with_its_reason` (recording `RefusalObserver`). `ActionRequestWrapperTest`: `get_header_get_headers_and_get_header_names_should_agree_on_the_action`; `header_names_should_be_case_insensitive`; `a_non_vendor_accept_should_be_left_as_sent`.
@@ -187,7 +191,7 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     FAILED` `expected: "results-store.search-shares" but was: "caller.supplied"`.
   - GREEN: `ActionHeaderFilterTest` 92, `ActionRequestWrapperTest` 3, 0 failures; `AuthzIT` 3 green (the
     filter is unregistered, so its caller-sent action still finds no rule); the gate green (1095 tests
-    passed, 1 skipped; coverage line 0.9959, branch 0.9953).
+    passed, 0 skipped; coverage line 0.9959, branch 0.9953).
 
 - [X] T003 [US5] [US6] [US7] Test first: `UnsupportedContentTypeFilterTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/filters/UnsupportedContentTypeFilterTest.java, `BoundedErrorAttributesTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/api/BoundedErrorAttributesTest.java, `BoundedErrorControllerTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/api/BoundedErrorControllerTest.java, `ProblemReasonTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/api/ProblemReasonTest.java, `MicrometerRefusalObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerRefusalObserverTest.java, `ApiWebConfigTest` (`ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ApiWebConfigTest.java, `FilterOrderIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/FilterOrderIT.java, `AuthzIT` (moved onto `PostgresTestSupport`, rewritten) in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/AuthzIT.java, `ActuatorIntegrationTest` (moved onto `PostgresTestSupport`) in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/ActuatorIntegrationTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/filters/UnsupportedContentTypeFilter.java, src/main/java/uk/gov/hmcts/cp/resultsstore/api/BoundedErrorAttributes.java, src/main/java/uk/gov/hmcts/cp/resultsstore/api/BoundedErrorController.java (implements `ErrorController`; one handler at `/error` for every media type, writing the four fields as `application/json`; counts a `401` as `unauthenticated` and a `403` as `forbidden` through `RefusalObserver`; Boot's `BasicErrorController` then backs off), src/main/java/uk/gov/hmcts/cp/resultsstore/domain/RouteRefusal.java (+ `UNAUTHENTICATED`, `FORBIDDEN`), src/main/java/uk/gov/hmcts/cp/resultsstore/config/ApiWebConfig.java (action filter at `HIGHEST_PRECEDENCE`, `415` guard at `HIGHEST_PRECEDENCE + 40`, the `ErrorAttributes` bean, the error controller bean (a bean here, not component-scanned, so `@WebMvcTest` slices do not pick it up), the refusal observer bean, the authz-required check), src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerRefusalObserver.java, src/main/resources/application.yaml (`server.error.whitelabel.enabled: false`), src/test/resources/application-test.yaml (header comment: context tests now use the Testcontainers database)
   - Cases: `UnsupportedContentTypeFilterTest`: `multipart_on_a_mapped_route_should_be_refused_415_unsupported_content_type_and_counted`; `json_and_absent_content_type_should_pass`; `actuator_should_never_be_refused`. `BoundedErrorAttributesTest`: `a_401_and_a_403_should_render_type_title_status_and_reason_only` (`unauthenticated`, `forbidden`); `any_other_4xx_should_be_bad_request_and_any_5xx_internal_error`; `no_path_message_error_exception_or_trace_should_ever_appear`. `BoundedErrorControllerTest`: `accept_text_html_json_and_absent_should_all_get_the_four_field_json_body`; `a_401_should_be_counted_once_as_unauthenticated`; `a_403_should_be_counted_once_as_forbidden`; `any_other_status_should_not_be_counted`. `ProblemReasonTest`: `every_reason_should_map_to_one_status_and_a_lower_snake_code`; `the_reasons_should_be_exactly_the_contract_list`. `MicrometerRefusalObserverTest`: `every_reason_should_be_registered_at_start_with_zero`; `no_tag_value_should_parse_as_a_uuid_or_date`. `ApiWebConfigTest`: `authz_off_without_the_test_profile_should_stop_the_service_naming_authz_http_enabled`; `authz_off_with_the_test_profile_should_start`; `the_filters_should_be_registered_at_their_orders`. `FilterOrderIT` (Postgres; authz on with a WireMock usersgroups; `audit.http.enabled` and `cp.audit.enabled` on against `EmbeddedBrokerSupport`): `the_action_filter_should_precede_authz_which_should_precede_the_415_guard_which_should_precede_audit` (from the registered beans' effective orders). `AuthzIT` (WireMock matched on `CJSCPPUID`: one "System Users" id, one id whose groups are "Other Group"): `the_api_should_refuse_a_caller_with_no_identity_with_a_bounded_401_body` (on a mapped route); `the_api_should_refuse_a_caller_in_neither_group_with_a_bounded_403_body`; `a_401_with_accept_text_html_should_get_the_four_field_json_body` (`Content-Type` `application/json`, exactly the four fields); `a_401_and_a_403_should_each_move_read_refused_once`; `an_unmapped_path_should_be_refused_404_route_not_found_before_authentication` (WireMock received no request); `actuator_should_be_reachable_without_an_identity`. `ActuatorIntegrationTest`: unchanged cases, green on Postgres.
@@ -233,8 +237,40 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
   - GREEN: `UnsupportedContentTypeFilterTest` 8, `BoundedErrorAttributesTest` 10, `BoundedErrorControllerTest`
     12, `ProblemReasonTest` 45, `MicrometerRefusalObserverTest` 7, `ApiWebConfigTest` 3, `FilterOrderIT` 1,
     `AuthzIT` 15, `ActuatorIntegrationTest` 4, `RouteRefusalTest` 1, 0 failures; `IntakeIT` (intake end to
-    end) 24, `ExtractionSweepIT` 37 and every other suite green; the gate green (1193 tests passed, 1 skipped;
+    end) 24, `ExtractionSweepIT` 37 and every other suite green; the gate green (1193 tests passed, 0 skipped;
     coverage line 0.9960, branch 0.9934).
+  - Gate round 1 (remediation, one commit per concern):
+    - The `415` guard classified the wrapped request's `Content-Type`, which the wrapper answers as
+      `application/json` whenever a vendor token appears anywhere in the value, so `multipart/related;
+      type="application/vnd.…+json"` passed. `ActionHeaderFilter` now leaves the `Content-Type` as sent in
+      `ActionHeaderFilter.SENT_CONTENT_TYPE_ATTRIBUTE` beside the route, and the guard classifies that; the
+      wrapper still neutralises the vendor token for the authorisation library. RED:
+      `UnsupportedContentTypeFilterTest.multipart_with_a_vendor_parameter_behind_the_action_filter_should_still_
+      be_refused_415(String) > [1] … FAILED` `Expecting value to be false but was true` (the servlet was
+      reached); `AuthzIT.multipart_from_a_system_users_caller_should_be_refused_415_and_counted(String) > [2]
+      contentType = "multipart/related; type=…" FAILED` `expected: 415 but was: 404`. GREEN after the fix.
+      `AuthzIT` also gained `multipart_without_an_identity_should_be_401_not_415` (FR-048 (d) in the running
+      chain: authorisation first, then the guard on the wrapped request); its plain-multipart case passed at RED.
+    - A refusal is counted only after its body has been written and flushed (`RefusalWriter` and
+      `BoundedErrorController` now call `flushBuffer()`), so a client that has gone is not counted. RED with
+      `support/BrokenPipeResponse` (every write throws): `ActionHeaderFilterTest.a_refusal_whose_body_cannot_be_
+      written_should_not_be_counted(String) > [1] methodOrPath = "POST" FAILED` `Expecting empty but was:
+      [METHOD_NOT_ALLOWED]` (and `[ROUTE_NOT_FOUND]`); `UnsupportedContentTypeFilterTest.a_415_whose_body_cannot_
+      be_written_should_not_be_counted() FAILED` `… [UNSUPPORTED_CONTENT_TYPE]`; `BoundedErrorControllerTest.a_
+      refusal_whose_body_cannot_be_written_should_not_be_counted(int) > [1] status = 401 FAILED` `…
+      [UNAUTHENTICATED]`. GREEN after moving each count below the write.
+    - `/error` writes `application/problem+json` for every status but `401` and `403` (contracts/read-api.md
+      §6). RED: `BoundedErrorControllerTest.any_status_but_401_and_403_should_be_written_as_problem_json(int) >
+      [1] status = 400 FAILED` `expected: "application/problem+json" but was: "application/json"`; GREEN after.
+    - Tests only: `BoundedErrorAttributesTest` pins a status above `599` as `500 internal_error`; `AuthzIT.the_
+      configured_action_header_should_be_the_one_the_wrapper_writes` fails the build if
+      `authz.http.action-header` drifts from `ActionRequestWrapper.ACTION_HEADER`;
+      `ActuatorIntegrationTest.readiness_should_be_up_with_db_in_its_group` (readiness components shown in the
+      test only) and the `print()` calls removed; `ReadinessWithoutBrokerIT.readiness_should_stay_up_when_the_
+      broker_is_unreachable` (subscription on, broker URL `tcp://localhost:1`; the listener logs its retries and
+      readiness stays `UP` with `db`). These passed when written: they pin existing behaviour. The class keeps
+      the name `ActuatorIntegrationTest`, which specs 001–003 cite.
+    - GREEN: the gate green (1214 tests passed, 0 skipped; JaCoCo report line 0.9961, branch 0.9908).
 
 ---
 
