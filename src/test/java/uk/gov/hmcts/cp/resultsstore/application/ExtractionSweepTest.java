@@ -247,6 +247,48 @@ class ExtractionSweepTest {
     }
 
     @Test
+    void round_should_stop_between_rows_once_its_thread_is_interrupted() {
+        final SweepCandidate first = candidate(1);
+        final SweepCandidate second = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(first, second));
+        when(store.payloadText(first.shareId())).thenReturn(readable(first));
+        when(store.recordReextraction(eq(first), any(), eq(VERSION))).thenAnswer(invocation -> {
+            Thread.currentThread().interrupt();
+            return SweepRowOutcome.FIXED;
+        });
+
+        try {
+            final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+            assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+            verify(store, never()).payloadText(second.shareId());
+        } finally {
+            assertThat(Thread.interrupted()).as("still interrupted for the scheduler").isTrue();
+        }
+    }
+
+    @Test
+    void row_that_fails_while_its_thread_is_interrupted_should_be_an_error_with_no_failed_attempt() {
+        final SweepCandidate row = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
+            Thread.currentThread().interrupt();
+            throw new QueryTimeoutException("interrupted");
+        });
+
+        try {
+            final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+            assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR);
+            verify(store, times(1)).recordReextraction(any(), any(), anyInt());
+            verify(observer, never()).extractionFailed(any(), any());
+        } finally {
+            assertThat(Thread.interrupted()).isTrue();
+        }
+    }
+
+    @Test
     void round_with_rows_should_log_its_counts_and_no_stored_text() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));

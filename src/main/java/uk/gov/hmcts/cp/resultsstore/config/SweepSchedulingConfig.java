@@ -35,9 +35,9 @@ public class SweepSchedulingConfig {
 
     @Bean
     public SweepSchedule sweepSchedule(final ExtractionSweep extractionSweep, final IntakeObserver observer,
-            final SweepProperties sweep) {
+            final SweepProperties sweep, final IntakeProperties intake) {
         return new SweepSchedule(extractionSweep, sweep.initialDelay(), sweep.fixedDelay(),
-                roundFailureHandler(observer));
+                intake.store().transactionTimeout(), roundFailureHandler(observer));
     }
 
     /**

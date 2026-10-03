@@ -53,7 +53,7 @@ public class ExtractionSweep {
     }
 
     /**
-     * Runs one round.
+     * Runs one round. An interrupt (the schedule stopping) ends it before its next row.
      *
      * @return each selected row's outcome, in selection order
      */
@@ -61,6 +61,8 @@ public class ExtractionSweep {
         final List<SweepRowOutcome> outcomes = store
                 .sweepCandidates(settings.extractorVersion(), settings.maxAttempts(), settings.batchSize())
                 .stream()
+                // Stopping: the rows not yet started are left for the next round, on this pod or another.
+                .takeWhile(candidate -> !Thread.currentThread().isInterrupted())
                 .map(this::sweepRow)
                 .toList();
         if (!outcomes.isEmpty()) {
@@ -77,8 +79,8 @@ public class ExtractionSweep {
      * quote the row) and recorded as a failed attempt, {@code UNEXPECTED:<class>}, in a second
      * transaction under the same locks and re-check: the attempt count then grows, so a row that fails
      * the same way every round stops being selected at the retry limit (FR-035) instead of holding the
-     * head of every batch. Only when that write fails too is the row counted {@code error}, with
-     * nothing written, and the round goes on (FR-037).
+     * head of every batch. Only when that write fails too, or the thread is being stopped, is the row
+     * counted {@code error}, with nothing written, and the round goes on (FR-037).
      */
     // Catch-to-record: the failure becomes an explicit outcome with a bounded tag and is logged by class.
     // Errors are not caught.
@@ -94,7 +96,10 @@ public class ExtractionSweep {
             LOG.warn("Extraction sweep could not finish a row; recording it as a failed attempt. shareId={} "
                     + "exception={}", candidate.shareId(), failure.getClass().getName());
             projection = KeyDetailsExtractor.unexpected(failure);
-            outcome = recordFailedAttempt(candidate, projection);
+            // A failure met while stopping is the stop's, not the row's: no attempt is spent on it.
+            outcome = Thread.currentThread().isInterrupted()
+                    ? SweepRowOutcome.ERROR
+                    : recordFailedAttempt(candidate, projection);
         }
         observer.sweepRow(outcome);
         if (projection instanceof Projection.Failed failed && outcome == SweepRowOutcome.FAILED_AGAIN) {
