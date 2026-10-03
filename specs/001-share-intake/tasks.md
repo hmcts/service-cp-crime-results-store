@@ -734,6 +734,36 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     (`extraction-sweep-`) that is not a bean, so no `Executor` bean appears beside Boot's own; a round that
     throws is logged by class chain and the next round runs. No ShedLock. The two-sweeps case holds the
     day row on a second connection and releases it once `pg_stat_activity` shows both sweeps waiting.
+  - Gate round 1 remediation: (1) a row's work that throws (payload read, JSON read, or its transaction)
+    is now recorded as a failed attempt, `UNEXPECTED:<class>` with the running version and attempts + 1, in
+    a second transaction under the same locks and re-check; only when that write also throws, or the
+    thread is being stopped, is the row `ERROR` with nothing written. A row that fails the same way every
+    round so stops at the retry limit instead of holding the head of every batch (FR-035). (2) The sweep
+    reads the stored text as JSON alone (`ShareIdentityParser.readTree`), not through the identity rules,
+    which have tightened since rows were stored. (3) A round that throws moves the new bounded counter
+    `resultsstore.sweep.rounds.failed` (contracts/metrics.md) and is logged by class; an `Error` is counted,
+    logged and thrown on. (4) `SweepSchedule.start` and `stop` are idempotent; stop interrupts (the round
+    stops before its next row) and waits up to the store transaction timeout for the thread to end.
+    RED, each class on its own: `ExtractionSweepTest` 10 completed, 5 failed (e.g.
+    `row_whose_write_throws_should_record_a_failed_unexpected_attempt_in_a_second_transaction`: `Expecting
+    actual: [ERROR] to contain exactly: [FAILED_AGAIN]`); `ExtractionSweepIT` 3 completed, 1 failed
+    (failFast), `row_whose_stored_identity_the_parser_now_refuses_should_be_read_and_not_reselected`:
+    `[ERROR] to contain exactly: [FIXED]`; `SweepRoundFailureHandlerTest` 2 completed, 1 failed,
+    `error_should_be_counted_logged_and_thrown_on`: `Expecting code to raise a throwable`;
+    `MicrometerIntakeObserverTest` (seam `sweepRoundFailed` registering nothing) 1 failed,
+    `every_meter_should_be_registered_at_start_with_exactly_its_tag_sets`; `SweepScheduleTest` 4 completed,
+    2 failed, `second_start_should_not_leave_rounds_running_after_stop`: `expected: 12 but was: 22`, and
+    `stop_should_interrupt_a_round_in_progress_and_return_only_once_it_has_ended`: `Expecting AtomicBoolean(false)
+    to have value: true`; `ExtractionSweepTest` interrupt case `[FIXED, null] to contain exactly [FIXED]`.
+    The enum tag tests of the original T012 commit, run red afterwards with `tag()` returning `name()`:
+    `SweepRowOutcomeTest` 4 failed (`expected: "fixed" but was: "FIXED"`), `ExtractionStageTest` 2 failed
+    (`expected: "intake" but was: "INTAKE"`); restored.
+    GREEN: `ExtractionSweepTest` 12, `ExtractionSweepIT` 12 (new: identity now refused, no parsed copy read
+    from the text (FR-036), a write that fails after the key details leaves no defendant rows, key details
+    or day flag and is bounded at 3 attempts (test-only `CHECK … NOT VALID` on `share_defendant`), both
+    transactions failing on a held day with a 1 s lock timeout leave the row as it was and it is fixed
+    next round), `SweepScheduleTest` 5, `SweepRoundFailureHandlerTest` 2, `SweepSchedulingConfigTest` 4,
+    0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).
@@ -770,6 +800,18 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     must be free of the marker, and both `PublicEventsConfig` (the container's error handler) and the
     listener must have logged. A failing check names loggers and levels only. It also asserts the counters
     of US7 scenario 1 and the failure causes (`lock_timeout`, `database`, 2 each).
+  - Gate round 1 remediation: the lag timer is given milliseconds (`record(long, MILLISECONDS)`), since
+    `Duration.toNanos` inside `Timer.record(Duration)` threw past 292 years and any four-digit `sharedTime`
+    year is accepted; the timer saturates such a lag. `received` now moves at the listener's entry, before
+    any JMS field is read (contract: "a message reaches the listener"), and is gone from `IntakeService`;
+    `message.id.missing` moves before the receipt is written. RED: `MicrometerIntakeObserverTest`
+    `lag_beyond_the_nanosecond_range_should_be_recorded_not_thrown`: `ArithmeticException: long overflow`;
+    `HearingResultedEventListenerTest` 2 completed, 1 failed; `IntakeServiceTest$AFailure` 4 completed, 3
+    failed (`NoInteractionsWanted`: `received()` still reported by the service). GREEN:
+    `MicrometerIntakeObserverTest` 20, `HearingResultedEventListenerTest` 14, `IntakeServiceTest` 21,
+    `NoPayloadInLogsIT` 2, `IntakeIT` 9, `HearingResultedEventListenerIT` 6, 0 failures. The full gate
+    (`build pmdMain pmdTest jacocoTestReport`) exits 0: 662 tests, 0 failures; JaCoCo report line 891/897,
+    branch 273/274.
 
 - [X] T014 Full quality gate: `flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`; fix `OnlyOneReturn` / `AvoidDuplicateLiterals` and coverage gaps by code shape (or a reasoned per-site suppression) in the files of T002–T013; add any missing test before the code it covers
   - Covers: SC-011 (line ≥ 0.88, branch ≥ 0.85, PMD clean).
