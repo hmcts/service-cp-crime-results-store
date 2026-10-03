@@ -608,6 +608,16 @@ US1–US4 and US6 on Testcontainers Postgres.
     `Expecting actual: [] … but could not find the following elements: [PT4S]`. GREEN: the listener catches
     `RuntimeException` after `RetryableIntakeException`, pauses, logs `cause=other exception=<class>` and
     rethrows the same exception; `HearingResultedEventListenerTest` 12 tests, 0 failures.
+  - Ruling (b), the service starts with the subscription enabled (compose stack, CI container smoke): the
+    Micrometer observer is T013's, so `IntakeConfig` now registers `config/PlaceholderIntakeObserver`
+    (branch-free, records nothing, logs one WARN at start saying so; T013 replaces it). Proved by
+    `config/IntakeConfigTest` (`ApplicationContextRunner` over `IntakeConfig`, file beyond the list): enabled
+    → listener, `IntakeService`, one `IntakeObserver` and a `JdbcShareStore` as the `ShareStore`; disabled →
+    none of them. RED (test before the bean): `./gradlew test --tests '*IntakeConfigTest'`: 2 completed,
+    1 failed, `enabled_subscription_should_wire_the_listener_with_the_real_store_and_an_observer`:
+    `Expecting: … but context failed to start: … No qualifying bean of type '…IntakeObserver' available`.
+    GREEN: `IntakeConfigTest` 2 tests, 0 failures. The `@MockitoBean IntakeObserver` stand-ins in existing
+    ITs still override it until T013 removes them (wiring note).
   - RED: _to be recorded_
   - GREEN: _to be recorded_
 

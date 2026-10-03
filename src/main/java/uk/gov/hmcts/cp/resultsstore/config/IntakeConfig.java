@@ -26,8 +26,8 @@ import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
  * enabled, its beans: so a context with no datasource (the {@code test} profile) still starts
  * (tasks.md, wiring note).
  *
- * <p>The observer ({@link IntakeObserver}, T013) is not registered here yet; until it is, a context
- * with the subscription enabled needs it from elsewhere.
+ * <p>The observer is {@link PlaceholderIntakeObserver}, which records nothing, until the Micrometer
+ * observer replaces it (T013); a context with the subscription enabled starts with no stand-in.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class})
@@ -86,6 +86,12 @@ public class IntakeConfig {
         return new JdbcShareStore(jdbc, storeTransaction, receipts, new JdbcShareStore.Timeouts(
                 intake.store().lockTimeout(), intake.store().statementTimeout(),
                 intake.store().idleInTransactionTimeout()));
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
+    public IntakeObserver intakeObserver() {
+        return new PlaceholderIntakeObserver();
     }
 
     @Bean
