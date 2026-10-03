@@ -22,8 +22,9 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
  * stop for a non-share or a redelivery whose receipt is already settled; otherwise read the key
  * details, outside any transaction, and store the share in one transaction. Each port call returns
  * after its commit, so every report to the observer follows the commit it describes. A failed
- * transaction is counted once and its exception rethrown unchanged, so the listener rolls the message
- * back to the broker: a {@link RetryableIntakeException} after the capped pause, anything else at once.
+ * transaction is counted once and its exception rethrown unchanged, so the listener pauses for the
+ * capped delay and rolls the message back to the broker, whatever the failure's class: a
+ * {@link RetryableIntakeException} and any other runtime failure alike.
  */
 public class IntakeService {
 
