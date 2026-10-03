@@ -450,6 +450,22 @@ class IntakeServiceTest {
         }
 
         @Test
+        void enrichment_off_with_only_invalid_ids_should_count_nothing_and_store_the_flag_false() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+
+            serviceWithoutProgression().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    shareWith("{\"id\": \"not-a-uuid\"}")));
+
+            verify(observer, never()).enrichmentSkipped(any());
+            verify(observer, never()).applicationLookedUp(any());
+            verify(shareStore, never()).storedShareId(any());
+            final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
+            verify(shareStore).store(request.capture());
+            assertThat(request.getValue().enrichmentApplied()).isFalse();
+        }
+
+        @Test
         void lookups_should_run_after_the_receipt_one_at_a_time_in_array_order_then_extract_then_store() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
@@ -556,18 +572,32 @@ class IntakeServiceTest {
             when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
             when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused(),
                     new Stored(SHARE_ID, SHARED_AT, false, false, false));
+            final Projection fromEnriched = new Projection.Extracted(KeyDetails.NONE, List.of(), true);
+            final Projection fromArrived = new Projection.Extracted(KeyDetails.NONE, List.of(), false);
+            when(mockedExtractor.extract(any())).thenReturn(fromEnriched, fromArrived);
             final String text = shareWith(application(APP_A));
 
-            final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+            final IntakeResult result = serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    text));
 
             assertThat(result.outcome()).isEqualTo(IntakeOutcome.STORED);
             final ArgumentCaptor<StoreRequest> requests = ArgumentCaptor.forClass(StoreRequest.class);
-            final InOrder order = inOrder(shareStore, observer);
+            final ArgumentCaptor<JsonNode> extracted = ArgumentCaptor.forClass(JsonNode.class);
+            final InOrder order = inOrder(mockedExtractor, shareStore, observer);
+            order.verify(mockedExtractor).extract(extracted.capture());
             order.verify(shareStore).store(any());
             order.verify(observer).enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS);
+            order.verify(mockedExtractor).extract(extracted.capture());
             order.verify(shareStore).store(any());
+            assertThat(extracted.getAllValues().get(0).path("hearing").path("courtApplications").get(0)
+                    .has("judicialResults")).isTrue();
+            assertThat(extracted.getAllValues().get(1)).isEqualTo(PARSER.readTree(text));
+            assertThat(extracted.getAllValues().get(1).path("hearing").path("courtApplications").get(0)
+                    .has("judicialResults")).isFalse();
             verify(shareStore, times(2)).store(requests.capture());
             assertThat(requests.getAllValues().get(0).enrichmentApplied()).isTrue();
+            assertThat(requests.getAllValues().get(0).projection()).isSameAs(fromEnriched);
+            assertThat(requests.getAllValues().get(1).projection()).isSameAs(fromArrived);
             assertThat(requests.getAllValues().get(1).parsedCopy()).isSameAs(text);
             assertThat(requests.getAllValues().get(1).enrichmentApplied()).isFalse();
             assertThat(requests.getAllValues().get(1).text()).isSameAs(text);

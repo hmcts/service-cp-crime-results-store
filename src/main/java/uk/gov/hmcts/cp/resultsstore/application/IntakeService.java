@@ -87,7 +87,8 @@ public class IntakeService {
     }
 
     /**
-     * Whether this service asks progression for missing application results.
+     * Whether this service asks progression for missing application results. The service itself does
+     * not call this: it makes the optional-port wiring observable to the wiring tests.
      *
      * @return {@code false} when enrichment is off (no progression port)
      */
