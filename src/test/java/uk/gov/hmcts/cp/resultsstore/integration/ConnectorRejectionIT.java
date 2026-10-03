@@ -25,7 +25,8 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
  * Requests the HTTP connector rejects before they reach the service (contracts/read-api.md §6), on a real
  * server and over a raw socket, since an HTTP client would refuse to send most of them. Tomcat answers each
  * {@code 400} itself; the host's error report writes the four-field problem body, never the URI, and the
- * refusal is not counted.
+ * refusal is not counted. A path with a dot segment, which the connector accepts and normalises, is refused by
+ * the action filter instead, on its raw text.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
@@ -74,6 +75,11 @@ class ConnectorRejectionIT {
         }
     }
 
+    private double refused(final String reason) {
+        final Counter counter = meterRegistry.find("resultsstore.read.refused").tag("reason", reason).counter();
+        return counter == null ? 0 : counter.count();
+    }
+
     private double refusedInAll() {
         return meterRegistry.find("resultsstore.read.refused").counters().stream().mapToDouble(Counter::count).sum();
     }
@@ -99,5 +105,28 @@ class ConnectorRejectionIT {
         assertThat(body.get("status").asInt()).isEqualTo(400);
         assertThat(body.get("reason").asString()).isEqualTo("bad_request");
         assertThat(refusedInAll()).isEqualTo(refused);
+    }
+
+    /**
+     * Tomcat accepts a dot segment and maps the normalised path, but the action filter classifies the raw URI:
+     * a path that only looks like {@code /actuator/**} or {@code /error} must not pass through to a route.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator/../results-store/v1/shares?storedAfterSeq=0",
+        "/actuator/%2e%2e/results-store/v1/shares?storedAfterSeq=0",
+        "/actuator/..;zq=1/results-store/v1/shares?storedAfterSeq=0",
+        "/error/../results-store/v1/shares?storedAfterSeq=0"})
+    void a_dot_segment_should_be_refused_404_route_not_found_and_counted(final String target) throws IOException {
+        final double notFound = refused("route_not_found");
+
+        final RawResponse response = send(target);
+
+        assertThat(response.status()).isEqualTo(404);
+        assertThat(response.header("Content-Type")).isEqualTo("application/problem+json");
+        assertThat(response.body()).doesNotContain("zq").doesNotContain("results-store");
+        final JsonNode body = MAPPER.readTree(response.body());
+        assertThat(body.propertyNames()).containsExactly("type", "title", "status", "reason");
+        assertThat(body.get("reason").asString()).isEqualTo("route_not_found");
+        assertThat(refused("route_not_found")).isEqualTo(notFound + 1);
     }
 }

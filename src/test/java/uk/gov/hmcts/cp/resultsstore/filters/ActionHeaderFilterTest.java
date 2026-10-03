@@ -224,6 +224,28 @@ class ActionHeaderFilterTest {
         assertThat(body(outcome.response()).get("reason").asString()).isEqualTo("route_not_found");
     }
 
+    /**
+     * A path with a dot segment ({@code .} or {@code ..}, raw, percent-encoded or carrying a {@code ;parameter})
+     * is not canonical: the container would map it somewhere other than its raw text says, so it is refused
+     * {@code 404 route_not_found} before the {@code /actuator/**} and {@code /error} pass-through is decided.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator/../results-store/v1/shares", "/actuator/%2e%2e/results-store/v1/shares",
+        "/actuator/%2E%2E/results-store/v1/shares", "/actuator/..;x=1/results-store/v1/shares", "/actuator/./health",
+        "/error/../results-store/v1/shares", "/actuator/health/..", "/results-store/v1/./shares"})
+    void a_path_with_a_dot_segment_should_be_refused_404_route_not_found_and_counted(final String path)
+            throws ServletException, IOException {
+        final MockHttpServletRequest request = new MockHttpServletRequest("GET", path);
+        request.setQueryString("storedAfterSeq=0");
+
+        final Outcome outcome = filter(request);
+
+        assertThat(outcome.seen()).isNull();
+        assertThat(outcome.response().getStatus()).isEqualTo(404);
+        assertThat(body(outcome.response()).get("reason").asString()).isEqualTo("route_not_found");
+        assertThat(observer.refusals()).containsExactly(RouteRefusal.ROUTE_NOT_FOUND);
+    }
+
     static Stream<Arguments> routesAndOtherMethods() {
         // TRACE is left out: Tomcat refuses it in its connector, so it never reaches this filter (AuthzIT).
         return Arrays.stream(ApiRoute.values()).flatMap(route -> Stream.of("HEAD", "OPTIONS", "POST", "PUT",
