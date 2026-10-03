@@ -27,11 +27,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.resultsstore.filters.ActionRequestWrapper;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
@@ -80,6 +82,9 @@ class AuthzIT {
 
     @Autowired
     private MeterRegistry meterRegistry;
+
+    @Autowired
+    private Environment environment;
 
     private static void stubCaller(final String userId, final String group) {
         USERSGROUPS.stubFor(WireMock.get(urlPathEqualTo(IDENTITY_PATH))
@@ -224,6 +229,12 @@ class AuthzIT {
 
         assertBoundedBody(response, 401, "Unauthorized", "unauthenticated");
         assertThat(refused("unsupported_content_type")).isEqualTo(unsupported);
+    }
+
+    /** The library reads the action from a configurable header; the wrapper writes a fixed one. */
+    @Test
+    void the_configured_action_header_should_be_the_one_the_wrapper_writes() {
+        assertThat(environment.getProperty("authz.http.action-header")).isEqualTo(ActionRequestWrapper.ACTION_HEADER);
     }
 
     @Test

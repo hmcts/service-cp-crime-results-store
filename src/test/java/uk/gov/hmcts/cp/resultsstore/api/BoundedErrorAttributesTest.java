@@ -61,6 +61,8 @@ class BoundedErrorAttributesTest {
                 .containsEntry("status", 500).containsEntry("reason", "internal_error");
         assertThat(attributes.getErrorAttributes(errorRequest(200), ErrorAttributeOptions.defaults()))
                 .containsEntry("status", 500).containsEntry("title", "Internal Server Error");
+        assertThat(attributes.getErrorAttributes(errorRequest(600), ErrorAttributeOptions.defaults()))
+                .containsEntry("status", 500).containsEntry("reason", "internal_error");
     }
 
     @Test
