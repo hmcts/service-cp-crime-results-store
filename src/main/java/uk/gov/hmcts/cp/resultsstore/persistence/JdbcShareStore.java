@@ -110,13 +110,13 @@ public class JdbcShareStore implements ShareStore {
              WHERE projection_status = 'FAILED'
                AND (projection_version < :currentVersion
                     OR (projection_reason LIKE 'UNEXPECTED%' AND projection_attempts < :maxAttempts))
-             ORDER BY sweep_tried_at NULLS FIRST, stored_seq
+             ORDER BY projection_tried_at NULLS FIRST, stored_seq
              LIMIT :limit
             """;
 
     /** The sweep's try, alone: no lock but the row's own, and no other column. */
-    private static final String SET_SWEEP_TRIED = """
-            UPDATE hearing_share SET sweep_tried_at = now() WHERE share_id = :shareId
+    private static final String SET_PROJECTION_TRIED = """
+            UPDATE hearing_share SET projection_tried_at = now() WHERE share_id = :shareId
             """;
 
     private static final String PAYLOAD_TEXT = """
@@ -291,7 +291,7 @@ public class JdbcShareStore implements ShareStore {
     public void recordSweepAttempt(final UUID shareId) {
         storeTransaction.executeWithoutResult(status -> {
             setTimeouts();
-            jdbc.sql(SET_SWEEP_TRIED).param(SHARE_ID, shareId).update();
+            jdbc.sql(SET_PROJECTION_TRIED).param(SHARE_ID, shareId).update();
         });
     }
 

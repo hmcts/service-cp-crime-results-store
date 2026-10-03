@@ -100,11 +100,11 @@ class FlywayMigrationIT {
     }
 
     @Test
-    void v4_should_add_a_nullable_sweep_tried_at_and_an_index_for_the_sweep_s_order() {
+    void v4_should_add_a_nullable_projection_tried_at_and_an_index_for_the_sweep_s_order() {
         final Map<String, Object> column = jdbc.sql("""
                 SELECT data_type, is_nullable, column_default FROM information_schema.columns
                  WHERE table_schema = current_schema() AND table_name = 'hearing_share'
-                   AND column_name = 'sweep_tried_at'
+                   AND column_name = 'projection_tried_at'
                 """).query().singleRow();
         final List<String> sweepIndexes = jdbc.sql("""
                 SELECT indexdef FROM pg_indexes
@@ -117,7 +117,7 @@ class FlywayMigrationIT {
                 .containsEntry("column_default", null);
         assertThat(sweepIndexes).singleElement().asString()
                 .contains("hearing_share_sweep_ix")
-                .contains("(sweep_tried_at NULLS FIRST, stored_seq)")
+                .contains("(projection_tried_at NULLS FIRST, stored_seq)")
                 .contains("WHERE (projection_status = 'FAILED'::text)");
     }
 
@@ -834,6 +834,21 @@ class FlywayMigrationIT {
                     .param("s", shareId)
                     .query(String.class)
                     .single()).isEqualTo(earlier.toString());
+        }
+
+        /** The sweep stamps every attempt, whatever the outcome (FR-044): an OK share's included. */
+        @Test
+        void update_of_an_ok_share_s_projection_tried_at_should_be_accepted() {
+            final UUID shareId = storedShare(SHARED_AT, "FALSE");
+
+            assertAccepted("UPDATE hearing_share SET projection_tried_at = now() WHERE share_id = '"
+                    + shareId + "'");
+
+            assertThat(jdbc.sql("SELECT count(*) FROM hearing_share WHERE share_id = :s "
+                            + "AND projection_tried_at IS NOT NULL AND projection_status = 'OK'")
+                    .param("s", shareId)
+                    .query(Integer.class)
+                    .single()).isEqualTo(1);
         }
 
         /** The sweep re-extracts FAILED rows only (FR-033): an OK share's key details and projection are final. */

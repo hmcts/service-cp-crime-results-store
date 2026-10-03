@@ -854,6 +854,21 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     RED (seam: `SweepSchedule.stop()` skips `scheduler.shutdown()`): `SweepScheduleTest` 2 completed, 1
     failed (failFast), `second_start_should_not_leave_rounds_running_after_stop`: `ConditionTimeoutException:
     Condition … was not fulfilled within 5 seconds`. GREEN (seam removed): `SweepScheduleTest` 9, 0 failures.
+  - Verification gate, ruling 3 (schema: the try stamp is a projection column): `sweep_tried_at` is
+    renamed `projection_tried_at` everywhere. V4 is not on main, so it is edited in place and renamed
+    `V4__projection_tried_at.sql` (the column and `hearing_share_sweep_ix` on `(projection_tried_at NULLS
+    FIRST, stored_seq)`). `hearing_share_projection_guard` (V3, on main, not edited) does not list the
+    column, so its `FAILED`-only rule does not apply: the stamp follows an `OK` write too. data-model.md
+    ("what may change": `projection_tried_at`, sweep only, any status), spec.md FR-044 (sweep-only list,
+    "stamped on every sweep attempt, whatever the outcome"), contracts/schema.md (V4 named; later
+    migrations from V5) and contracts/metrics.md follow. The earlier records above keep the old name.
+    RED: `FlywayMigrationIT` 4 completed, 1 failed (failFast),
+    `v4_should_add_a_nullable_projection_tried_at_and_an_index_for_the_sweep_s_order`:
+    `EmptyResultDataAccessException: Incorrect result size: expected 1, actual 0`; `ExtractionSweepIT` 4
+    completed, 1 failed, `write_that_fails_should_leave_the_projection_stamp_the_try_count_an_error_and_rotate_the_row`:
+    `Expecting actual not to be null`. GREEN: `FlywayMigrationIT` 121 (new:
+    `update_of_an_ok_share_s_projection_tried_at_should_be_accepted`), `ExtractionSweepIT` 16 (the fixed
+    row's stamp is at or after its `projected_at`), `ExtractionSweepTest` 19, `JdbcShareStoreIT` 14, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

@@ -57,7 +57,7 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
  * rows due a retry, re-reads the stored text, fills the key details and defendant rows under the
  * hearing-day lock and the share row's lock, records a renewed failure, stops retrying an unexpected
  * failure at the limit, and two sweeps at once work each row once. A write that fails is operational:
- * the row's projection is left alone, only {@code sweep_tried_at} is stamped, and the row rotates
+ * the row's projection is left alone, only {@code projection_tried_at} is stamped, and the row rotates
  * behind the rows not yet tried.
  */
 @SpringBootTest
@@ -167,6 +167,8 @@ class ExtractionSweepIT {
                 .containsEntry("stored_at", before.get("stored_at"))
                 .containsEntry("stored_seq", before.get("stored_seq"));
         assertThat(instant(after, "projected_at")).isAfter(instant(before, "projected_at"));
+        // Stamped after the write that made the row OK: every attempt, whatever the outcome.
+        assertThat(instant(after, "projection_tried_at")).isAfterOrEqualTo(instant(after, "projected_at"));
         assertThat(defendants(shareId)).containsExactly(List.of(SampleShares.CASE_ID, SampleShares.DEFENDANT_ID,
                 SampleShares.MASTER_DEFENDANT_ID));
         assertThat(day()).containsEntry("youth_seen", false).containsEntry("share_count", 1);
@@ -210,7 +212,7 @@ class ExtractionSweepIT {
                 .containsEntry("projection_status", "FAILED")
                 .containsEntry("projection_reason", UNEXPECTED_REASON)
                 .containsEntry("projection_attempts", MAX_ATTEMPTS);
-        assertThat(share(shareId).get("sweep_tried_at")).isNotNull();
+        assertThat(share(shareId).get("projection_tried_at")).isNotNull();
     }
 
     @Test
@@ -347,17 +349,17 @@ class ExtractionSweepIT {
                     .containsEntry("lja_code", null)
                     .containsEntry("any_subject_is_youth", null)
                     .containsEntry("day_youth_seen", null);
-            assertThat(after.get("sweep_tried_at")).isNotNull();
+            assertThat(after.get("projection_tried_at")).isNotNull();
             assertThat(defendants(older)).isEmpty();
             assertThat(day()).containsEntry("youth_seen", null);
-            assertThat(share(newer).get("sweep_tried_at")).isNull();
+            assertThat(share(newer).get("projection_tried_at")).isNull();
 
             // The row never tried goes first; the one that failed rotates behind it.
             assertThat(store.sweepCandidates(RAISED_VERSION, MAX_ATTEMPTS, 1))
                     .extracting(SweepCandidate::shareId).containsExactly(newer);
             assertThat(oneAtATime.runRound()).containsExactly(SweepRowOutcome.ERROR);
-            assertThat(share(newer).get("sweep_tried_at")).isNotNull();
-            assertThat(instant(share(older), "sweep_tried_at")).isEqualTo(instant(after, "sweep_tried_at"));
+            assertThat(share(newer).get("projection_tried_at")).isNotNull();
+            assertThat(instant(share(older), "projection_tried_at")).isEqualTo(instant(after, "projection_tried_at"));
             assertThat(store.sweepCandidates(RAISED_VERSION, MAX_ATTEMPTS, 1))
                     .extracting(SweepCandidate::shareId).containsExactly(older);
         } finally {
@@ -388,9 +390,9 @@ class ExtractionSweepIT {
         verify(observer).sweepRow(SweepRowOutcome.ERROR);
         verify(observer, never()).extractionFailed(any(), any());
         final Map<String, Object> after = share(shareId);
-        assertThat(after.get("sweep_tried_at")).isNotNull();
-        before.remove("sweep_tried_at");
-        after.remove("sweep_tried_at");
+        assertThat(after.get("projection_tried_at")).isNotNull();
+        before.remove("projection_tried_at");
+        after.remove("projection_tried_at");
         assertThat(after).isEqualTo(before);
         assertThat(defendants(shareId)).isEmpty();
         assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FIXED);
@@ -430,11 +432,11 @@ class ExtractionSweepIT {
         store.recordSweepAttempt(tried);
 
         final Map<String, Object> after = share(tried);
-        assertThat(instant(after, "sweep_tried_at")).isAfterOrEqualTo(instant(before, "stored_at"));
-        before.remove("sweep_tried_at");
-        after.remove("sweep_tried_at");
+        assertThat(instant(after, "projection_tried_at")).isAfterOrEqualTo(instant(before, "stored_at"));
+        before.remove("projection_tried_at");
+        after.remove("projection_tried_at");
         assertThat(after).isEqualTo(before);
-        assertThat(share(untouched).get("sweep_tried_at")).isNull();
+        assertThat(share(untouched).get("projection_tried_at")).isNull();
     }
 
     @Test
@@ -463,7 +465,7 @@ class ExtractionSweepIT {
                 .containsEntry("projection_version", KeyDetailsExtractor.EXTRACTOR_VERSION)
                 .containsEntry("projection_attempts", 1)
                 .containsEntry("projected_at", before.get("projected_at"));
-        assertThat(share(shareId).get("sweep_tried_at")).isNotNull();
+        assertThat(share(shareId).get("projection_tried_at")).isNotNull();
         assertThat(defendants(shareId)).isEmpty();
         assertThat(day()).containsEntry("youth_seen", null);
         assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FIXED);
@@ -517,7 +519,7 @@ class ExtractionSweepIT {
     }
 
     private void triedAt(final UUID shareId, final String instant) {
-        jdbc.sql("UPDATE hearing_share SET sweep_tried_at = :triedAt WHERE share_id = :shareId")
+        jdbc.sql("UPDATE hearing_share SET projection_tried_at = :triedAt WHERE share_id = :shareId")
                 .param("triedAt", OffsetDateTime.parse(instant)).param("shareId", shareId).update();
     }
 

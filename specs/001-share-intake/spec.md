@@ -230,7 +230,7 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 
 - **FR-042**: Migration V1 MUST NOT be changed. V2 MUST reshape `event_receipt` (message id as key, nullable identity, status limited to the five values, attempts, delivery count, first and last received, settled time, a bounded reason, message text, share id), and MUST refuse to run if V1's table holds any rows.
 - **FR-043**: V3 MUST create `hearing_day_head`, `hearing_share`, `hearing_share_payload` and `share_defendant` with these rules enforced by the database: one share per (`hearingId`, `hearingDay`, `sharedTime`); one latest share per day; checksum is 64 hex characters; message text only on non-share receipts; a `FAILED` row has a reason; `stored_seq` cannot be set by the caller; `expires_at` stays empty.
-- **FR-044**: Only these columns MAY change after insert: on the share, under the lock, `is_latest`, the predecessor and `day_youth_seen`; and, by the sweep only, the key-detail columns (including `any_subject_is_youth`) and the `projection_*` columns. On the day row, the latest share, the share count and `youth_seen`. *Nothing else is ever updated.*
+- **FR-044**: Only these columns MAY change after insert: on the share, under the lock, `is_latest`, the predecessor and `day_youth_seen`; and, by the sweep only, the key-detail columns (including `any_subject_is_youth`), the `projection_*` columns and `projection_tried_at` (stamped on every sweep attempt, whatever the outcome). On the day row, the latest share, the share count and `youth_seen`. *Nothing else is ever updated.*
 
 **Configuration**
 

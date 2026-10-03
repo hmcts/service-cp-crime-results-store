@@ -64,7 +64,7 @@ public interface ShareStore {
     SweepRowOutcome recordReextraction(SweepCandidate candidate, Projection projection, int version);
 
     /**
-     * Records that the sweep tried a row, {@code sweep_tried_at = now()}, in its own short transaction,
+     * Records that the sweep tried a row, {@code projection_tried_at = now()}, in its own short transaction,
      * after the attempt and whatever it wrote. Nothing else changes. The candidates are taken never
      * tried first, then the longest since tried, so a row that keeps failing rotates behind the others.
      *
