@@ -60,7 +60,8 @@ line points here, and this file stays as the record of the change.
 - Reconciliation findings, dead letters and subscription health: spec 004 and Azure Monitor.
 - A request the HTTP connector rejects before it reaches the service (`400 bad_request` from the host's
   error report, `api/ProblemErrorReportValve`): it carries no route and no reason of the service's own, so
-  `read.refused` does not move. A `TRACE` is not one of these: the
+  `read.refused` does not move. If that report's body cannot be written (the client has gone), the valve
+  logs the status and the exception class only, and nothing is counted. A `TRACE` is not one of these: the
   connector lets it through and the action filter counts it as `method_not_allowed`.
 
 ## Alert input

@@ -335,6 +335,10 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
       a_context_without_a_standard_host_should_be_left_alone`; `ApiWebConfigTest` asserts the
       `TomcatEdgeCustomizer` bean. GREEN: `AuthzIT` 29, `QueryParameterNamesTest` 27, `TomcatEdgeCustomizerTest`
       4, `ApiWebConfigTest` 3, 0 failures.
+    - Gate round 1 remediation (documents only): FR-043 now says `/error` writes `application/json` for `401`
+      and `403` and `application/problem+json` for any other status, as contracts/read-api.md §6 and the code
+      do (spec-validator LOW); contracts/metrics.md *Not counted by 003* now records that a connector-level
+      report whose body cannot be written is logged by status and exception class only (code-reviewer LOW).
   - Close-out (orchestrator ruling 3, connector-level URI rejections): option (a) landed. A raw-socket probe
     showed every rejection (`%2F`, `%00`, `%5C`, `%zz`, a bare `%`, and the parser's invalid-character
     `400` for `|` and `{`) reaches the host's `ErrorReportValve` (Boot's, `showReport=false`), which wrote
