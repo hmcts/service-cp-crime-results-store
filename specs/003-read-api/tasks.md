@@ -332,6 +332,7 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     raw `;` in a path is refused `404 route_not_found` by `ApiRoute`, now said in contracts/read-api.md §2.2;
     `BoundedErrorController` as a hand-mapped `Controller` behind its own `SimpleUrlHandlerMapping` stays;
     `ActuatorIntegrationTest` keeps its name.
+  - Close-out GREEN: the gate green (1263 tests passed, 0 skipped; JaCoCo report line 0.9963, branch 0.9878).
 
 ---
 
