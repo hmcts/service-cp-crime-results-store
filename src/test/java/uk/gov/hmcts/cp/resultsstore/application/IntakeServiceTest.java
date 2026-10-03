@@ -71,8 +71,17 @@ class IntakeServiceTest {
     @Mock
     private IntakeObserver observer;
 
+    @Mock
+    private KeyDetailsExtractor mockedExtractor;
+
     private IntakeService service() {
         return new IntakeService(new ShareIdentityParser(JsonMapper.builder().build()), new KeyDetailsExtractor(),
+                receipts, shareStore, observer);
+    }
+
+    /** The service with a mocked extractor, to show where extraction is not run. */
+    private IntakeService serviceWithAMockedExtractor() {
+        return new IntakeService(new ShareIdentityParser(JsonMapper.builder().build()), mockedExtractor,
                 receipts, shareStore, observer);
     }
 
@@ -132,6 +141,16 @@ class IntakeServiceTest {
             assertThat(result).isEqualTo(new IntakeResult(IntakeOutcome.NOT_A_SHARE, MESSAGE_ID, null, HEARING_ID,
                     LocalDate.parse(HEARING_DAY), null));
             verify(observer).notShare(NonShareReason.MISSING_SHARED_TIME);
+        }
+
+        @Test
+        void receive_of_a_non_share_should_not_read_the_key_details() {
+            when(receipts.recordArrival(any())).thenReturn(
+                    new ReceiptState(MESSAGE_ID, ReceiptStatus.UNREADABLE, null, 1, true));
+
+            serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 1, "not json"));
+
+            verifyNoInteractions(mockedExtractor);
         }
 
         @Test
@@ -264,6 +283,16 @@ class IntakeServiceTest {
                     HEARING_ID, LocalDate.parse(HEARING_DAY), SHARED_AT));
             verifyNoInteractions(shareStore);
             verify(observer).alreadySettled();
+        }
+
+        @Test
+        void redelivery_whose_receipt_is_settled_should_not_read_the_key_details() {
+            when(receipts.recordArrival(any())).thenReturn(
+                    new ReceiptState(MESSAGE_ID, ReceiptStatus.STORED, SHARE_ID, 2, false));
+
+            serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 2, SHARE));
+
+            verifyNoInteractions(mockedExtractor);
         }
 
         @Test
