@@ -371,6 +371,11 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     UNREADABLE but was: null`.
   - GREEN: `JdbcReceiptStoreIT` 16 tests, 0 failures (a share 7, a non-share 5, no message id 4);
     `ArrivalTest` 4 tests (added after green, pins the mapping without Spring).
+  - Gate round 1 (mutation check for the post-green `ArrivalTest`): with `keptText()` returning the text for
+    `NUL_CHARACTER`, `./gradlew test --tests '*ArrivalTest'`: 4 completed, 1 failed,
+    `text_with_a_raw_nul_should_not_be_kept`: `AssertionFailedError: expected: null but was: "\u0000"`;
+    restored, 4 tests, 0 failures. The unit test can fail; `Arrival`'s behaviour itself was driven red to
+    green through `JdbcReceiptStoreIT`.
   - Notes: the delivery as the receipt sees it is `application/Arrival.java` (one file beyond the list):
     message id, delivery count, text and the parser's `Reading`; it gives the key (`sha256:<hex>` of the text,
     or of the empty string, when the id is null), the first-arrival status, the identity parts, the reason
