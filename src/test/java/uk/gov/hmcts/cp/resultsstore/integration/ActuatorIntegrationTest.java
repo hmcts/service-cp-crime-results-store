@@ -51,4 +51,12 @@ class ActuatorIntegrationTest {
                 .andExpect(jsonPath("$.groups[0]").value("liveness"))
                 .andExpect(jsonPath("$.groups[1]").value("readiness"));
     }
+
+    /** The group names the sweep schedule (a missing contributor would fail the context); UP with the sweep off. */
+    @Test
+    void liveness_should_be_up_with_the_sweep_schedule_in_its_group() throws Exception {
+        mockMvc.perform(get("/actuator/health/liveness"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UP"));
+    }
 }

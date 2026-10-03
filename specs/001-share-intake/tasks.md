@@ -764,6 +764,20 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     transactions failing on a held day with a 1 s lock timeout leave the row as it was and it is fixed
     next round), `SweepScheduleTest` 5, `SweepRoundFailureHandlerTest` 2, `SweepSchedulingConfigTest` 4,
     0 failures.
+  - Gate round 2, ruling A (an `Error` ends the schedule): the handler still throws an `Error` on, which
+    ends the fixed-delay task for good. `SweepSchedule` keeps the task's future; `isRunning()` is
+    `running && !future.isDone()`; the end is logged once at ERROR, "Extraction sweep schedule ended", by
+    class names only. `config/SweepScheduleHealthIndicator` (branch-free; the state is
+    `SweepSchedule.status()`, `DOWN` once the task is done while the schedule is meant to run) is the
+    `sweepSchedule` contributor in the **liveness** group (`application.yaml`), so Kubernetes restarts the
+    pod; readiness is unchanged. It is registered whether or not the sweep runs (`UP` with none), so the
+    group never names a missing contributor. The scheduler's threads are daemons, as the context no
+    longer stops a schedule that is not running. Recovery is a restart only (quickstart.md, operations).
+    RED: `SweepScheduleTest` 6 completed, 1 failed (failFast),
+    `error_thrown_on_by_the_handler_should_end_the_schedule_and_take_its_health_down`:
+    `ConditionTimeoutException: Condition … was not fulfilled within 5 seconds` (still running).
+    GREEN: `SweepScheduleTest` 8, `SweepScheduleHealthIndicatorTest` 2, `ActuatorIntegrationTest` 4 (new:
+    liveness `UP` with the sweep schedule in its group), `SweepSchedulingConfigTest` 4, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

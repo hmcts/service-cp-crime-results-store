@@ -94,7 +94,23 @@ The container smoke script does the same in CI (T015):
 
 Stop the stack with `docker compose down` (add `--volumes` to drop the database).
 
-## 6. Run a phase through the phase gate
+## 6. Operations: the sweep schedule
+
+The extraction sweep runs on its own thread. A round that throws a runtime failure is counted
+(`resultsstore.sweep.rounds.failed`) and the next round runs as usual. A round that throws an
+`Error` (for example `OutOfMemoryError`) ends the schedule on that pod for good: the log shows one
+ERROR line, `Extraction sweep schedule ended`, with the class names, and the `sweepSchedule`
+contributor of the liveness group goes `DOWN`:
+
+```bash
+curl -s localhost:8082/actuator/health/liveness
+```
+
+Recovery is a restart only, and Kubernetes does it through the liveness probe; nothing restarts
+the schedule in place. Readiness is not affected, so the pod keeps taking traffic until it is
+restarted.
+
+## 7. Run a phase through the phase gate
 
 Each phase of `tasks.md` is implemented and reviewed with the repository's workflow
 `.claude/workflows/phase-gate.js`. Arguments (paths absolute):

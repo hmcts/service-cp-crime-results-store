@@ -131,6 +131,10 @@ management:
       probes:
         enabled: true   # enables liveness / readiness groups
       group:
+        liveness:
+          # The sweep's schedule goes DOWN once an Error has ended it; only a restart brings the
+          # sweep back, so liveness (not readiness) carries it. UP when the sweep is switched off.
+          include: livenessState,sweepSchedule
         readiness:
           # The store gates readiness. The broker never does: a pod cannot heal a broker by
           # restarting, and a broker blip must not take every replica out of service.

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -15,13 +16,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
+import org.springframework.boot.health.contributor.Status;
+import org.springframework.util.ErrorHandler;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
+import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
 
 /**
  * The sweep's schedule as a lifecycle (FR-037): one round at a time on its own thread, a second start
  * changes nothing, a failed round does not end the schedule, and stop interrupts a round in progress
- * and returns only once the round has ended.
+ * and returns only once the round has ended. An {@link Error} thrown on by the handler ends the
+ * schedule: it is then not running, logged once, and its health indicator (the liveness group) is
+ * {@code DOWN}.
  */
 @DisplayName("sweep schedule")
 class SweepScheduleTest {
@@ -31,6 +38,9 @@ class SweepScheduleTest {
     private static final Duration STOP_BOUND = Duration.ofSeconds(5);
 
     private static final Duration WITHIN = Duration.ofSeconds(5);
+
+    /** Planted in a failure's message; never in a log line. */
+    private static final String MARKER = "SCHEDULE-MARKER-5b1d";
 
     private final ExtractionSweep sweep = mock(ExtractionSweep.class);
 
@@ -48,8 +58,25 @@ class SweepScheduleTest {
     }
 
     private SweepSchedule newSchedule() {
-        schedule = new SweepSchedule(sweep, Duration.ZERO, SHORT, STOP_BOUND, handled::add);
+        return newSchedule(handled::add);
+    }
+
+    private SweepSchedule newSchedule(final ErrorHandler handler) {
+        schedule = new SweepSchedule(sweep, Duration.ZERO, SHORT, STOP_BOUND, handler);
         return schedule;
+    }
+
+    /** Records the failure, then throws an {@link Error} on, as the production handler does. */
+    private void recordAndThrowErrorsOn(final Throwable failure) {
+        handled.add(failure);
+        if (failure instanceof Error error) {
+            throw error;
+        }
+    }
+
+    private static Status health(final SweepSchedule schedule) {
+        return new SweepScheduleHealthIndicator(new StaticListableBeanFactory(Map.of("sweepSchedule", schedule))
+                .getBeanProvider(SweepSchedule.class)).health().getStatus();
     }
 
     @Test
@@ -131,6 +158,62 @@ class SweepScheduleTest {
 
         assertThat(ended).isTrue();
         assertThat(underTest.isRunning()).isFalse();
+    }
+
+    @Test
+    void error_thrown_on_by_the_handler_should_end_the_schedule_and_take_its_health_down() {
+        when(sweep.runRound()).thenAnswer(invocation -> {
+            rounds.incrementAndGet();
+            throw new StackOverflowError("round " + MARKER);
+        });
+        final SweepSchedule underTest = newSchedule(this::recordAndThrowErrorsOn);
+
+        try (CapturedLog log = CapturedLog.forClass(SweepSchedule.class)) {
+            underTest.start();
+
+            await().atMost(WITHIN).until(() -> !underTest.isRunning());
+            // Several fixed delays pass with no further round.
+            await().during(SHORT.multipliedBy(10)).atMost(WITHIN).until(() -> rounds.get() == 1);
+            assertThat(handled).singleElement().isInstanceOf(StackOverflowError.class);
+            assertThat(underTest.isRunning()).isFalse();
+            assertThat(health(underTest)).isEqualTo(Status.DOWN);
+            assertThat(log.messages()).singleElement().asString()
+                    .contains("sweep schedule ended")
+                    .contains(StackOverflowError.class.getName())
+                    .doesNotContain(MARKER);
+        }
+    }
+
+    @Test
+    void normal_rounds_should_keep_the_schedule_running_and_its_health_up() {
+        when(sweep.runRound()).thenAnswer(invocation -> {
+            rounds.incrementAndGet();
+            return List.of(SweepRowOutcome.FIXED);
+        });
+        final SweepSchedule underTest = newSchedule(this::recordAndThrowErrorsOn);
+        assertThat(health(underTest)).isEqualTo(Status.UP);
+
+        underTest.start();
+
+        await().atMost(WITHIN).until(() -> rounds.get() >= 3);
+        assertThat(underTest.isRunning()).isTrue();
+        assertThat(health(underTest)).isEqualTo(Status.UP);
+        assertThat(handled).isEmpty();
+    }
+
+    @Test
+    void runtime_failure_in_a_round_should_keep_the_health_up() {
+        when(sweep.runRound()).thenAnswer(invocation -> {
+            rounds.incrementAndGet();
+            throw new IllegalStateException("round");
+        });
+        final SweepSchedule underTest = newSchedule(this::recordAndThrowErrorsOn);
+
+        underTest.start();
+
+        await().atMost(WITHIN).until(() -> rounds.get() >= 2);
+        assertThat(underTest.isRunning()).isTrue();
+        assertThat(health(underTest)).isEqualTo(Status.UP);
     }
 
     /** Waits without observing interrupts, as a blocked socket read does. */
