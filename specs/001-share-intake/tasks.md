@@ -482,6 +482,14 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     the receipt-timeout refusal fails with `Expecting actual: … to start with: "resultsstore.intake.receipt-timeout
     must be from"`; restored, the class is green.
 
+  - Gate round 1 (broker pin): `HearingResultedEventListenerIT` gains
+    `delivery_that_intake_finishes_should_be_acknowledged_once_and_not_redelivered`: once the receipt exists,
+    the subscription queue empties with nothing in delivery, and the receipt stays at attempts 1 for 2 s.
+    Mutation check: with the `ShareStore` stand-in throwing, it fails with `ConditionTimeoutException … not
+    fulfilled within 32 seconds`; restored, `HearingResultedEventListenerIT` 4 tests, 0 failures. Rollback and
+    redelivery (store fails once, then `STORED` with attempts 2) and the unreadable body not redelivered stay
+    with T011's `IntakeIT`.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---

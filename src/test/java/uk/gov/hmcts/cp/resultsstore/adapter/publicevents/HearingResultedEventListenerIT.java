@@ -57,6 +57,9 @@ class HearingResultedEventListenerIT {
 
     private static final Duration WITHIN = Duration.ofSeconds(30);
 
+    /** How long a settled receipt must stay at one attempt to show no redelivery followed. */
+    private static final Duration SETTLE = Duration.ofSeconds(2);
+
     private static final String BROKER_URL = "tcp://localhost:" + TestSocketUtils.findAvailableTcpPort();
 
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
@@ -113,6 +116,21 @@ class HearingResultedEventListenerIT {
     }
 
     @Test
+    void delivery_that_intake_finishes_should_be_acknowledged_once_and_not_redelivered() throws Exception {
+        final String hearingId = UUID.randomUUID().toString();
+
+        publish(HEARING_RESULTED, envelope(hearingId));
+
+        await().atMost(WITHIN).until(() -> receipts(hearingId) == 1);
+        final Queue subscription = subscriptionsOnTheTopic().getFirst();
+        // The commit of the transacted session is the acknowledgement: nothing waits or is in delivery.
+        await().atMost(WITHIN).until(() -> subscription.getMessageCount() == 0
+                && subscription.getDeliveringCount() == 0);
+        // A rolled-back delivery would come straight back (no pause in tests) and raise the attempts.
+        await().during(SETTLE).atMost(SETTLE.plus(WITHIN)).until(() -> attempts(hearingId) == 1);
+    }
+
+    @Test
     void another_event_on_the_topic_should_not_be_delivered() {
         final String filtered = UUID.randomUUID().toString();
         final String delivered = UUID.randomUUID().toString();
@@ -123,6 +141,13 @@ class HearingResultedEventListenerIT {
 
         await().atMost(WITHIN).until(() -> receipts(delivered) == 1);
         assertThat(receipts(filtered)).isZero();
+    }
+
+    private int attempts(final String hearingId) {
+        return jdbc.sql("SELECT attempts FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(Integer.class)
+                .single();
     }
 
     private int receipts(final String hearingId) {
