@@ -31,7 +31,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  *   <li>Any other path except {@code /actuator/**} and {@code /error}: {@code 404 route_not_found}; the
  *       chain is not called.</li>
  *   <li>{@code /actuator/**} and {@code /error}: passed on with {@code CPP-ACTION} removed and media types
- *       untouched.</li>
+ *       untouched, except {@code TRACE}, refused {@code 405 method_not_allowed} with {@code Allow: GET} (every
+ *       exposed actuator endpoint is {@code GET}), so no servlet echoes the request's headers.</li>
  * </ul>
  *
  * <p>Pull and search are told apart by the raw query string alone ({@link QueryParameterNames}): nothing
@@ -51,6 +52,10 @@ public class ActionHeaderFilter extends OncePerRequestFilter {
     public static final String SENT_CONTENT_TYPE_ATTRIBUTE = ActionHeaderFilter.class.getName() + ".sentContentType";
 
     private static final String ALLOW = "Allow";
+
+    private static final String TRACE = "TRACE";
+
+    private static final String GET = "GET";
 
     private static final String ACTUATOR = "/actuator";
 
@@ -80,7 +85,12 @@ public class ActionHeaderFilter extends OncePerRequestFilter {
         if (hasDotSegment(path)) {
             refuse(response, RouteRefusal.ROUTE_NOT_FOUND, ProblemReason.ROUTE_NOT_FOUND);
         } else if (passesThrough(path.value())) {
-            filterChain.doFilter(ActionRequestWrapper.withoutAction(request), response);
+            if (TRACE.equals(request.getMethod())) {
+                response.setHeader(ALLOW, GET);
+                refuse(response, RouteRefusal.METHOD_NOT_ALLOWED, ProblemReason.METHOD_NOT_ALLOWED);
+            } else {
+                filterChain.doFilter(ActionRequestWrapper.withoutAction(request), response);
+            }
         } else {
             final List<String> allowed = ApiRoute.allowedMethods(path);
             if (allowed.isEmpty()) {

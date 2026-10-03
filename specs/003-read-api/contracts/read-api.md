@@ -62,7 +62,8 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 - A path the store does not serve → `404 route_not_found`, before authentication. A path with a `;` in
   any segment (a `;parameter`) is not served, so it is `404 route_not_found` too. So is a path with a `.` or `..`
   segment, raw or percent-encoded, under any prefix, `/actuator` and `/error` included. A served path with
-  another method, `HEAD` and `OPTIONS` included → `405 method_not_allowed` with an `Allow` header.
+  another method, `HEAD`, `OPTIONS` and `TRACE` included → `405 method_not_allowed` with an `Allow` header.
+  `TRACE` is refused the same way on `/actuator/**` and `/error` (`Allow: GET`).
 
 ### 2.3 Responses
 

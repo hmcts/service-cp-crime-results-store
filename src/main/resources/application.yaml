@@ -39,8 +39,9 @@ server:
   port: ${SERVER_PORT:8082}
   # The HTTP connector's URI policy, explicit so nobody loosens it by accident (contracts/read-api.md §2.2, §6):
   # no unencoded character beyond the standard set is accepted in a path or a query, and percent escapes
-  # decode as UTF-8. An encoded slash (%2F) and a backslash are rejected and TRACE is refused: Boot has no
-  # property for those, so config/TomcatEdgeCustomizer sets them. A request the connector rejects is answered
+  # decode as UTF-8. An encoded slash (%2F) and a backslash are rejected, and TRACE is let through so
+  # the action filter refuses it 405 method_not_allowed: Boot has no property for those, so
+  # config/TomcatEdgeCustomizer sets them. A request the connector rejects is answered
   # 400 with the four-field problem body (api/ProblemErrorReportValve) and never reaches the service.
   tomcat:
     uri-encoding: UTF-8

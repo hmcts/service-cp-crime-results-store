@@ -273,7 +273,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 - **FR-048**: The service's filters MUST refuse or pass requests as follows:
   - (a) A path under the service that matches no route MUST give `404 route_not_found`, before authorisation.
   - (b) A known path with another method, `HEAD` and `OPTIONS` included, MUST give `405 method_not_allowed` with `Allow`, before authorisation.
-  - (c) `/actuator/**` and `/error` MUST pass with `CPP-ACTION` removed and their media types untouched.
+  - (c) `/actuator/**` and `/error` MUST pass with `CPP-ACTION` removed and their media types untouched; `TRACE` on them gives `405 method_not_allowed` with `Allow: GET` (as amended in gate round 1: no servlet may echo a request's headers).
   - (d) `multipart/*` on a route MUST give `415 unsupported_content_type`, after authorisation and before the audit filter.
 - **FR-049**: Each action MUST have one allow rule admitting "System Users" and "Second Line Support", which also matches the request's method and path, so a spoofed action name alone never passes. No rule admits everything; `deny-when-no-rules` stays true.
 - **FR-050**: The service MUST refuse to start with `authz.http.enabled` false unless the `test` profile is active (D-AUTHZ-REQUIRED = yes, E12).

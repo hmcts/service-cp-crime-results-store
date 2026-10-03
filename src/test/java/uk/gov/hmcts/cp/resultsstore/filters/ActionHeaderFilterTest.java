@@ -247,9 +247,8 @@ class ActionHeaderFilterTest {
     }
 
     static Stream<Arguments> routesAndOtherMethods() {
-        // TRACE is left out: Tomcat refuses it in its connector, so it never reaches this filter (AuthzIT).
         return Arrays.stream(ApiRoute.values()).flatMap(route -> Stream.of("HEAD", "OPTIONS", "POST", "PUT",
-                "DELETE", "PATCH").map(method -> Arguments.of(route, method)));
+                "DELETE", "PATCH", "TRACE").map(method -> Arguments.of(route, method)));
     }
 
     @ParameterizedTest
@@ -263,6 +262,24 @@ class ActionHeaderFilterTest {
         assertThat(outcome.response().getHeader("Allow")).isEqualTo("GET");
         assertThat(outcome.response().getContentType()).isEqualTo("application/problem+json");
         assertThat(body(outcome.response()).get("reason").asString()).isEqualTo("method_not_allowed");
+    }
+
+    /**
+     * {@code TRACE} is never passed through: the servlet's own {@code doTrace} would echo the request's headers.
+     * Every exposed actuator endpoint is {@code GET}, so the refusal names {@code GET}.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"/actuator", "/actuator/health", "/actuator/prometheus", "/error"})
+    void trace_on_actuator_or_error_should_be_refused_405_with_allow_get_and_counted(final String path)
+            throws ServletException, IOException {
+        final Outcome outcome = filter(new MockHttpServletRequest("TRACE", path));
+
+        assertThat(outcome.seen()).isNull();
+        assertThat(outcome.response().getStatus()).isEqualTo(405);
+        assertThat(outcome.response().getHeader("Allow")).isEqualTo("GET");
+        assertThat(outcome.response().getContentType()).isEqualTo("application/problem+json");
+        assertThat(body(outcome.response()).get("reason").asString()).isEqualTo("method_not_allowed");
+        assertThat(observer.refusals()).containsExactly(RouteRefusal.METHOD_NOT_ALLOWED);
     }
 
     @ParameterizedTest

@@ -17,9 +17,12 @@ import uk.gov.hmcts.cp.resultsstore.api.ProblemErrorReportValve;
  * The read API's HTTP connector policy and the host's error report (contracts/read-api.md §2.2, §6).
  *
  * <ul>
- *   <li>The connector rejects an encoded slash ({@code %2F}) and a backslash, and refuses {@code TRACE}.
- *       These are Tomcat's defaults, set here explicitly so nobody loosens them by accident; Boot has no
- *       property for the first two. A rejected URI never reaches the service's filters.</li>
+ *   <li>The connector rejects an encoded slash ({@code %2F}) and a backslash: Tomcat's defaults, set here
+ *       explicitly so nobody loosens them by accident; Boot has no property for them. A rejected URI never
+ *       reaches the service's filters.</li>
+ *   <li>The connector lets {@code TRACE} through ({@code allowTrace}), so the action filter refuses it as it
+ *       refuses any other method ({@code 405 method_not_allowed}, {@code Allow}, counted) on every path; it
+ *       never reaches a servlet's {@code doTrace}, which would echo the request's headers.</li>
  *   <li>The host's error report is {@link ProblemErrorReportValve}, so a request the connector rejects gets
  *       the four-field problem body rather than Tomcat's HTML page. Boot's own {@link ErrorReportValve} is
  *       removed from the host, and the host is told the valve's class, so it adds no default one at start.</li>
@@ -43,7 +46,7 @@ public class TomcatEdgeCustomizer implements WebServerFactoryCustomizer<TomcatSe
     private static void connectorPolicy(final Connector connector) {
         connector.setEncodedSolidusHandling(EncodedSolidusHandling.REJECT.getValue());
         connector.setAllowBackslash(false);
-        connector.setAllowTrace(false);
+        connector.setAllowTrace(true);
     }
 
     private static void problemErrorReport(final Context context) {

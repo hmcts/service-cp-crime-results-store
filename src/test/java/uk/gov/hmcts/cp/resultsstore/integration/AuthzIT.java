@@ -297,25 +297,29 @@ class AuthzIT {
     }
 
     /**
-     * {@code TRACE} never reaches the service's filters: Tomcat ({@code allowTrace=false}, the default) refuses it
-     * {@code 405} in its connector and sends the error to {@code /error}, whose bounded page writes the four
-     * fields with the generic {@code 4xx} reason. The action filter neither sees nor counts it.
+     * {@code TRACE} reaches the action filter (the connector lets it through) and is refused like any other
+     * method, before authorisation: on a served path and on {@code /actuator/**} alike, {@code 405
+     * method_not_allowed} with {@code Allow: GET}, counted, usersgroups never asked, and no header echoed back.
      */
-    @Test
-    void trace_should_be_refused_405_by_the_connector_and_never_counted() throws IOException, InterruptedException {
+    @ParameterizedTest
+    @ValueSource(strings = {"share", "/actuator/health"})
+    void trace_should_be_refused_405_method_not_allowed_by_the_action_filter_and_counted(final String target)
+            throws IOException, InterruptedException {
+        final String path = "share".equals(target) ? samplePath(ApiRoute.GET_SHARE) : target;
         final double notAllowed = refused("method_not_allowed");
 
-        final HttpResponse<String> response = send("TRACE", samplePath(ApiRoute.GET_SHARE),
-                Map.of(USER_ID_HEADER, TRACE_CALLER));
+        final HttpResponse<String> response = send("TRACE", path, Map.of(USER_ID_HEADER, TRACE_CALLER));
 
         assertThat(response.statusCode()).isEqualTo(405);
+        assertThat(response.headers().allValues("Allow")).containsExactly("GET");
         assertThat(response.headers().firstValue("Content-Type")).contains("application/problem+json");
-        assertThat(response.body()).doesNotContain("results-store/v1").doesNotContain(SHARE_ID);
+        assertThat(response.body()).doesNotContain("results-store/v1").doesNotContain(SHARE_ID)
+                .doesNotContain(TRACE_CALLER).doesNotContain("actuator");
         final JsonNode body = MAPPER.readTree(response.body());
         assertThat(body.propertyNames()).containsExactly("type", "title", "status", "reason");
         assertThat(body.get("status").asInt()).isEqualTo(405);
-        assertThat(body.get("reason").asString()).isEqualTo("bad_request");
-        assertThat(refused("method_not_allowed")).isEqualTo(notAllowed);
+        assertThat(body.get("reason").asString()).isEqualTo("method_not_allowed");
+        assertThat(refused("method_not_allowed")).isEqualTo(notAllowed + 1);
         USERSGROUPS.verify(0, getRequestedFor(urlPathEqualTo(IDENTITY_PATH))
                 .withHeader(USER_ID_HEADER, equalTo(TRACE_CALLER)));
     }

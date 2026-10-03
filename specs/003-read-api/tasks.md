@@ -313,6 +313,21 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     counted` (an exploratory run showed the shape first); `TRACE` dropped from
     `ActionHeaderFilterTest.routesAndOtherMethods`, since it never reaches the filter. GREEN: `AuthzIT` 23,
     `ActionHeaderFilterTest` 91, 0 failures.
+    - Gate round 1 remediation (codex MEDIUM, `TRACE`): superseded. Tomcat's own refusal was not the contract's
+      `405` (generic reason, Tomcat's `Allow`, not counted), so the connector now lets `TRACE` through
+      (`TomcatEdgeCustomizer`: `allowTrace=true`) and the action filter refuses it like any other method: on a
+      served path by the route table, and on `/actuator/**` and `/error` explicitly (`Allow: GET`), so no
+      servlet's `doTrace` ever echoes the request's headers. `TRACE` is back in `ActionHeaderFilterTest.
+      routesAndOtherMethods` (passed at once: the filter already refused it). RED: `TomcatEdgeCustomizerTest.
+      the_connector_should_reject_encoded_slashes_and_backslashes_and_pass_trace_to_the_filters() FAILED`
+      `Expecting value to be true but was false`; `ActionHeaderFilterTest.trace_on_actuator_or_error_should_be_
+      refused_405_with_allow_get_and_counted(String) > [1] path = "/actuator" FAILED` `expected: null but was:
+      …ActionRequestWrapper@…`; `AuthzIT.trace_should_be_refused_405_method_not_allowed_by_the_action_filter_
+      and_counted(String) > [1] target = "share" FAILED` (the `Allow` header held Tomcat's method list, not
+      `GET`; also `/actuator/health`). GREEN: `TomcatEdgeCustomizerTest` 3, `ActionHeaderFilterTest` 108,
+      `AuthzIT` 24 (replacing `trace_should_be_refused_405_by_the_connector_and_never_counted`),
+      `ConnectorRejectionIT` 12, 0 failures. FR-048 (c), contracts/read-api.md §2.2, contracts/metrics.md and
+      `application.yaml` say so.
   - Close-out (orchestrator ruling 3, connector-level URI rejections): option (a) landed. A raw-socket probe
     showed every rejection (`%2F`, `%00`, `%5C`, `%zz`, a bare `%`, and the parser's invalid-character
     `400` for `|` and `{`) reaches the host's `ErrorReportValve` (Boot's, `showReport=false`), which wrote

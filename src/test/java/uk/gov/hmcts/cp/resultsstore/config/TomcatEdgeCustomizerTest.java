@@ -23,19 +23,24 @@ class TomcatEdgeCustomizerTest {
 
     private final TomcatEdgeCustomizer customizer = new TomcatEdgeCustomizer();
 
+    /**
+     * {@code TRACE} is let through the connector so the action filter refuses it like any other method
+     * ({@code 405 method_not_allowed}, {@code Allow: GET}, counted); Tomcat's own refusal would answer with a
+     * generic reason, its own {@code Allow} and no count.
+     */
     @Test
-    void the_connector_should_reject_encoded_slashes_backslashes_and_trace() {
+    void the_connector_should_reject_encoded_slashes_and_backslashes_and_pass_trace_to_the_filters() {
         customizer.customize(factory);
         final Connector connector = new Connector();
         connector.setEncodedSolidusHandling(EncodedSolidusHandling.DECODE.getValue());
         connector.setAllowBackslash(true);
-        connector.setAllowTrace(true);
+        connector.setAllowTrace(false);
 
         factory.getConnectorCustomizers().forEach(each -> each.customize(connector));
 
         assertThat(connector.getEncodedSolidusHandling()).isEqualTo(EncodedSolidusHandling.REJECT.getValue());
         assertThat(connector.getAllowBackslash()).isFalse();
-        assertThat(connector.getAllowTrace()).isFalse();
+        assertThat(connector.getAllowTrace()).isTrue();
     }
 
     @Test
