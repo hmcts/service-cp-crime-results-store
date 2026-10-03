@@ -47,7 +47,7 @@ class SweepScheduleTest {
         }
     }
 
-    private SweepSchedule schedule() {
+    private SweepSchedule newSchedule() {
         schedule = new SweepSchedule(sweep, Duration.ZERO, SHORT, STOP_BOUND, handled::add);
         return schedule;
     }
@@ -55,7 +55,7 @@ class SweepScheduleTest {
     @Test
     void schedule_should_be_running_only_between_start_and_stop() {
         when(sweep.runRound()).thenReturn(List.of());
-        final SweepSchedule underTest = schedule();
+        final SweepSchedule underTest = newSchedule();
         assertThat(underTest.isRunning()).isFalse();
 
         underTest.start();
@@ -67,7 +67,7 @@ class SweepScheduleTest {
 
     @Test
     void stop_before_start_should_do_nothing() {
-        final SweepSchedule underTest = schedule();
+        final SweepSchedule underTest = newSchedule();
 
         underTest.stop();
 
@@ -80,7 +80,7 @@ class SweepScheduleTest {
             rounds.incrementAndGet();
             return List.of();
         });
-        final SweepSchedule underTest = schedule();
+        final SweepSchedule underTest = newSchedule();
 
         underTest.start();
         underTest.start();
@@ -101,7 +101,7 @@ class SweepScheduleTest {
             return List.of(SweepRowOutcome.FIXED);
         });
 
-        schedule().start();
+        newSchedule().start();
 
         await().atMost(WITHIN).until(() -> rounds.get() >= 2);
         assertThat(handled).singleElement().isInstanceOf(IllegalStateException.class);
@@ -123,7 +123,7 @@ class SweepScheduleTest {
             ended.set(true);
             return List.of();
         });
-        final SweepSchedule underTest = schedule();
+        final SweepSchedule underTest = newSchedule();
         underTest.start();
         assertThat(started.await(WITHIN.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
 
