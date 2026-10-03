@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -18,8 +20,10 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.cfg.JsonNodeFeature;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
@@ -200,6 +204,30 @@ class ShareIdentityParserTest {
         assertThatThrownBy(() -> parser.readTree("not json")).isInstanceOf(JacksonException.class);
     }
 
+    @Test
+    void decimals_should_keep_their_value_and_written_precision_through_parse_and_enriched_serialisation() {
+        final String applicationId = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+        final String text = body("\"" + HEARING_ID + "\"", "\"" + HEARING_DAY + "\"", "\"" + SHARED_TIME + "\"")
+                .replace("\"isReshare\"", "\"amounts\": {\"a\": 1.10, \"b\": 1e3, \"c\": 12345678901234567890.123}, "
+                        + "\"isReshare\"")
+                .replace("\"hearing\": {", "\"hearing\": {\"courtApplications\": [{\"id\": \"" + applicationId + "\"}], ");
+        final JsonNode amounts = ((Share) parser.read(text)).body().path("amounts");
+        final ApplicationResultsEnricher enricher = new ApplicationResultsEnricher(JsonMapper.builder().build());
+        final JsonNode results = parser.readTree("{\"applicationStatus\": \"FINALISED\", \"judicialResults\": "
+                + "[{\"amount\": 2.50, \"big\": 98765432109876543210.0001}]}");
+
+        final Enrichment enrichment = enricher.enrich(text, ((Share) parser.read(text)).body(),
+                Map.of(UUID.fromString(applicationId), new ApplicationAnswer.Found(results)));
+
+        assertThat(amounts.path("a").decimalValue()).isEqualTo(new BigDecimal("1.10"));
+        assertThat(amounts.path("b").decimalValue()).isEqualByComparingTo(new BigDecimal("1000"));
+        assertThat(amounts.path("c").decimalValue()).isEqualTo(new BigDecimal("12345678901234567890.123"));
+        assertThat(enrichment.applied()).isTrue();
+        assertThat(enrichment.parsedCopy())
+                .contains("\"amounts\":{\"a\":1.10,\"b\":1E+3,\"c\":12345678901234567890.123}")
+                .contains("{\"amount\":2.50,\"big\":98765432109876543210.0001}");
+    }
+
     @Nested
     @DisplayName("an unreadable body")
     class Unreadable {
@@ -225,6 +253,8 @@ class ShareIdentityParserTest {
             final ObjectReader reader = mock(ObjectReader.class);
             when(mapper.reader()).thenReturn(reader);
             when(reader.with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)).thenReturn(reader);
+            when(reader.with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)).thenReturn(reader);
+            when(reader.without(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES)).thenReturn(reader);
             when(reader.readTree("{}")).thenThrow(thrown);
 
             assertThatThrownBy(() -> new ShareIdentityParser(mapper).read("{}")).isSameAs(thrown);

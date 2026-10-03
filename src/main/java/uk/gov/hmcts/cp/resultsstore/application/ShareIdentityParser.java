@@ -16,6 +16,7 @@ import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectReader;
+import tools.jackson.databind.cfg.JsonNodeFeature;
 import uk.gov.hmcts.cp.resultsstore.domain.CanonicalUuid;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
@@ -57,10 +58,15 @@ public class ShareIdentityParser {
     /**
      * Creates the parser.
      *
-     * @param mapper the application's mapper; trailing content is refused whatever its default
+     * @param mapper the application's mapper; trailing content is refused whatever its default, and a
+     *               decimal keeps its exact value and written precision, so an enriched copy written
+     *               from the tree does not round it through a {@code double} (research R9)
      */
     public ShareIdentityParser(final ObjectMapper mapper) {
-        this.reader = mapper.reader().with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+        this.reader = mapper.reader()
+                .with(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                .with(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS)
+                .without(JsonNodeFeature.STRIP_TRAILING_BIGDECIMAL_ZEROES);
     }
 
     /**
