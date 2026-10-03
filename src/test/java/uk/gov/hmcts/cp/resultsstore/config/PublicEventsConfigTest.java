@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import jakarta.jms.ConnectionFactory;
 import java.sql.SQLException;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.jms.autoconfigure.JmsProperties;
@@ -19,6 +20,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
 
 /** The container behind the shared durable subscription (FR-001, FR-006; contracts/inbound-event.md). */
+@DisplayName("public events listener container")
 class PublicEventsConfigTest {
 
     /** Stands for message text a database error can quote back, such as a failing row's detail. */

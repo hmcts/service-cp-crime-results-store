@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.UUID;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
@@ -12,6 +13,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.ReceiptStatus;
 
+@DisplayName("a delivery as its receipt sees it")
 class ArrivalTest {
 
     private static final UUID HEARING_ID = UUID.fromString("6f1f0c3e-2b7a-4c3e-9a51-2f7d1c0e8a11");

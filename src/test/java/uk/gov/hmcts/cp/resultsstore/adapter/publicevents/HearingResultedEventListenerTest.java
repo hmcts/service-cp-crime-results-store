@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -23,6 +24,7 @@ import java.util.Map;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.MDC;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeCommand;
@@ -34,6 +36,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
 
+@DisplayName("hearing-resulted listener")
 class HearingResultedEventListenerTest {
 
     private static final String MESSAGE_ID = "ID:1";
@@ -205,6 +208,20 @@ class HearingResultedEventListenerTest {
 
         assertThatThrownBy(() -> listener.onHearingResulted(text(MARKER, 2))).isSameAs(failure);
 
+        assertThat(slept).isEmpty();
+        assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
+    }
+
+    @Test
+    void message_whose_text_cannot_be_read_should_escape_without_a_pause_and_clear_the_context()
+            throws JMSException {
+        final JMSException unreadable = new JMSException("cannot read");
+        final TextMessage message = text(MARKER, 2);
+        when(message.getText()).thenThrow(unreadable);
+
+        assertThatThrownBy(() -> listener.onHearingResulted(message)).isSameAs(unreadable);
+
+        verifyNoInteractions(intake);
         assertThat(slept).isEmpty();
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
     }

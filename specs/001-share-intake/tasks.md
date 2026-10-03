@@ -492,6 +492,10 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     redelivery (store fails once, then `STORED` with attempts 2) and the unreadable body not redelivered stay
     with T011's `IntakeIT`.
 
+  - Gate round 1 (conventions): `HearingResultedEventListenerTest` gains a `TextMessage.getText()` that throws
+    `JMSException`: it escapes as it is, intake is not called, nothing pauses and the logging context is
+    cleared (12 tests). The new unit test classes carry a class-level `@DisplayName`.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---
