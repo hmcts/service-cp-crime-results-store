@@ -123,7 +123,7 @@ Every refusal and error carries the same small body: `type`, `title`, `status` a
 
 **Why this priority**: Consumers branch on status and reason. Principle XI forbids personal data and exception text in anything the service emits.
 
-**Independent Test**: Send each bad parameter, each Spring MVC exception type and a `401`/`403` (also with `Accept: text/html`). Check each body has exactly the four fields and no echoed value. Stop the database: `503 store_unavailable` with `Retry-After`.
+**Independent Test**: Send each bad parameter, each Spring MVC exception type and a `401`/`403` (also with `Accept: text/html`, which still gets the four-field JSON body). Check each body has exactly the four fields and no echoed value. Stop the database: `503 store_unavailable` with `Retry-After`.
 
 **Acceptance Scenarios**:
 
@@ -136,9 +136,9 @@ Every refusal and error carries the same small body: `type`, `title`, `status` a
 
 ### User Story 7 - Operators see read traffic, refusals and a broken pull assumption (Priority: P7)
 
-Support staff see how many reads each endpoint served and with what outcome, how long they took, how many requests were refused before authorisation and why, how big pages and payloads are, and whether any store transaction ran longer than the visibility lag.
+Support staff see how many reads each endpoint served and with what outcome, how long they took, how many requests were refused, by this service's filters or by authorisation, and why, how big pages and payloads are, and whether any store transaction ran longer than the visibility lag.
 
-**Why this priority**: Refusals before authorisation are not audited, so a counter is their only record. The overrun counter turns the pull-safety assumption into an alert.
+**Why this priority**: Refused requests never reach the audit filter, so a counter is their only record. The overrun counter turns the pull-safety assumption into an alert.
 
 **Independent Test**: Run the scenarios of stories 1 to 6 and read `/actuator/prometheus`. Check each counter moved by the expected amount and every tag value is from a fixed list. Make a store transaction outlast a small lag: the overrun counter moves once.
 
@@ -147,6 +147,7 @@ Support staff see how many reads each endpoint served and with what outcome, how
 1. **Given** a pull that returns three items, **Then** `resultsstore.read.requests{endpoint=pull,outcome=ok}` goes up by one and `resultsstore.read.page.items` records 3.
 2. **Given** a `404 route_not_found`, **Then** `resultsstore.read.refused{reason=route_not_found}` goes up by one.
 3. **Given** a store transaction whose time from sending the share insert to its commit returning is at or above the lag, **Then** `resultsstore.intake.visibility.overrun` goes up by one.
+4. **Given** a request with no identity, or from a caller in neither admitted group, **Then** `resultsstore.read.refused{reason=unauthenticated}` or `{reason=forbidden}` goes up by one.
 
 ---
 
@@ -166,7 +167,7 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 ### Edge Cases
 
 - A share stored at 00:30 BST belongs to the previous UTC day but the current London day: search filters on the London day; both days are in the item.
-- Two shares of one day with the same `sharedTime` cannot exist (unique key). Search's keyset still breaks ties on `shareId` across days and courts.
+- Two shares of one day with the same `sharedTime` cannot exist (unique key). Search's keyset still breaks ties on `shareId`.
 - `storedSeq` has gaps (rolled-back transactions and duplicates take numbers). Gaps mean nothing.
 - A share arrives with an earlier `sharedTime` than the day's latest: it is presented by pull when stored (higher `storedSeq`), with `isLatest` false and `arrivedOutOfOrder` true; the earlier presented shares' `versionNumber` values move.
 - A share whose day later becomes youth-relevant through a new share: the new share is presented (higher `storedSeq`); the old one is not re-presented.
@@ -216,7 +217,13 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 - **FR-022**: The contract MUST state that filters are evaluated at read time; that a share behind the cursor is never presented again; that its day's later share, which has a higher `storedSeq`, is presented when it is stored; and that each share is a full snapshot of its day.
 - **FR-023**: The contract MUST state the unknown-row obligation: *a share presented with `projectionStatus` `FAILED` or `dayYouthSeen` null is not final in its key details; re-read `GET /shares/{shareId}` until `projectionStatus` is `OK` (or the day's successor arrives) before deciding it is not yours.*
 - **FR-024**: The contract MUST state that `dayYouthSeen=notFalse` is the complete feed for youth-relevant days, and that `dayYouthSeen=true` can miss a share whose day became `true` with no new share (kept, D-PULL-TRUE).
-- **FR-025**: The contract MUST state that `isLatest` can be false for a share that arrived out of order and that the consumer reads the day's versions to find the latest; that `versionNumber` can change; that `keyDetails`, `dayYouthSeen` and `anySubjectIsYouth` can be rewritten in place, by the sweep or by a spec-004 rerun, with no new `storedSeq`, and that `projectionVersion` and `projectedAt` show when; that re-pulling from an older cursor is safe and is the way to reconcile; and that consumers keep their own idempotency guard on `shareId`.
+- **FR-025**: The contract MUST state each of these:
+  - (a) `isLatest` can be false for a share that arrived out of order; the consumer reads the day's versions to find the latest.
+  - (b) `versionNumber` can change.
+  - (c) `keyDetails`, `dayYouthSeen` and `anySubjectIsYouth` can be rewritten in place, by the sweep or by a spec-004 rerun, with no new `storedSeq`.
+  - (d) `projectionVersion` and `projectedAt` show when the key details were last written.
+  - (e) Re-pulling from an older cursor is safe, and is the way to reconcile.
+  - (f) Consumers keep their own idempotency guard on `shareId`.
 
 **Search**
 
@@ -224,7 +231,7 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 - **FR-027**: Search MUST filter on the London shared day, both ends included, over at most 31 days (`400 day_range_too_long`; `400 day_range_reversed` when from is after to).
 - **FR-028**: Search MUST order by London shared day, `sharedTime`, then `shareId`, ascending, and page by keyset on those three values. The response MUST be `{ items, nextCursor }`, `nextCursor` null on the last page.
 - **FR-029**: The cursor MUST be opaque base64url text of at most 128 characters, decoded strictly; anything that does not decode to a valid position MUST give `400 invalid_cursor`.
-- **FR-030**: No visibility lag MUST apply to search, one share or the day's versions. The contract MUST say search is a query, not a feed: shares stored while paging and `FAILED` shares are not guaranteed to appear.
+- **FR-030**: The visibility lag MUST NOT apply to search, one share or the day's versions. The contract MUST say search is a query, not a feed: shares stored while paging and `FAILED` shares are not guaranteed to appear.
 
 **One share and the day's versions**
 
@@ -249,21 +256,25 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 **Errors**
 
 - **FR-042**: Every `4xx` and `5xx` body MUST be `{"type":"about:blank","title":<the HTTP reason phrase>,"status":<n>,"reason":<code>}` and nothing else, with `reason` from the fixed list in `contracts/read-api.md`. No body MUST ever hold a caller's value, a request path, an exception message or payload content.
-- **FR-043**: Spring MVC's own exceptions MUST be rendered through the same four fields; `spring.mvc.problemdetails.enabled` MUST stay false; the `/error` page MUST use bounded attributes, also for `Accept: text/html`, with the white-label page off.
+- **FR-043**: Spring MVC's own exceptions MUST be rendered through the same four fields, including `405 method_not_allowed` and `406 not_acceptable`; `spring.mvc.problemdetails.enabled` MUST stay false. The `/error` page (where the authorisation library's `401` and `403` land) MUST be served by the service's own error controller, which answers every `Accept`, `text/html` included, with the four-field body as `application/json`; the white-label page stays off.
 - **FR-044**: A connection failure or a query timeout MUST give `503 store_unavailable` with `Retry-After` in delta-seconds. Any other failure MUST give `500 internal_error`, logged by exception class with `shareId` in the logging context when known, never the message.
-- **FR-045**: Each read query MUST have a statement timeout (default 5 seconds) below the driver's socket timeout.
+- **FR-045**: Each read query MUST have a timeout (default 5 seconds) below the driver's socket timeout. This is the JDBC query timeout: the driver cancels the query from the client side, and the 30-second socket timeout backs it up. It is not PostgreSQL's server-side `statement_timeout`, which intake uses (FR-017). A client-side cancel is enough for reads: a read holds no lock that blocks intake, and a late cancel only delays one answer, it never breaks pull safety.
 
 **Authorisation**
 
 - **FR-046**: The action MUST be derived from method and path for every request under the service. Pull and search MUST be separate actions, told apart by the presence of `storedAfterSeq`, looked up only after the method and path match. Actions: `results-store.pull-shares`, `results-store.search-shares`, `results-store.get-share`, `results-store.get-share-payload`, `results-store.list-hearing-day-shares`, and (D-RAW) `results-store.get-share-arrived-payload`.
 - **FR-047**: On a mapped route the caller's `CPP-ACTION` MUST be overwritten, and `Content-Type` and `Accept` MUST answer `application/json` wherever they name a vendor media type.
-- **FR-048**: A path under the service that matches no route MUST give `404 route_not_found` before authorisation. A known path with another method, `HEAD` and `OPTIONS` included, MUST give `405 method_not_allowed` with `Allow`. `/actuator/**` and `/error` MUST pass with `CPP-ACTION` removed and their media types untouched. `multipart/*` on a route MUST give `415 unsupported_content_type` before the audit filter.
+- **FR-048**: The service's filters MUST refuse or pass requests as follows:
+  - (a) A path under the service that matches no route MUST give `404 route_not_found`, before authorisation.
+  - (b) A known path with another method, `HEAD` and `OPTIONS` included, MUST give `405 method_not_allowed` with `Allow`, before authorisation.
+  - (c) `/actuator/**` and `/error` MUST pass with `CPP-ACTION` removed and their media types untouched.
+  - (d) `multipart/*` on a route MUST give `415 unsupported_content_type`, after authorisation and before the audit filter.
 - **FR-049**: Each action MUST have one allow rule admitting "System Users" and "Second Line Support", which also matches the request's method and path, so a spoofed action name alone never passes. No rule admits everything; `deny-when-no-rules` stays true.
 - **FR-050**: The service MUST refuse to start with `authz.http.enabled` false unless the `test` profile is active (D-AUTHZ-REQUIRED, pending Sachin).
 
 **Audit**
 
-- **FR-051**: Every request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`. Refusals before authorisation (`404`, `405`, `415` from this service's filters; `401` and `403` from the authorisation library) are not audited; they MUST be counted (D-REFUSALS-UNAUDITED, D-VII-AUDIT-WORDING, pending Sachin).
+- **FR-051**: Every request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`. A request refused by this service's filters (`404` and `405` before authorisation, `415` after it) or by the authorisation library (`401`, `403`) never reaches the audit filter, so it is not audited; every such refusal MUST be counted in `resultsstore.read.refused` with its reason (D-REFUSALS-UNAUDITED, D-VII-AUDIT-WORDING, pending Sachin).
 - **FR-052**: The payload endpoints' audit response event MUST carry the fixed marker `{"payloadOmitted":true}` in place of the body (D-AUDIT option 4, the default, pending Sachin). If Sachin chooses option 1 instead, the event carries the body and the DPIA records it. Either way a test MUST pin the behaviour, and list pages are not replaced.
 - **FR-053**: Every path template MUST be in `results-store-openapi.yaml` with its path parameters declared, and every described route MUST be served (checked both ways by a test).
 
@@ -281,8 +292,8 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 
 **Documentation (performed by the last task, not now)**
 
-- **FR-057**: Constitution 2.1.0 MUST become 2.2.0 (MINOR) with Principle VII reworded: the action derived from method and path for every request; caller `CPP-ACTION` and vendor media types overridden; an unmapped path refused; read rules admitting "System Users" and "Second Line Support"; *every request that reaches an endpoint is audited; refusals before authorisation are counted*; and, under option 4, the payload endpoints' response body replaced by a fixed marker. If D-RAW is accepted, Principle II gains the arrived-text endpoint.
-- **FR-058**: The design rules file (`design_rules.md`, the only file of that name in the repository) MUST replace the "lowest open write" pull-safety sentence with the visibility lag, and its security bullets MUST match FR-049 and FR-051. Spec 001's forward references to "indexes in 003" MUST point at V5.
+- **FR-057**: Constitution 2.1.0 MUST become 2.2.0 (MINOR) with Principle VII reworded: the action derived from method and path for every request; caller `CPP-ACTION` and vendor media types overridden; an unmapped path refused; read rules admitting "System Users" and "Second Line Support"; *every request that reaches an endpoint is audited; a request refused by a filter or by authorisation is counted*; and, under option 4, the payload endpoints' response body replaced by a fixed marker. Principle II gains the arrived-text endpoint in 2.2.0 only if D-RAW is accepted by the time T012 starts; T013 then touches no constitution. If D-RAW is declined, 2.2.0 ships without it; if it is accepted later, T013 makes its own amendment with its own version bump (the next free MINOR, after spec 004's 2.3.0 if that has landed).
+- **FR-058**: The design rules file (`.claude/rules/design_rules.md`) MUST replace the "lowest open write" pull-safety sentence with the visibility lag, and its security bullets MUST match FR-049 and FR-051. Spec 001's forward references to "indexes in 003" MUST point at V5.
 - **FR-059**: Forward notes for the design page owner and for the YOT and probation teams MUST be written in `page-notes.md`; the page itself is not edited.
 
 **End to end**
@@ -335,7 +346,7 @@ Each is applied with its default in every 003 document and marked "pending Sachi
 | Id | Question | Default applied | Alternatives |
 |---|---|---|---|
 | D-AUDIT | The audit library 1.0.5 copies whole response bodies into audit events and has no switch. What happens to payload bodies? | Option 4 now, option 2 in parallel, recorded in the DPIA: replace the library's `AuditPayloadGenerationService` bean so the payload endpoints' response event holds `{"payloadOmitted":true}`; list pages keep their bodies (FR-052, T011) | 1: accept and record in the DPIA (T011's alternative branch). 2: ask the library owners for an exclusion switch (needs an interim). 3: replace the `AuditFilter` bean and publish a body-free event ourselves. 5: serve from a path the filter skips (rejected: unaudited) |
-| D-RAW | Offer the arrived text on its own endpoint (probation S10)? | Yes, as separable phase D (T013), own action and rule, `ETag` = `payload_sha256`; constitution II wording in 2.2.0 | A `?variant=arrived` query on `/payload` (one action; the filter would read the query); or no, and offer a list of enriched application ids |
+| D-RAW | Offer the arrived text on its own endpoint (probation S10)? | Yes, as separable phase D (T013), own action and rule, `ETag` = `payload_sha256`; constitution II wording in 2.2.0 if accepted before T012 starts, else its own later bump (FR-057) | A `?variant=arrived` query on `/payload` (one action; the filter would read the query); or no, and offer a list of enriched application ids |
 | D-LAG-VALUE | Lag bound | 110 s: transaction + 2 × statement + idle-in-transaction, all enforced by PostgreSQL (FR-017) | 91 s, relying on the JDBC client cancel arriving within 1 s |
 | D-OVERRUN | Add the intake-side overrun counter, touching spec 001 code? | Yes (FR-020, T008) | No counter; the lag assumption stays unmonitored |
 | D-COURT-FAILED | Should a court-filtered pull also return `FAILED` shares (court unknown)? | Yes, with the unknown-row obligation (FR-012, FR-023) | No: a court-filtered consumer can then miss a share the sweep fixes later |
@@ -344,8 +355,8 @@ Each is applied with its default in every 003 document and marked "pending Sachi
 | D-READONLY-PODS | Will any deployment run read-only pods, or pods with differing intake timeouts? | No; rollout order documented (FR-021) | Writers publish their effective bound in a row that readers check |
 | D-PG-VERSION / HA | Production PostgreSQL version and synchronous replication | Unknown; not blocking. Noted in research R4 | PostgreSQL 17 or later: add `transaction_timeout` and use it in the bound |
 | D-AUTHZ-REQUIRED | Refuse to start with authorisation off outside the test profile? | Yes (FR-050) | Allow it (an environment could then serve unprotected) |
-| D-VII-AUDIT-WORDING | Constitution VII audit wording | *Every request that reaches an endpoint is audited; refusals before authorisation are counted* (FR-051, FR-057) | Keep "every request is audited" and audit refusals some other way |
-| D-REFUSALS-UNAUDITED | Accept that refusals before authorisation are counted, not audited | Yes (FR-051) | Audit them (needs a filter of our own before authorisation) |
+| D-VII-AUDIT-WORDING | Constitution VII audit wording | *Every request that reaches an endpoint is audited; a request refused by a filter or by authorisation is counted* (FR-051, FR-057). The rulings' text said "refusals before authorisation"; reworded because the `415` and the `403` are not refused before authorisation | Keep "every request is audited" and audit refusals some other way |
+| D-REFUSALS-UNAUDITED | Accept that refused requests (`401`, `403`, `404`, `405`, `415`) are counted, not audited | Yes (FR-051) | Audit them (needs a filter of our own before authorisation) |
 | D-YOUTH-RAISE (spec 004) | 004's rerun: `FALSE`→`TRUE` held; `NULL`→`FALSE`/`TRUE` written | 003's contract states that a rerun can rewrite `dayYouthSeen` and key details in place with no new `storedSeq` (FR-025) | Decided in 004; 003's wording follows |
 
 ## Assumptions

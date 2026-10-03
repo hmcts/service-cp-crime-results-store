@@ -74,8 +74,9 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 ### 2.4 Audit
 
 Every request that reaches an endpoint is audited by the estate's audit library, with your user id and
-the action. Refusals before authorisation (`401`, `403`, and the store's `404 route_not_found`,
-`405`, `415`) are counted, not audited (pending Sachin). The payload endpoints' audit record holds a
+the action. A request refused by the store's filters (`404 route_not_found` and `405` before
+authorisation, `415` after it) or by authorisation (`401`, `403`) never reaches the audit filter: it is
+counted, not audited (pending Sachin). The payload endpoints' audit record holds a
 fixed marker in place of the payload body (D-AUDIT, pending Sachin; the default).
 
 ---
@@ -379,7 +380,8 @@ Every `4xx` and `5xx` from the store has this body and nothing else:
 
 `title` is the HTTP reason phrase. The body never holds your input, a path, an exception message or any
 payload content. `Content-Type` is `application/problem+json`, except `401` and `403`, which come as
-`application/json`. Branch on `status` and `reason`.
+`application/json`. A `401` or `403` has this same JSON body whatever `Accept` you send, `text/html`
+included: there is no HTML error page. Branch on `status` and `reason`.
 
 | Status | `reason` | When | Retry? |
 |---|---|---|---|

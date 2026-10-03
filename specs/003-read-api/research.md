@@ -20,13 +20,19 @@ and 002; and this repository's code as read for this document (`V3__create_share
 
 ## R1. Layering and wiring
 
-**Decision.** As `design_rules.md` sets out:
+**Decision.** As `.claude/rules/design_rules.md` sets out:
 
 - `api/` holds hand-written controllers that parse parameters, call `ShareReadService` once and map the
   answer to `*Response` records or a bounded problem body; the exception advice; the bounded `/error`
   attributes; the instant format.
 - `application/` holds `ShareReadService` and the ports `ShareQueries`, `ReadObserver` and
-  `RefusalObserver`. Nothing there imports JDBC or HTTP types.
+  `RefusalObserver`. Nothing there imports JDBC or HTTP types. One accepted exception to the direction
+  of dependencies: `BadParameterException` and `NotFoundException` carry an `api/ProblemReason`, so
+  `application/` imports one enum from `api/` (it holds each status as a plain `int`, so no HTTP type
+  comes with it). Kept on purpose: `ProblemReason` is the single table
+  from reason code to status, and a separate code-only enum in `domain/` would be a second list that
+  must stay in step with it. The design rules forbid only JMS, JDBC and HTTP-client imports in
+  `application/`, so no rule is broken.
 - `domain/` holds the read types (`ShareView`, `DayYouthFilter`, `SearchCursor`, `StoredPayload`,
   `PayloadForm`) and the bounded tag enums (`ReadEndpoint`, `ReadOutcome`, `RouteRefusal`).
 - `persistence/` gains `JdbcShareQueries`, read-only, separate from `JdbcShareStore`, autocommit, over
@@ -396,8 +402,15 @@ response event for an empty body, so a `304` has a request event only; the metri
   exception class with `shareId` in MDC when known, never the message.
 - `/error` (where the authorisation library's `sendError` for `401` and `403` lands):
   `BoundedErrorAttributes` replaces Boot's attributes with the four fields (reason from the status:
-  `unauthenticated`, `forbidden`). `server.error.whitelabel.enabled=false`; a test sends
-  `Accept: text/html` too, because `BasicErrorController.errorHtml` renders a different model.
+  `401` `unauthenticated`, `403` `forbidden`, any other `4xx` `bad_request`, any `5xx`
+  `internal_error`). Boot's `BasicErrorController` has a second handler, `errorHtml`, for
+  `Accept: text/html`; with the white-label page off it resolves no view, and the answer would be
+  undefined. So the service registers its own `api/BoundedErrorController` (an `ErrorController` bean;
+  Boot's backs off): one handler at `/error` for every media type, which writes the four fields as
+  `application/json`. A `text/html` caller gets the same JSON body. The controller also counts a `401`
+  as `unauthenticated` and a `403` as `forbidden` in `resultsstore.read.refused`, because the error
+  dispatch is the one place this service sees them. `server.error.whitelabel.enabled=false` stays as a
+  second guard; a test sends `Accept: text/html`, `application/json` and no `Accept`.
 - Statuses fit YOT's `RetryPolicy`: it retries `5xx`, `408` and `429` and honours `Retry-After`; other
   `4xx` are permanent; `404` means "not held".
 
@@ -425,9 +438,13 @@ The `AuditFilter` and `AuditPayloadGenerationService` beans are `@ConditionalOnM
 
 **Not audited:** `401` and `403` (the library's `sendError` ends the chain before the audit filter, and
 `OncePerRequestFilter` skips the error dispatch; expected, pinned by `AuditIT`), and our filters' `404`,
-`405` and `415`. They are counted (`resultsstore.read.refused`). Constitution VII's "every request is
-audited" becomes *every request that reaches an endpoint is audited; refusals before authorisation are
-counted* (D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, pending Sachin).
+`405` (refused before authorisation) and `415` (refused after authorisation, before audit). None of
+them reaches the audit filter. They are counted (`resultsstore.read.refused`: our filters count their
+own; `BoundedErrorController` counts `401` and `403`). Constitution VII's "every request is audited"
+becomes *every request that reaches an endpoint is audited; a request refused by a filter or by
+authorisation is counted* (D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, pending Sachin). The rulings'
+text said "refusals before authorisation are counted"; it is reworded because a `415` and a `403` are
+not refused before authorisation.
 
 **D-AUDIT (pending Sachin).**
 
@@ -530,7 +547,8 @@ no 003 controller does.
 quoted `payload_sha256`. That equals the SHA-256 of the served bytes because `PayloadChecksum` hashes the
 UTF-8 text and the text is served as UTF-8; the test asserts the equality. Same identity headers, with
 `Results-Store-Payload-Form: arrived-text`. Audit follows the D-AUDIT choice (option 4 covers this route
-too). Constitution II gains the endpoint in 2.2.0.
+too). Constitution II gains the endpoint in 2.2.0 if D-RAW is accepted before T012
+starts, otherwise in T013's own later amendment (R20).
 
 **Alternatives considered.** `?variant=arrived` on `/payload`: one action for two kinds of data, and the
 action filter would have to read the query string. A list of enriched application ids instead: probation
@@ -550,12 +568,15 @@ would rebuild the arrived text itself.
   rule admits the "System Users" and "Second Line Support" groups and matches its route's method and
   path.*
 - "Every request is audited by `cp-audit-filter-springboot`, with the library's default settings."
-  becomes: *Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; refusals
-  before authorisation are counted. The payload endpoints' response body is replaced in the audit event
+  becomes: *Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; a
+  request refused by a filter or by authorisation is counted. The payload endpoints' response body is replaced in the audit event
   by a fixed marker.* (The last sentence only under D-AUDIT option 4.)
 
 Principle II, only if D-RAW: "The read API serves the working copy, and the text when the working copy
 is empty." gains *, and, on its own endpoint, the text as it arrived, with its checksum as the `ETag`*.
+This clause is in 2.2.0 only if D-RAW is accepted by the time T012 starts; T013 then touches no
+constitution. If D-RAW is accepted later, T013 adds the clause as its own amendment with its own MINOR
+bump (the constitution asks for one bump per amendment), so 2.2.0 is never edited twice.
 
 The Sync Impact Report records the change; spec 004 bumps to 2.3.0 for its own Principle I change.
 

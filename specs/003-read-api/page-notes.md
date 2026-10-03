@@ -77,8 +77,8 @@ from path and method for **every** request and refuses a path it cannot map … 
 >   before authentication; a wrong method gets `405`.
 > - One allow rule per action, `deny-when-no-rules`. Every read-API rule admits "System Users" and
 >   "Second Line Support", and also matches the route's method and path.
-> - Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; refusals before
->   authorisation are counted (pending Sachin). The payload endpoints' audit record holds a fixed marker
+> - Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; a request refused
+>   by a filter or by authorisation is counted (pending Sachin). The payload endpoints' audit record holds a fixed marker
 >   instead of the payload (D-AUDIT, pending Sachin).
 
 ---

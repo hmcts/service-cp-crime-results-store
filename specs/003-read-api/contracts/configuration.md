@@ -11,7 +11,7 @@ checked at start; a bad value stops the service, proved by `ConfigurationValidat
 | Property | Default | Environment variable | Rule |
 |---|---|---|---|
 | `resultsstore.read.pull.visibility-lag` | none set: derived as `transaction-timeout` + 2 × `statement-timeout` + `idle-in-transaction-timeout` of `resultsstore.intake.store.*` (110 s at their defaults) | `RESULTSSTORE_READ_PULL_VISIBILITYLAG` | ≥ that sum; ≤ 10 min (D-LAG-VALUE, pending Sachin) |
-| `resultsstore.read.statement-timeout` | `5s` | `RESULTSSTORE_READ_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (`spring.datasource.hikari.data-source-properties.socketTimeout`, 30 s) when one is set |
+| `resultsstore.read.statement-timeout` | `5s` | `RESULTSSTORE_READ_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (`spring.datasource.hikari.data-source-properties.socketTimeout`, 30 s) when one is set. Despite the name, this is the read `JdbcTemplate`'s JDBC query timeout: a client-side cancel, backed by the socket timeout. It is not PostgreSQL's server-side `statement_timeout` that intake sets. That is acceptable for reads: a read blocks no writer, and a late cancel only delays one answer (spec FR-045) |
 
 `application.yaml`:
 
@@ -63,7 +63,7 @@ profile is not active: `IllegalStateException` naming `authz.http.enabled`. The 
 
 | Property | Value | Why |
 |---|---|---|
-| `server.error.whitelabel.enabled` | `false` | the white-label page would render a model other than the four bounded fields (research R13) |
+| `server.error.whitelabel.enabled` | `false` | the white-label page would render a model other than the four bounded fields. The service's own `BoundedErrorController` replaces Boot's error controller anyway; the setting stays off as a second guard (research R13) |
 | `spring.mvc.problemdetails.enabled` | stays `false` (not set) | Boot's handler would write `detail` and `instance` (research R13) |
 | `server.compression.enabled` | stays `false` (not set) | a strong `ETag` is per representation (research R10) |
 
@@ -72,7 +72,7 @@ profile is not active: `IllegalStateException` naming `authz.http.enabled`. The 
 | Change | Why |
 |---|---|
 | header comment corrected: context tests now need the Testcontainers database (T003) | the read beans are unconditional |
-| no new property | `authz.http.enabled`, `audit.http.enabled` and `cp.audit.enabled` stay `false`; `ReadApiIT` and `AuditIT` switch them on with `@DynamicPropertySource` |
+| no new property | `authz.http.enabled`, `audit.http.enabled` and `cp.audit.enabled` stay `false`. The tests that need them switch them on for themselves (test properties or `@DynamicPropertySource`): `AuthzIT` and `FilterOrderIT` (T003), `ReadApiIT` and `AuditIT` (T011) |
 
 ## Compose (`docker-compose.yml`, app service; T012)
 

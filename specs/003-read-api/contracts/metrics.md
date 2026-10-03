@@ -20,13 +20,26 @@ line points here, and this file stays as the record of the change.
   commit has returned.
 - `outcome=not_modified` exists for `payload` and `arrived_payload` only; every other
   (endpoint, outcome) pair is registered.
+- **Outcome from status.** Every status the controllers or the advice can send maps to one outcome:
+
+  | Status | `outcome` |
+  |---|---|
+  | `200` | `ok` |
+  | `304` | `not_modified` |
+  | `404` (any reason, `route_not_found` from the advice included) | `not_found` |
+  | any other `4xx` (`400`, `405`, `406`, `415` from the advice) | `bad_request` |
+  | `503` | `unavailable` |
+  | any other `5xx` | `failed` |
+
+  A request with no matched route (no `ApiRoute` request attribute) is not recorded here; the action
+  filter has already refused it and counted it in `read.refused`.
 
 ## Counters
 
 | Name | Tags (allowed values) | Moves when | FR |
 |---|---|---|---|
-| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (only if D-RAW); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status). `bad_request` = any `400`; `not_found` = `share_not_found` or `hearing_day_not_found`; `unavailable` = `503 store_unavailable`; `failed` = `500 internal_error` | FR-055 |
-| `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` | this service's filters refuse a request before authorisation or audit. These requests are not audited, so this counter is their only record | FR-051, FR-055 |
+| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (only if D-RAW); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above) | FR-055 |
+| `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter) or by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`). These requests are not audited, so this counter is their only record in this service | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN, pending Sachin) | FR-020 |
 
 ## Timers
@@ -44,8 +57,6 @@ line points here, and this file stays as the record of the change.
 
 ## Not counted by 003
 
-- `401` and `403`: the authorisation library refuses them before any of this service's code. Its own
-  logs and the gateway's are their record.
 - Reconciliation findings, dead letters and subscription health: spec 004 and Azure Monitor.
 
 ## Alert input
@@ -53,7 +64,8 @@ line points here, and this file stays as the record of the change.
 - `resultsstore.intake.visibility.overrun` increasing at all: page the owner; consumers may have missed a
   share; run consumer reconciliation (contracts/read-api.md §5.6).
 - `resultsstore.read.requests{outcome=unavailable}` rising: the database is failing reads.
-- `resultsstore.read.refused` rising: a consumer is calling a wrong path or method.
+- `resultsstore.read.refused` rising: a consumer is calling a wrong path or method, or without an
+  admitted identity (`unauthenticated`, `forbidden`).
 
 The alert rules themselves are an Azure Monitor task outside this repository.
 

@@ -65,12 +65,12 @@ Constitution 2.1.0. T012 amends it to 2.2.0 (MINOR; research R20); the check bel
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|
 | I. Every share is an immutable version | 003 writes nothing to a share. V5's trigger sets `stored_at` **at insert** only (`BEFORE INSERT`); `hearing_share_guard` still refuses any update of it. No new updatable column | PASS |
-| II. The payload is the source of truth | `/payload` serves the working copy, and the text when the working copy is empty, exactly as Principle II 2.1.0 says; `ETag` over the bytes served (002 FR-041). Phase D adds the arrived text on its own endpoint: **wording change in T013/T012 (part of 2.2.0)** | PASS (wording change for D-RAW) |
+| II. The payload is the source of truth | `/payload` serves the working copy, and the text when the working copy is empty, exactly as Principle II 2.1.0 says; `ETag` over the bytes served (002 FR-041). Phase D adds the arrived text on its own endpoint. **Wording change gated on D-RAW**: if D-RAW is accepted when T012 starts, T012 writes the clause in 2.2.0 and T013 touches no constitution; if it is accepted later, T013 makes its own amendment with its own MINOR bump (spec FR-057) | PASS (wording change for D-RAW) |
 | III. Consumers search indexed columns | Pull, search, one share and the day's versions read `hearing_share` only, on V5 and V3 indexes; the payload query is the only one naming `hearing_share_payload`. Proved on the constants (`JdbcShareQueriesTest`) and on the plans (`ReadQueriesPlanIT`) | PASS |
 | IV. No business rules | The store exposes the columns as stored and filters only as asked. `dayYouthSeen=notFalse` keeps unknown days visible (001's rule); `courtCentreId` includes `FAILED` rows because their court is unknown, not by a rule about the case. `versionNumber` is a position, not a derived fact about the case | PASS |
 | V. Never refuse to store | Intake unchanged; the overrun counter only observes | PASS |
 | VI. Idempotent, transactional intake | The store transaction is unchanged; the overrun measure reads a clock before the insert and after the commit, outside any decision | PASS |
-| VII. Default-deny authorisation | One allow rule per action, `deny-when-no-rules` true, no rule allows everything; action derived from method and path for every request; unknown paths refused; vendor media types neutralised; rules also match method and path. **Wording change in T012 (2.2.0)**: the derived-action sentence made stricter; read rules name "Second Line Support" beside "System Users" (VII already says support staff read payloads through the read API); *every request that reaches an endpoint is audited; refusals before authorisation are counted*; under D-AUDIT option 4, the payload body replaced by a marker in the audit event. Until then the deviation is recorded in Complexity Tracking | PASS with the recorded deviation |
+| VII. Default-deny authorisation | One allow rule per action, `deny-when-no-rules` true, no rule allows everything; action derived from method and path for every request; unknown paths refused; vendor media types neutralised; rules also match method and path. **Wording change in T012 (2.2.0)**: the derived-action sentence made stricter; read rules name "Second Line Support" beside "System Users" (VII already says support staff read payloads through the read API); *every request that reaches an endpoint is audited; a request refused by a filter or by authorisation is counted*; under D-AUDIT option 4, the payload body replaced by a marker in the audit event. Until then the deviation is recorded in Complexity Tracking | PASS with the recorded deviation |
 | VIII. Observability through Azure Monitor | Read requests, refusals, durations, page and payload sizes, and the overrun counter, every one registered at start; refusals that are not audited are counted | PASS |
 | IX. Artemis only for legacy integration | Nothing published by the store. The audit library publishes to the estate's audit topic, as it already would | PASS |
 | X. Test-driven development | Every task names its tests first; red run quoted before green (phase gate) | PASS |
@@ -122,7 +122,8 @@ imports a JMS, JDBC or HTTP type.
 src/main/java/uk/gov/hmcts/cp/resultsstore/
 ├── domain/
 │   ├── + ReadEndpoint.java        # pull, search, share, payload, day_versions (+ arrived_payload, phase D)
-│   ├── + RouteRefusal.java        # route_not_found, method_not_allowed, unsupported_content_type
+│   ├── + RouteRefusal.java        # route_not_found, method_not_allowed, unsupported_content_type,
+│   │                              #   unauthenticated, forbidden
 │   ├── + ReadOutcome.java         # ok, not_modified, bad_request, not_found, unavailable, failed
 │   ├── + ShareView.java           # the item's values; keyDetails null when FAILED
 │   ├── + DayYouthFilter.java      # ANY, NOT_FALSE, TRUE, FALSE; fromValue
@@ -153,6 +154,7 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 ├── api/
 │   ├── + ProblemReason.java       # reason → status and code (single table)
 │   ├── + BoundedErrorAttributes.java
+│   ├── + BoundedErrorController.java   # /error for every media type; counts 401 and 403
 │   ├── + InstantFormat.java       # six fraction digits, UTC
 │   ├── + SharesController.java, SharePayloadController.java, HearingDaySharesController.java
 │   ├── + ShareSummaryResponse.java, KeyDetailsResponse.java, PullPageResponse.java,
@@ -184,7 +186,7 @@ scripts/container-smoke.sh                  # ~ HTTP checks (T012)
 src/test/java/uk/gov/hmcts/cp/resultsstore/
 ├── acl/          ~ ResultsStoreRulesTest
 ├── api/          + OpenApiDocumentTest, OpenApiContractTest, ProblemReasonTest, BoundedErrorAttributesTest,
-│                   InstantFormatTest, ShareParametersTest, SharesControllerTest, SharePayloadControllerTest,
+│                   BoundedErrorControllerTest, InstantFormatTest, ShareParametersTest, SharesControllerTest, SharePayloadControllerTest,
 │                   HearingDaySharesControllerTest, ReadApiExceptionHandlerTest, ReadMetricsInterceptorTest
 ├── filters/      + ApiRouteTest, ActionRequestWrapperTest, UnsupportedContentTypeFilterTest,
 │                   PayloadBodyFreeAuditPayloadGenerationServiceTest; ~ ActionHeaderFilterTest
@@ -206,7 +208,8 @@ measures it. `ApiRoute` is the single source for the filter, `OpenApiContractTes
 
 ## Phase plan
 
-Four phase-gate phases, exactly as the rulings (B11). Each task is test first; each phase is green on its
+Four phase-gate phases, exactly as the rulings (B11). The *Covers* column below is a summary; the
+*Covers* lines in tasks.md are the full list and win where the two differ. Each task is test first; each phase is green on its
 own before the next starts. Phase B needs the route table and refusal port of phase A; phase C needs the
 schema, ports and service of phase B; phase D needs everything and runs only if D-RAW is accepted.
 
@@ -216,7 +219,7 @@ schema, ports and service of phase B; phase D needs everything and runs only if 
 |---|---|---|---|
 | T001 | `ResultsStoreRulesTest` (rewritten): each read action allowed for "System Users" and for "Second Line Support"; refused for a caller in neither; refused with the right name and the wrong method or path; unknown action refused; exactly one rule per action. `OpenApiDocumentTest`: parses; paths exactly the `ApiRoute` templates; path parameters declared; problem body on every `4xx`/`5xx`; payload headers declared; the audit glob resolves exactly one document. `ApiRouteTest`: templates match their samples and nothing Spring would not route; pull and search told apart by `storedAfterSeq` | `results-store-openapi.yaml`, `results-store-rules.drl`, `ApiRoute`, `ReadEndpoint`, `RouteRefusal` | FR-001, FR-046, FR-049, FR-053 |
 | T002 | `ActionHeaderFilterTest` (rewritten), `ActionRequestWrapperTest`: derived action whatever was sent; vendor `Content-Type`/`Accept` neutralised; `404`/`405` refusals with no path echo; actuator and `/error` pass with `CPP-ACTION` removed; every refusal counted through a recording `RefusalObserver` | `ActionHeaderFilter` (no longer `@Component`), `ActionRequestWrapper`, `RefusalWriter`, `ProblemReason`, `RefusalObserver` | FR-047, FR-048 |
-| T003 | `UnsupportedContentTypeFilterTest`, `BoundedErrorAttributesTest` (also `Accept: text/html`), `ProblemReasonTest`, `MicrometerRefusalObserverTest`, `ApiWebConfigTest` (authz required), `FilterOrderIT`; `AuthzIT` and `ActuatorIntegrationTest` moved onto Postgres | `UnsupportedContentTypeFilter`, `BoundedErrorAttributes`, `ApiWebConfig`, `MicrometerRefusalObserver`, `application.yaml`, `application-test.yaml` comment | FR-042, FR-043, FR-048, FR-050 |
+| T003 | `UnsupportedContentTypeFilterTest`, `BoundedErrorAttributesTest`, `BoundedErrorControllerTest` (also `Accept: text/html`; `401`/`403` counted), `ProblemReasonTest`, `MicrometerRefusalObserverTest`, `ApiWebConfigTest` (authz required), `FilterOrderIT`; `AuthzIT` and `ActuatorIntegrationTest` moved onto Postgres | `UnsupportedContentTypeFilter`, `BoundedErrorAttributes`, `BoundedErrorController`, `ApiWebConfig`, `MicrometerRefusalObserver`, `application.yaml`, `application-test.yaml` comment | FR-042, FR-043, FR-048, FR-050 |
 
 ### Phase B: data and application
 
@@ -260,8 +263,8 @@ text in assertion or log output; one commit per task, red run quoted before gree
 4. Audit body capture (D-AUDIT): under options 1 or 2 alone, payloads with youth and special-category
    data go to the audit topic. Option 4 relies on the library's public `generatePayload` signature and
    its `contextPath` form, pinned by `AuditIT`.
-5. Refusals before authorisation are not audited; constitution VII's current wording needs the 2.2.0
-   change (D-VII-AUDIT-WORDING).
+5. Refused requests (`401`, `403`, `404`, `405`, `415`) are not audited, only counted; constitution
+   VII's current wording needs the 2.2.0 change (D-VII-AUDIT-WORDING).
 6. `jsonb::text` is not documented as byte-stable across PostgreSQL major versions; an upgrade can change
    `ETag`s for unchanged content (D-JSONB-PROMISE).
 7. A proxy that compresses or re-encodes `/payload` would break the strong-`ETag` promise; proxies are
@@ -283,4 +286,4 @@ text in assertion or log output; one commit per task, red run quoted before gree
 
 | Deviation | Why needed | Simpler alternative rejected because |
 |---|---|---|
-| Constitution VII says "every request is audited … with the library's default settings"; 003 leaves refusals before authorisation unaudited (counted instead) and, under D-AUDIT option 4, replaces the payload body in the audit event | The library cannot audit a request its own authorisation filter refused before the audit filter runs, and our `404`/`405`/`415` refusals happen before it too. Copying whole payloads (youth and special-category data) into audit events moves them outside this service's retention | Auditing refusals needs a filter of our own before authorisation that duplicates the library's event; keeping the default body copy is option 1, left to Sachin. Resolved by the 2.2.0 wording in T012 (D-VII-AUDIT-WORDING, D-AUDIT) |
+| Constitution VII says "every request is audited … with the library's default settings"; 003 leaves refused requests (`401`, `403` from authorisation; `404`, `405`, `415` from its own filters) unaudited (counted instead) and, under D-AUDIT option 4, replaces the payload body in the audit event | The library cannot audit a request its own authorisation filter refused before the audit filter runs, and our `404`/`405`/`415` refusals happen before it too. Reviewers of T011 (which lands the departure) and T012 (which ends it) read this row as the written justification the constitution asks for. Copying whole payloads (youth and special-category data) into audit events moves them outside this service's retention | Auditing refusals needs a filter of our own before authorisation that duplicates the library's event; keeping the default body copy is option 1, left to Sachin. Resolved by the 2.2.0 wording in T012 (D-VII-AUDIT-WORDING, D-AUDIT) |
