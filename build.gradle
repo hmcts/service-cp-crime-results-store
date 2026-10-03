@@ -41,6 +41,10 @@ dependencies {
 
   // Spring boot core
   implementation 'org.springframework.boot:spring-boot-starter-web'
+
+  // Transport for the progression lookup (spec 002 FR-009): automatic retries and redirects can be
+  // switched off per client, which HttpURLConnection cannot do. Version via the Boot BOM.
+  implementation 'org.apache.httpcomponents.client5:httpclient5'
   testImplementation "org.springframework.boot:spring-boot-starter-webmvc-test"
   testImplementation('org.springframework.boot:spring-boot-starter-test') {
     exclude group: 'junit', module: 'junit'

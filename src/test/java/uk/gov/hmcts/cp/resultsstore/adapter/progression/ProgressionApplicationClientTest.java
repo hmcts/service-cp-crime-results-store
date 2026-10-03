@@ -57,7 +57,7 @@ class ProgressionApplicationClientTest {
     /** Planted in every failing body: it must never reach a log line or an exception message. */
     private static final String MARKER = "BODY-MARKER-7f3c";
 
-    /** Headers the JDK's HttpURLConnection adds by itself; anything else was set by the store. */
+    /** Headers the transport adds by itself; anything else was set by the store. */
     private static final Set<String> TRANSPORT_HEADERS = Set.of("host", "user-agent", "connection");
 
     private static final String FINALISED = """
@@ -258,7 +258,7 @@ class ProgressionApplicationClientTest {
 
             assertThatThrownBy(() -> closed.find(UUID.randomUUID())).satisfies(thrown -> assertThat(
                     failed(thrown, IntakeFailureCause.PROGRESSION_UNREACHABLE).getFailedClassName())
-                    .contains("ConnectException"));
+                    .hasValueSatisfying(name -> assertThat(name).endsWith("ConnectException")));
         }
 
         @Test
@@ -271,9 +271,13 @@ class ProgressionApplicationClientTest {
         }
 
         @Test
-        void connection_reset_before_the_status_line_should_be_unreachable() {
-            assertFailsWith(answered(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER)),
-                    IntakeFailureCause.PROGRESSION_UNREACHABLE);
+        void connection_reset_before_the_status_line_should_be_unreachable_and_sent_once() {
+            final UUID applicationId = answered(aResponse().withFault(Fault.CONNECTION_RESET_BY_PEER));
+
+            assertFailsWith(applicationId, IntakeFailureCause.PROGRESSION_UNREACHABLE);
+
+            // No transport retry either: HttpURLConnection silently resends a GET after such a reset.
+            assertThat(PROGRESSION.requestsFor(applicationId)).hasSize(1);
         }
 
         @Test

@@ -173,6 +173,18 @@ contracts/progression-lookup.md against an in-process WireMock.
     for a wrong-shaped 200. Failures log one WARN line (application id, cause tag, that label); an
     answered lookup logs at DEBUG. The body is read whole through the deadline guard before it is
     parsed, so a deadline or socket timeout is never mistaken for a Jackson failure.
+  - Follow-up from gate round 1 (no transport retry): `HttpURLConnection` resends a `GET` once when
+    the connection fails before the status line, and no setting turns that off, so FR-009's one request
+    per lookup did not hold. The factory now builds an Apache HttpClient 5 (`httpclient5`, version from
+    the Boot BOM) with automatic retries, redirects, content compression, cookies and protocol upgrades
+    off and no connection reuse; `NoRedirectRequestFactoryTest` pins the connect and socket timeouts on
+    its `ConnectionConfig` with distinct values (3 s, 7 s).
+    RED: `ProgressionApplicationClientTest` →
+    `connection_reset_before_the_status_line_should_be_unreachable_and_sent_once() FAILED`
+    `Expected size: 1 but was: 2`.
+    GREEN: `ProgressionApplicationClientTest` 54, `NoRedirectRequestFactoryTest` 1, `ProgressionConfigTest` 8,
+    0 failures (the closed-port row now reads `HttpHostConnectException`, a `ConnectException`);
+    `pmdMain pmdTest` clean.
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.
