@@ -327,6 +327,11 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     `%zz`, `%5C`, bare `%`, `|`, `{`, `|` in the query; each `400`, `application/problem+json`, the four
     fields, `read.refused` unmoved), `ProblemErrorReportValveTest` 12, `TomcatEdgeCustomizerTest` 3,
     `BoundedErrorAttributesTest` 10, `BoundedErrorControllerTest` 20, `AuthzIT` 23, 0 failures.
+  - Close-out, confirmed by the orchestrator (no code change): the allow rules' path regex has one segment
+    (`[^/]+`) per template variable, so a malformed id reaches the endpoint as `400`, never a `403` (T001); a
+    raw `;` in a path is refused `404 route_not_found` by `ApiRoute`, now said in contracts/read-api.md §2.2;
+    `BoundedErrorController` as a hand-mapped `Controller` behind its own `SimpleUrlHandlerMapping` stays;
+    `ActuatorIntegrationTest` keeps its name.
 
 ---
 

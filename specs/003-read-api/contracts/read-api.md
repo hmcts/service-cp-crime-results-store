@@ -59,7 +59,8 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 - Ids are canonical UUIDs (`8-4-4-4-12`, hex). Dates are `yyyy-MM-dd`. Instants you send (search's
   `sharedFrom` and `sharedTo`) are ISO-8601 UTC with `Z` and at most six fraction digits, for example
   `2026-10-03T18:00:00Z` or `2026-10-03T18:00:00.000000Z`.
-- A path the store does not serve → `404 route_not_found`, before authentication. A served path with
+- A path the store does not serve → `404 route_not_found`, before authentication. A path with a `;` in
+  any segment (a `;parameter`) is not served, so it is `404 route_not_found` too. A served path with
   another method, `HEAD` and `OPTIONS` included → `405 method_not_allowed` with an `Allow` header.
 
 ### 2.3 Responses
