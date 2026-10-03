@@ -556,6 +556,15 @@ US1–US4 and US6 on Testcontainers Postgres.
     over-cautious substring check R8 allowed. The `set_config` timeouts land with T010 (tasks.md puts them
     there, so `StoreTimeoutIT` can go red first). `support/SampleShares` (listed under T011) is added here,
     as the store ITs need it.
+  - Gate round 1 (parsed copy fail-safe): `NulSafety` catches only the escapes; JSON the parser takes but
+    `jsonb` refuses for another reason (a number beyond `numeric`'s range, e.g. `1e1000000`) failed the
+    whole transaction with SQLSTATE 22003, left the receipt `RECEIVED` and would end dead-lettered. RED:
+    `payload_whose_number_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy`, `./gradlew test
+    --tests '*JdbcShareStoreIT'`: 6 completed, 2 failed (failFast), `[1] number = "1e1000000"`:
+    `RetryableIntakeException: intake failed at STORE: DATABASE`. GREEN: the payload row with its parsed
+    copy is written under a savepoint; a data exception (SQLSTATE class 22) rolls back to the savepoint and
+    the row is written with `payload_json` NULL, reported as `parsedCopySkipped`; any other failure still
+    fails the transaction. `JdbcShareStoreIT` 13 tests, 0 failures.
 
 - [X] T009 [US4] [US1] Test first: `ShareChainIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChainIT.java, `YouthSeenIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthSeenIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChain.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthFlags.java, called from src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: first share of a day is latest with no predecessor; a newer share clears the old latest before it is set and points at it; T1, T3 then T2 → chain T1 ← T2 ← T3, T3 still latest, T2 `arrived_out_of_order`; `share_count` + 1 per stored share; youth three values: TRUE sticky, NULL if any share NULL, else FALSE; `day_youth_seen` set on every share of the day when the day flag changes.

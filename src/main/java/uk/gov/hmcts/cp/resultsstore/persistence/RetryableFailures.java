@@ -32,8 +32,13 @@ public final class RetryableFailures {
         return new RetryableIntakeException(stage, cause, failure);
     }
 
-    /** The SQLSTATE of the first {@link SQLException} in the cause chain that has one. */
-    private static String sqlState(final Throwable failure) {
+    /**
+     * The SQLSTATE of the first {@link SQLException} in the cause chain that has one.
+     *
+     * @param failure the failure
+     * @return the SQLSTATE, or {@code null} when the chain carries none
+     */
+    static String sqlState(final Throwable failure) {
         String sqlState = null;
         Throwable current = failure;
         for (int depth = 0; sqlState == null && current != null && depth < MAX_DEPTH; depth++) {

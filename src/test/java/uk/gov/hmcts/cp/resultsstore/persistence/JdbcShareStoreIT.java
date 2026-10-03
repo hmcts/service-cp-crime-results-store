@@ -174,6 +174,27 @@ class JdbcShareStoreIT {
         assertThat(share(request.shareId())).containsEntry("projection_status", "OK");
     }
 
+    /** JSON the parser takes but {@code jsonb} refuses past the escape check: numbers out of its range. */
+    @ParameterizedTest
+    @ValueSource(strings = {"1e1000000", "-1e1000000", "1e-1000000"})
+    void payload_whose_number_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy(final String number) {
+        final String text = SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME)
+                .replace("\"isReshare\":false", "\"isReshare\":false,\"big\":" + number);
+        assertThat(NulSafety.isJsonbSafe(text)).isTrue();
+        final StoreRequest request = received("ID:1", text);
+
+        final StoreResult result = store.store(request);
+
+        assertThat(result).isInstanceOfSatisfying(Stored.class,
+                stored -> assertThat(stored.parsedCopySkipped()).isTrue());
+        assertThat(payload(request.shareId()))
+                .containsEntry("payload_text", text)
+                .containsEntry("parsed_matches", null);
+        assertThat(defendants(request.shareId())).hasSize(1);
+        assertThat(day()).containsEntry("latest_share_id", request.shareId()).containsEntry("share_count", 1);
+        assertThat(receipt("ID:1")).containsEntry("status", "STORED").containsEntry("share_id", request.shareId());
+    }
+
     @Test
     void payload_of_two_point_four_megabytes_should_be_stored_byte_for_byte() {
         final String note = "é€ abc ".repeat(240_000);

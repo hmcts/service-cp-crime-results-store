@@ -10,6 +10,7 @@ import java.util.UUID;
 import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.TransactionException;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionOperations;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
@@ -27,8 +28,11 @@ import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
  * <p>The transaction locks the hearing day (inserting its row for the day's first share), finds the
  * share's place in the day's chain, inserts the share with {@code ON CONFLICT DO NOTHING} on its
  * identity, then its payload and defendant rows, links it into the chain ({@link ShareChain}),
- * recomputes the day's youth flag ({@link YouthFlags}) and marks the receipt {@code STORED}. A conflict means the identity is already stored: the
- * receipt is marked {@code DUPLICATE} with the stored share's id, looked up by the identity (FR-012).
+ * recomputes the day's youth flag ({@link YouthFlags}) and marks the receipt {@code STORED}. A
+ * conflict means the identity is already stored: the receipt is marked {@code DUPLICATE} with the
+ * stored share's id, looked up by the identity (FR-012). The payload's parsed copy is written under a
+ * savepoint: when PostgreSQL refuses the {@code jsonb} conversion, the payload row is written without
+ * it and the skip is reported, so a payload {@code jsonb} cannot hold is still stored (FR-015).
  * The transaction first sets its own lock, statement and idle-in-transaction timeouts (FR-020). The
  * key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
@@ -87,6 +91,9 @@ public class JdbcShareStore implements ShareStore {
             VALUES (:shareId, :caseId, :defendantId, :masterDefendantId)
             """;
 
+    /** SQLSTATE class 22, data exception: {@code jsonb} refused the text (e.g. 22003, 22P05). */
+    private static final String DATA_EXCEPTION_CLASS = "22";
+
     private static final String SHARE_ID = "shareId";
 
     private static final String HEARING_ID = "hearingId";
@@ -135,27 +142,29 @@ public class JdbcShareStore implements ShareStore {
     @Override
     public StoreResult store(final StoreRequest request) {
         try {
-            return storeTransaction.execute(status -> storeLocked(request));
+            return storeTransaction.execute(status -> storeLocked(request, status));
         } catch (final DataAccessException | TransactionException failure) {
             throw RetryableFailures.classify(IntakeStage.STORE, failure);
         }
     }
 
-    private StoreResult storeLocked(final StoreRequest request) {
+    private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status) {
         final ShareIdentity identity = request.identity();
         setTimeouts();
         lockDay(identity);
-        final boolean jsonbSafe = NulSafety.isJsonbSafe(request.text());
         final ShareChain.Place place = chain.place(identity);
         final Optional<Instant> storedAt = insertShare(request, place);
         final StoreResult result;
         if (storedAt.isPresent()) {
-            insertPayload(request, jsonbSafe);
+            final boolean parsed = NulSafety.isJsonbSafe(request.text()) && insertPayloadParsed(request, status);
+            if (!parsed) {
+                insertPayload(request, null);
+            }
             insertDefendants(request);
             chain.join(identity, request.shareId(), place);
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
-            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !jsonbSafe);
+            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !parsed);
         } else {
             final UUID existing = existingShare(identity);
             settle(receipts.markDuplicate(request.messageId(), existing));
@@ -211,13 +220,45 @@ public class JdbcShareStore implements ShareStore {
                 .map(OffsetDateTime::toInstant);
     }
 
-    private void insertPayload(final StoreRequest request, final boolean jsonbSafe) {
+    /**
+     * Writes the payload row with its parsed copy, under a savepoint. A data exception (SQLSTATE class
+     * 22) can only be the {@code jsonb} conversion refusing the text, e.g. a number beyond its range:
+     * the savepoint is rolled back and the outcome is "not parsed", which the caller records. Any other
+     * failure is thrown and rolls the whole transaction back.
+     *
+     * @return whether the row was written with its parsed copy
+     */
+    private boolean insertPayloadParsed(final StoreRequest request, final TransactionStatus status) {
+        final Object savepoint = status.createSavepoint();
+        boolean parsed;
+        try {
+            insertPayload(request, request.text());
+            parsed = true;
+        } catch (final DataAccessException failure) {
+            if (!isDataException(failure)) {
+                throw failure;
+            }
+            status.rollbackToSavepoint(savepoint);
+            parsed = false;
+        }
+        if (parsed) {
+            status.releaseSavepoint(savepoint);
+        }
+        return parsed;
+    }
+
+    private void insertPayload(final StoreRequest request, final String parsedCopy) {
         jdbc.sql(INSERT_PAYLOAD)
                 .param(SHARE_ID, request.shareId())
                 .param("text", request.text())
                 .param("textBytes", request.text().getBytes(StandardCharsets.UTF_8).length)
-                .param("parsedCopy", jsonbSafe ? request.text() : null)
+                .param("parsedCopy", parsedCopy)
                 .update();
+    }
+
+    private static boolean isDataException(final DataAccessException failure) {
+        final String sqlState = RetryableFailures.sqlState(failure);
+        return sqlState != null && sqlState.startsWith(DATA_EXCEPTION_CLASS);
     }
 
     private void insertDefendants(final StoreRequest request) {
