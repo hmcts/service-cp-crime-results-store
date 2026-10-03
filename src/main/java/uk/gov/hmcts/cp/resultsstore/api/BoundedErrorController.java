@@ -73,7 +73,7 @@ public class BoundedErrorController implements ErrorController, Controller {
     }
 
     /** contracts/read-api.md §6: {@code 401} and {@code 403} as {@code application/json}, the rest as problem JSON. */
-    private static String mediaType(final int status) {
+    /* default */ static String mediaType(final int status) {
         return status == HttpServletResponse.SC_UNAUTHORIZED || status == HttpServletResponse.SC_FORBIDDEN
                 ? MediaType.APPLICATION_JSON_VALUE : MediaType.APPLICATION_PROBLEM_JSON_VALUE;
     }

@@ -31,8 +31,18 @@ public class BoundedErrorAttributes extends DefaultErrorAttributes {
 
     @Override
     public Map<String, Object> getErrorAttributes(final WebRequest webRequest, final ErrorAttributeOptions options) {
-        final int status = errorStatus(webRequest.getAttribute(RequestDispatcher.ERROR_STATUS_CODE,
-                RequestAttributes.SCOPE_REQUEST));
+        return problemBody(errorStatus(webRequest.getAttribute(RequestDispatcher.ERROR_STATUS_CODE,
+                RequestAttributes.SCOPE_REQUEST)));
+    }
+
+    /**
+     * The four fields for an error status: the title is the status's reason phrase, or the bounded reason's
+     * own for a status Spring does not know.
+     *
+     * @param status a {@code 4xx} or {@code 5xx} status
+     * @return {@code type}, {@code title}, {@code status} and {@code reason}, in that order
+     */
+    public static Map<String, Object> problemBody(final int status) {
         final ProblemReason reason = ProblemReason.forErrorStatus(status);
         final Map<String, Object> body = new LinkedHashMap<>();
         body.put("type", TYPE);
@@ -44,7 +54,7 @@ public class BoundedErrorAttributes extends DefaultErrorAttributes {
         return body;
     }
 
-    private static int errorStatus(final Object attribute) {
+    /* default */ static int errorStatus(final Object attribute) {
         final int status;
         if (attribute instanceof Integer code && code >= CLIENT_ERRORS_FROM && code <= ERRORS_TO) {
             status = code;

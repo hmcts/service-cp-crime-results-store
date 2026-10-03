@@ -27,6 +27,7 @@ import uk.gov.hmcts.cp.resultsstore.filters.UnsupportedContentTypeFilter;
  *       here, behind its own URL mapping, rather than a component-scanned {@code @Controller}, so
  *       {@code @WebMvcTest} slices do not pick it up.</li>
  *   <li>The refusal counter.</li>
+ *   <li>The connector policy and the host's problem error report ({@link TomcatEdgeCustomizer}).</li>
  *   <li>The authorisation-required check (FR-050, D-AUTHZ-REQUIRED): outside the {@code test} profile the
  *       service refuses to start unless {@code authz.http.enabled} is {@code true}, the value the library's
  *       own switch answers to (case ignored).</li>
@@ -85,6 +86,12 @@ public class ApiWebConfig {
         registration.setOrder(UNSUPPORTED_CONTENT_TYPE_ORDER);
         registration.addUrlPatterns(ALL_PATHS);
         return registration;
+    }
+
+    /** The connector policy and the host's problem error report. */
+    @Bean
+    public TomcatEdgeCustomizer tomcatEdgeCustomizer() {
+        return new TomcatEdgeCustomizer();
     }
 
     /** The bounded {@code /error} attributes; Boot's {@code DefaultErrorAttributes} backs off. */

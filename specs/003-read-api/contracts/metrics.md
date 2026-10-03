@@ -58,6 +58,9 @@ line points here, and this file stays as the record of the change.
 ## Not counted by 003
 
 - Reconciliation findings, dead letters and subscription health: spec 004 and Azure Monitor.
+- A request the HTTP connector rejects before it reaches the service (`400 bad_request` from the host's
+  error report, `api/ProblemErrorReportValve`, or a `TRACE` refused `405`): it carries no route and no
+  reason of the service's own, so `read.refused` does not move.
 
 ## Alert input
 

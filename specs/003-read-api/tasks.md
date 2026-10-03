@@ -301,6 +301,32 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     counted` (an exploratory run showed the shape first); `TRACE` dropped from
     `ActionHeaderFilterTest.routesAndOtherMethods`, since it never reaches the filter. GREEN: `AuthzIT` 23,
     `ActionHeaderFilterTest` 91, 0 failures.
+  - Close-out (orchestrator ruling 3, connector-level URI rejections): option (a) landed. A raw-socket probe
+    showed every rejection (`%2F`, `%00`, `%5C`, `%zz`, a bare `%`, and the parser's invalid-character
+    `400` for `|` and `{`) reaches the host's `ErrorReportValve` (Boot's, `showReport=false`), which wrote
+    Tomcat's HTML page: so the valve is the place to make them conform. Built: `api/ProblemErrorReportValve`
+    (extends `ErrorReportValve`; writes only for a `>= 400` response with nothing written and the error not
+    yet reported; the four fields from the status via `BoundedErrorAttributes.problemBody` and
+    `errorStatus`, now shared, with `BoundedErrorController.mediaType`; never the URI, the exception or
+    server details; a body that cannot be written is logged with the status only); `config/
+    TomcatEdgeCustomizer` (`WebServerFactoryCustomizer<TomcatServletWebServerFactory>`, `LOWEST_PRECEDENCE`
+    so it runs after Boot's customiser: the connector set explicitly to `encodedSolidusHandling=reject`,
+    `allowBackslash=false`, `allowTrace=false`, which Boot has no property for; every `ErrorReportValve`
+    removed from the host, ours added, and `StandardHost.errorReportValveClass` set to it so the host adds no
+    default at start), registered in `ApiWebConfig`; `application.yaml` `server.tomcat.uri-encoding: UTF-8`,
+    `relaxed-path-chars: []`, `relaxed-query-chars: []` with a comment. Not counted: no `RouteRefusal` fits a
+    connector `400`, and adding a tag would change the metrics contract (contracts/metrics.md *Not counted by
+    003* now says so; contracts/read-api.md §6 names the connector case). RED (seams: the valve's `report`
+    writing nothing; the customiser doing nothing): `ConnectorRejectionIT.a_uri_the_connector_rejects_should_
+    get_a_400_with_the_four_field_problem_body(String) > [1] target = "/results-store/v1/shares/zq%2Fsecret"
+    FAILED` `expected: "application/problem+json" but was: "text/html;charset=utf-8"` (and `%00`);
+    `ProblemErrorReportValveTest.an_error_should_get_the_four_field_problem_body(int, String, String) > [1]
+    status = "400" … FAILED` `Expecting actual: [] to contain exactly …`; `TomcatEdgeCustomizerTest.the_host_
+    should_report_errors_with_the_problem_valve_only() FAILED` `Expecting actual: ErrorReportValve[…]` (its
+    connector case also failed; its order case passed at RED). GREEN: `ConnectorRejectionIT` 8 (`%2F`, `%00`,
+    `%zz`, `%5C`, bare `%`, `|`, `{`, `|` in the query; each `400`, `application/problem+json`, the four
+    fields, `read.refused` unmoved), `ProblemErrorReportValveTest` 12, `TomcatEdgeCustomizerTest` 3,
+    `BoundedErrorAttributesTest` 10, `BoundedErrorControllerTest` 20, `AuthzIT` 23, 0 failures.
 
 ---
 

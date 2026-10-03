@@ -413,7 +413,9 @@ Every `4xx` and `5xx` from the store has this body and nothing else:
 `title` is the HTTP reason phrase. The body never holds your input, a path, an exception message or any
 payload content. `Content-Type` is `application/problem+json`, except `401` and `403`, which come as
 `application/json`. A `401` or `403` has this same JSON body whatever `Accept` you send, `text/html`
-included: there is no HTML error page. Branch on `status` and `reason`.
+included: there is no HTML error page. Branch on `status` and `reason`. A request the HTTP connector
+rejects before it reaches the service (an encoded slash or backslash, a NUL, a malformed escape, a character
+outside the standard set) gets the same body, `400` with `bad_request`.
 
 | Status | `reason` | When | Retry? |
 |---|---|---|---|
