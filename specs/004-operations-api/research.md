@@ -20,7 +20,7 @@ read for this document (`V2__reshape_event_receipt.sql`, `V3__create_share_store
 
 ## R1. Layering and wiring
 
-**Decision.** As `.claude/rules/design_rules.md` and spec 003 research R1 set out:
+**Decision.** As the design rules (`design_rules.md`) and spec 003 research R1 set out:
 
 - `api/`: `ExtractionOperationsController` (rerun and status), `ReceiptsController`,
   `ReconciliationController`; `RerunBodyParser` and `OperationsParameters` (strict parsing);
