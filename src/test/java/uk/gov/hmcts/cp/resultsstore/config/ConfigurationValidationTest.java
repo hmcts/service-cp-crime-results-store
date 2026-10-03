@@ -3,8 +3,10 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -13,7 +15,10 @@ import org.springframework.boot.test.context.runner.ApplicationContextRunner;
  * Every rule in contracts/configuration.md refuses a bad value when the service starts (FR-046), with
  * application.yaml loaded as the service loads it.
  */
+@DisplayName("configuration rules")
 class ConfigurationValidationTest {
+
+    private static final String STATEMENT_BELOW_SOCKET = "resultsstore.intake.store.statement-timeout must be below";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
@@ -58,29 +63,38 @@ class ConfigurationValidationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {
-        "resultsstore.intake.redelivery-pause.cap=999ms",
-        "resultsstore.intake.redelivery-pause.cap=301s",
-        "resultsstore.intake.receipt-timeout=999ms",
-        "resultsstore.intake.receipt-timeout=61s",
-        "resultsstore.intake.store.lock-timeout=0s",
-        "resultsstore.intake.store.lock-timeout=21s",
-        "resultsstore.intake.store.statement-timeout=0s",
-        "resultsstore.intake.store.statement-timeout=-1s",
-        "resultsstore.intake.store.statement-timeout=30s",
-        "resultsstore.intake.store.idle-in-transaction-timeout=0s",
-        "resultsstore.intake.store.idle-in-transaction-timeout=61s",
-        "resultsstore.intake.store.transaction-timeout=19s",
-        "resultsstore.sweep.initial-delay=-1s",
-        "resultsstore.sweep.fixed-delay=9s",
-        "resultsstore.sweep.fixed-delay=25h",
-        "resultsstore.sweep.batch-size=0",
-        "resultsstore.sweep.batch-size=1001",
-        "resultsstore.sweep.max-attempts=0",
-        "resultsstore.sweep.max-attempts=11"
-    })
-    void bad_value_should_stop_the_service_starting(final String setting) {
-        runner.withPropertyValues(setting).run(context -> assertThat(context).hasFailed());
+    @CsvSource(delimiter = '|', textBlock = """
+        resultsstore.intake.redelivery-pause.cap=999ms | resultsstore.intake.redelivery-pause.cap must be from
+        resultsstore.intake.redelivery-pause.cap=301s | resultsstore.intake.redelivery-pause.cap must be from
+        resultsstore.intake.receipt-timeout=999ms | resultsstore.intake.receipt-timeout must be from
+        resultsstore.intake.receipt-timeout=61s | resultsstore.intake.receipt-timeout must be from
+        resultsstore.intake.store.lock-timeout=0s | resultsstore.intake.store.lock-timeout must be above zero
+        resultsstore.intake.store.lock-timeout=21s | resultsstore.intake.store.lock-timeout must not exceed resultsstore.intake.store.statement-timeout
+        resultsstore.intake.store.statement-timeout=0s | resultsstore.intake.store.statement-timeout must be above zero
+        resultsstore.intake.store.statement-timeout=-1s | resultsstore.intake.store.statement-timeout must be above zero
+        resultsstore.intake.store.idle-in-transaction-timeout=0s | resultsstore.intake.store.idle-in-transaction-timeout must be above zero
+        resultsstore.intake.store.idle-in-transaction-timeout=61s | resultsstore.intake.store.idle-in-transaction-timeout must not exceed resultsstore.intake.store.transaction-timeout
+        resultsstore.intake.store.transaction-timeout=19s | resultsstore.intake.store.statement-timeout must not exceed resultsstore.intake.store.transaction-timeout
+        resultsstore.sweep.initial-delay=-1s | resultsstore.sweep.initial-delay must be at least
+        resultsstore.sweep.fixed-delay=9s | resultsstore.sweep.fixed-delay must be from
+        resultsstore.sweep.fixed-delay=25h | resultsstore.sweep.fixed-delay must be from
+        resultsstore.sweep.batch-size=0 | resultsstore.sweep.batch-size must be from
+        resultsstore.sweep.batch-size=1001 | resultsstore.sweep.batch-size must be from
+        resultsstore.sweep.max-attempts=0 | resultsstore.sweep.max-attempts must be from
+        resultsstore.sweep.max-attempts=11 | resultsstore.sweep.max-attempts must be from
+        """)
+    void bad_value_should_stop_the_service_starting(final String setting, final String refusal) {
+        runner.withPropertyValues(setting).run(context -> assertThat(context).getFailure().rootCause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith(refusal));
+    }
+
+    @Test
+    void statement_timeout_at_or_above_the_socket_timeout_should_stop_the_service_starting() {
+        runner.withPropertyValues("resultsstore.intake.store.statement-timeout=30s")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageStartingWith(STATEMENT_BELOW_SOCKET));
     }
 
     @ParameterizedTest
@@ -115,12 +129,21 @@ class ConfigurationValidationTest {
     }
 
     @Test
+    void statement_timeout_should_be_free_of_the_socket_timeout_when_its_property_is_empty() {
+        runner.withPropertyValues("spring.datasource.hikari.data-source-properties.socketTimeout=",
+                        "resultsstore.intake.store.statement-timeout=45s")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @Test
     void statement_timeout_should_stay_below_a_longer_socket_timeout() {
         runner.withPropertyValues("spring.datasource.hikari.data-source-properties.socketTimeout=60",
                         "resultsstore.intake.store.statement-timeout=45s")
                 .run(context -> assertThat(context).hasNotFailed());
         runner.withPropertyValues("spring.datasource.hikari.data-source-properties.socketTimeout=60",
                         "resultsstore.intake.store.statement-timeout=60s")
-                .run(context -> assertThat(context).hasFailed());
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalStateException.class)
+                        .hasMessageStartingWith(STATEMENT_BELOW_SOCKET));
     }
 }

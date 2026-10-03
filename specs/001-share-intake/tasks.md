@@ -469,6 +469,14 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     GREEN: `PublicEventsConfigTest` 5 tests, 0 failures. `RetryableFailures` still attaches the driver
     exception as the cause, so it stays available to a debugger; only the log is sanitised.
 
+  - Gate round 1 (test strength): `ConfigurationValidationTest`'s refusal rows now carry the refusal each rule
+    must give and assert the startup failure's root cause (`IllegalArgumentException` starting with that
+    text; `IllegalStateException` naming `resultsstore.intake.store.statement-timeout` for the socket rule),
+    so a context failing for an unrelated reason no longer passes. An empty `socketTimeout` with a 45 s
+    statement timeout is accepted (the absent-property branch). Mutation check: giving the `cap=999ms` row
+    the receipt-timeout refusal fails with `Expecting actual: … to start with: "resultsstore.intake.receipt-timeout
+    must be from"`; restored, the class is green.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---
