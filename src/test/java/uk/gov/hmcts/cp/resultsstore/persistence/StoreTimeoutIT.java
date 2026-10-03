@@ -8,6 +8,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -32,9 +33,11 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
- * The store transaction's own timeouts (FR-020, SC-009): with the hearing-day row held by another
- * connection, the store gives up at its lock timeout, leaves nothing behind, and the settings end with
- * the transaction, so the next borrower of the same connection has the server's defaults.
+ * The store transaction's own timeouts (FR-020, SC-009): all three apply inside the store transaction;
+ * with the hearing-day row held by another connection, the store gives up at its lock timeout, or at
+ * its statement timeout, or at the transaction's own timeout, whichever is shortest, and leaves nothing
+ * behind; and the settings end with the transaction, so the next borrower of the same connection has
+ * the server's defaults.
  */
 @SpringBootTest
 @ActiveProfiles("test")
@@ -66,6 +69,8 @@ class StoreTimeoutIT {
 
     private JdbcReceiptStore receipts;
 
+    private DataSourceTransactionManager transactions;
+
     private UUID hearingId;
 
     @DynamicPropertySource
@@ -80,12 +85,10 @@ class StoreTimeoutIT {
         storeConnection = new SingleConnectionDataSource(PostgresTestSupport.container().getJdbcUrl(),
                 PostgresTestSupport.container().getUsername(), PostgresTestSupport.container().getPassword(), true);
         storeJdbc = JdbcClient.create(storeConnection);
-        final DataSourceTransactionManager transactions = new DataSourceTransactionManager(storeConnection);
+        transactions = new DataSourceTransactionManager(storeConnection);
         receipts = new JdbcReceiptStore(storeJdbc, new TransactionTemplate(transactions));
-        final TransactionTemplate storeTransaction = new TransactionTemplate(transactions);
-        storeTransaction.setTimeout(TRANSACTION_TIMEOUT_SECONDS);
-        store = new JdbcShareStore(storeJdbc, storeTransaction, receipts,
-                new JdbcShareStore.Timeouts(LOCK_TIMEOUT, Duration.ofSeconds(3), Duration.ofSeconds(3)));
+        store = storeWith(receipts, new JdbcShareStore.Timeouts(LOCK_TIMEOUT, Duration.ofSeconds(3),
+                Duration.ofSeconds(3)), TRANSACTION_TIMEOUT_SECONDS);
         hearingId = UUID.randomUUID();
     }
 
@@ -97,26 +100,44 @@ class StoreTimeoutIT {
     @Test
     void store_should_give_up_at_the_lock_timeout_while_the_day_is_held_and_leave_nothing()
             throws SQLException {
-        final StoreRequest request = received();
-        jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:hearingId, :day)")
-                .param("hearingId", hearingId).param("day", LocalDate.parse(DAY)).update();
+        assertGivesUpWhileTheDayIsHeld(IntakeFailureCause.LOCK_TIMEOUT, LOCK_TIMEOUT.plusSeconds(1));
+    }
 
-        try (Connection holder = dataSource.getConnection()) {
-            holdTheDay(holder);
-            final long started = System.nanoTime();
+    @Test
+    void store_should_give_up_at_the_statement_timeout_while_the_day_is_held_and_leave_nothing()
+            throws SQLException {
+        store = storeWith(receipts, new JdbcShareStore.Timeouts(Duration.ofSeconds(10), Duration.ofMillis(500),
+                Duration.ofSeconds(10)), TRANSACTION_TIMEOUT_SECONDS);
 
-            assertThatThrownBy(() -> store.store(request))
-                    .isInstanceOfSatisfying(RetryableIntakeException.class, failure -> {
-                        assertThat(failure.getStage()).isEqualTo(IntakeStage.STORE);
-                        assertThat(failure.getFailureCause()).isEqualTo(IntakeFailureCause.LOCK_TIMEOUT);
-                    });
+        assertGivesUpWhileTheDayIsHeld(IntakeFailureCause.STATEMENT_TIMEOUT, Duration.ofMillis(1500));
+    }
 
-            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(LOCK_TIMEOUT.plusSeconds(1));
-            holder.rollback();
-        }
-        assertThat(jdbc.sql("SELECT count(*) FROM hearing_share").query(Integer.class).single()).isZero();
-        assertThat(jdbc.sql("SELECT share_count FROM hearing_day_head").query(Integer.class).single()).isZero();
-        assertThat(jdbc.sql("SELECT status FROM event_receipt").query(String.class).single()).isEqualTo("RECEIVED");
+    @Test
+    void store_should_give_up_at_the_transaction_timeout_while_the_day_is_held_and_leave_nothing()
+            throws SQLException {
+        store = storeWith(receipts, new JdbcShareStore.Timeouts(Duration.ofSeconds(10), Duration.ofSeconds(10),
+                Duration.ofSeconds(10)), 1);
+
+        assertGivesUpWhileTheDayIsHeld(IntakeFailureCause.STATEMENT_TIMEOUT, Duration.ofSeconds(2));
+    }
+
+    @Test
+    void timeouts_should_apply_inside_the_store_transaction() {
+        final List<List<String>> inside = new ArrayList<>();
+        // The receipt is marked inside the store transaction, after every other statement of it.
+        final JdbcReceiptStore observed = new JdbcReceiptStore(storeJdbc, new TransactionTemplate(transactions)) {
+            @Override
+            public boolean markStored(final String messageId, final UUID shareId) {
+                inside.add(settings());
+                return super.markStored(messageId, shareId);
+            }
+        };
+        store = storeWith(observed, new JdbcShareStore.Timeouts(Duration.ofMillis(1100), Duration.ofMillis(1200),
+                Duration.ofMillis(1300)), TRANSACTION_TIMEOUT_SECONDS);
+
+        store.store(received());
+
+        assertThat(inside).containsExactly(List.of("1100ms", "1200ms", "1300ms"));
     }
 
     @Test
@@ -127,7 +148,8 @@ class StoreTimeoutIT {
 
         assertThat(settings()).isEqualTo(before).doesNotContain("1s", "3s");
         final List<String> inTheNextTransaction =
-                new TransactionTemplate(new DataSourceTransactionManager(storeConnection)).execute(status -> settings());
+                new TransactionTemplate(new DataSourceTransactionManager(storeConnection))
+                        .execute(status -> settings());
         assertThat(inTheNextTransaction).isEqualTo(before);
     }
 
@@ -144,6 +166,37 @@ class StoreTimeoutIT {
         }
 
         assertThat(settings()).isEqualTo(before);
+    }
+
+    private JdbcShareStore storeWith(final JdbcReceiptStore receiptStore, final JdbcShareStore.Timeouts timeouts,
+            final int transactionTimeoutSeconds) {
+        final TransactionTemplate storeTransaction = new TransactionTemplate(transactions);
+        storeTransaction.setTimeout(transactionTimeoutSeconds);
+        return new JdbcShareStore(storeJdbc, storeTransaction, receiptStore, timeouts);
+    }
+
+    private void assertGivesUpWhileTheDayIsHeld(final IntakeFailureCause cause, final Duration within)
+            throws SQLException {
+        final StoreRequest request = received();
+        jdbc.sql("INSERT INTO hearing_day_head (hearing_id, hearing_day) VALUES (:hearingId, :day)")
+                .param("hearingId", hearingId).param("day", LocalDate.parse(DAY)).update();
+
+        try (Connection holder = dataSource.getConnection()) {
+            holdTheDay(holder);
+            final long started = System.nanoTime();
+
+            assertThatThrownBy(() -> store.store(request))
+                    .isInstanceOfSatisfying(RetryableIntakeException.class, failure -> {
+                        assertThat(failure.getStage()).isEqualTo(IntakeStage.STORE);
+                        assertThat(failure.getFailureCause()).isEqualTo(cause);
+                    });
+
+            assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(within);
+            holder.rollback();
+        }
+        assertThat(jdbc.sql("SELECT count(*) FROM hearing_share").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT share_count FROM hearing_day_head").query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql("SELECT status FROM event_receipt").query(String.class).single()).isEqualTo("RECEIVED");
     }
 
     private StoreRequest received() {

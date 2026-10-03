@@ -605,6 +605,21 @@ US1–US4 and US6 on Testcontainers Postgres.
     `lock_timeout`, `statement_timeout` and `idle_in_transaction_session_timeout`, each bound as
     `<millis>ms`. `JdbcShareStore.Timeouts` (record; `DEFAULTS` for the persistence ITs) is built in
     `IntakeConfig` from `resultsstore.intake.store.*`.
+  - Gate round 1 (all three settings pinned): only `lock_timeout` had a test that could fail. Added
+    `store_should_give_up_at_the_statement_timeout_while_the_day_is_held_and_leave_nothing` (lock 10 s,
+    statement 500 ms, day held: within 1.5 s as `statement_timeout`, nothing stored, receipt `RECEIVED`) and
+    `timeouts_should_apply_inside_the_store_transaction` (a `JdbcReceiptStore` whose `markStored`, the last
+    statement of the store transaction, reads the three settings first: `1100ms`, `1200ms`, `1300ms`). RED,
+    with `SET_TIMEOUTS` cut back to `lock_timeout` only, each run on its own: `--tests '*StoreTimeoutIT'`:
+    2 completed, 1 failed (failFast), the statement case: `Expecting actual: 5.063354183S to be less than:
+    1.5S` (the wait ran on to the 5 s transaction timeout); `--tests '*StoreTimeoutIT.timeouts_should_apply_
+    inside*'`: `Expecting actual: [["1100ms", "0", "0"]] to contain exactly … [["1100ms", "1200ms",
+    "1300ms"]]`. `idle_in_transaction_session_timeout` is pinned by its value inside the transaction, not by
+    a session being terminated (that needs a pause inside the transaction; the IT suite uses no sleeps).
+    Also added `store_should_give_up_at_the_transaction_timeout_while_the_day_is_held_and_leave_nothing`
+    (transaction timeout 1 s, the PostgreSQL timeouts 10 s: within 2 s as `statement_timeout`, as Spring
+    cancels the statement), green on first run: it pins the classification T010's RED already observed.
+    GREEN: `StoreTimeoutIT` 6 tests, 0 failures.
 
 - [X] T011 [US1] [US2] [US3] [US4] [US6] Test first: `IntakeIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/EmbeddedBrokerSupport.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/SampleShares.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/FailingFirstCommitConnectionFactory.java; then any production fix the IT finds (in the files of T005–T010)
   - Cases: a share is stored and acknowledged; store fails once then `STORED` with attempts 2; first `session.commit()` fails → one share, receipt `STORED` on redelivery; unreadable and no-identity bodies acknowledged and not redelivered; a persistent failure ends on the dead-letter address with its attempts on the receipt; two listener containers on the one shared subscription with 50 out-of-order shares of one day → one latest, gapless chain, count 50; the same share twice at once → one `STORED`, one `DUPLICATE`; a message with no message id stored under its `sha256:` key; every receipt ends in an end state.
