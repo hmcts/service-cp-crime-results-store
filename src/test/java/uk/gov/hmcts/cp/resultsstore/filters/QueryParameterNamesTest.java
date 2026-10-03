@@ -25,7 +25,8 @@ class QueryParameterNamesTest {
     @NullAndEmptySource
     @ValueSource(strings = {"storedafterseq=0", "StoredAfterSeq=0", "xstoredAfterSeq=1", "storedAfterSeqx=1",
         "courtCentreId=storedAfterSeq", "storedAfterSeq%3D=1", "stored+AfterSeq=1", "storedAfterSeq%zz=1",
-        "storedAfterSeq%=1", "storedAfterSeq%4=1", "%=1", "=storedAfterSeq", "storedAfterSeq%00=1", "stored%\uFF14\uFF11fterSeq=1"})
+        "storedAfterSeq%=1", "storedAfterSeq%4=1", "%=1", "=storedAfterSeq", "storedAfterSeq%00=1",
+        "stored%\uFF14\uFF11fterSeq=1", "storedAfterSeq%", "storedAfterSeq%4"})
     void any_other_query_should_not_find_the_name(final String rawQuery) {
         assertThat(QueryParameterNames.contains(rawQuery, NAME)).isFalse();
     }

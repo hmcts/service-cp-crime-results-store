@@ -62,6 +62,8 @@ class AuthzIT {
 
     private static final String UNMAPPED_CALLER = "9c2e7d0a-3f4b-4a5c-9d8e-2f3a4b5c6d7e";
 
+    private static final String SECOND_LINE_USER = "d6c1b4e5-7f8a-4b9c-9d2e-3f4a5b6c7d8e";
+
     private static final String HEAD_CALLER = "a3f8e1b2-4c5d-4e6f-8a9b-0c1d2e3f4a5b";
 
     private static final String OPTIONS_CALLER = "b4a9f2c3-5d6e-4f7a-9b0c-1d2e3f4a5b6c";
@@ -81,6 +83,7 @@ class AuthzIT {
         USERSGROUPS.start();
         stubCaller(SYSTEM_USER, "System Users");
         stubCaller(OTHER_GROUP_USER, "Other Group");
+        stubCaller(SECOND_LINE_USER, "Second Line Support");
     }
 
     @LocalServerPort
@@ -209,6 +212,16 @@ class AuthzIT {
             throws IOException, InterruptedException {
         final HttpResponse<String> response = get(pathWithQuery(route), Map.of(USER_ID_HEADER, SYSTEM_USER,
                 "Accept", "application/vnd.results-store.anything+json"));
+
+        assertThat(response.statusCode()).isNotIn(401, 403);
+    }
+
+    /** FR-049 in the running chain: the second admitted group passes on every route, as "System Users" does. */
+    @ParameterizedTest
+    @EnumSource(ApiRoute.class)
+    void a_second_line_support_caller_should_pass_authorisation_on_every_mapped_route(final ApiRoute route)
+            throws IOException, InterruptedException {
+        final HttpResponse<String> response = get(pathWithQuery(route), Map.of(USER_ID_HEADER, SECOND_LINE_USER));
 
         assertThat(response.statusCode()).isNotIn(401, 403);
     }

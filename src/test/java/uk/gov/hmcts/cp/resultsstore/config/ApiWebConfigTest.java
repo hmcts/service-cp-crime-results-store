@@ -72,6 +72,7 @@ class ApiWebConfigTest {
                     .getBean(RefusalObserver.class).isInstanceOf(MicrometerRefusalObserver.class);
             assertThat(context).getBean(ErrorAttributes.class).isInstanceOf(BoundedErrorAttributes.class);
             assertThat(context).getBean(ErrorController.class).isInstanceOf(BoundedErrorController.class);
+            assertThat(context).hasSingleBean(TomcatEdgeCustomizer.class);
         });
     }
 }

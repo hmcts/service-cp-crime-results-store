@@ -328,6 +328,13 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
       `AuthzIT` 24 (replacing `trace_should_be_refused_405_by_the_connector_and_never_counted`),
       `ConnectorRejectionIT` 12, 0 failures. FR-048 (c), contracts/read-api.md §2.2, contracts/metrics.md and
       `application.yaml` say so.
+    - Gate round 1 remediation (qa LOWs, pinning only, no production change; each passed when written):
+      `AuthzIT.a_second_line_support_caller_should_pass_authorisation_on_every_mapped_route(ApiRoute)` (a third
+      stubbed caller whose only group is "Second Line Support"); `QueryParameterNamesTest` adds a percent escape
+      cut short at the end of the query (`storedAfterSeq%`, `storedAfterSeq%4`); `TomcatEdgeCustomizerTest.
+      a_context_without_a_standard_host_should_be_left_alone`; `ApiWebConfigTest` asserts the
+      `TomcatEdgeCustomizer` bean. GREEN: `AuthzIT` 29, `QueryParameterNamesTest` 27, `TomcatEdgeCustomizerTest`
+      4, `ApiWebConfigTest` 3, 0 failures.
   - Close-out (orchestrator ruling 3, connector-level URI rejections): option (a) landed. A raw-socket probe
     showed every rejection (`%2F`, `%00`, `%5C`, `%zz`, a bare `%`, and the parser's invalid-character
     `400` for `|` and `{`) reaches the host's `ErrorReportValve` (Boot's, `showReport=false`), which wrote
