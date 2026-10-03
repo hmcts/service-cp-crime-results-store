@@ -288,6 +288,19 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
       readiness stays `UP` with `db`). These passed when written: they pin existing behaviour. The class keeps
       the name `ActuatorIntegrationTest`, which specs 001–003 cite.
     - GREEN: the gate green (1214 tests passed, 0 skipped; JaCoCo report line 0.9961, branch 0.9908).
+  - Close-out (orchestrator ruling 2, `HEAD`/`OPTIONS`/`TRACE` on a running server): `AuthzIT.head_and_options_
+    on_a_served_path_should_be_refused_405_before_authorisation(String)` (`HEAD`, `OPTIONS` on the `GET_SHARE`
+    sample with a `CJSCPPUID` of its own): `405`, `Allow: GET`, `application/problem+json`, the body without the
+    path (the four fields with `method_not_allowed` for `OPTIONS`; empty for `HEAD`, which carries no body on
+    the wire), `read.refused{method_not_allowed}` moved by one, usersgroups never asked for that caller. It
+    passed when written: it pins the action filter in the running chain. `TRACE`: Tomcat (`allowTrace=false`,
+    the default) refuses it in `CoyoteAdapter` with `sendError(405)` before any filter, so it lands on the
+    service's `/error` page: `405`, `application/problem+json`, the four fields with the generic `4xx` reason
+    `bad_request`, an `Allow` header Tomcat builds from the dispatcher servlet's methods (not `GET`), not
+    counted, usersgroups not asked. Pinned by `AuthzIT.trace_should_be_refused_405_by_the_connector_and_never_
+    counted` (an exploratory run showed the shape first); `TRACE` dropped from
+    `ActionHeaderFilterTest.routesAndOtherMethods`, since it never reaches the filter. GREEN: `AuthzIT` 23,
+    `ActionHeaderFilterTest` 91, 0 failures.
 
 ---
 

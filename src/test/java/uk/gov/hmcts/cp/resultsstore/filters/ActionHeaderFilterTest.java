@@ -225,8 +225,9 @@ class ActionHeaderFilterTest {
     }
 
     static Stream<Arguments> routesAndOtherMethods() {
+        // TRACE is left out: Tomcat refuses it in its connector, so it never reaches this filter (AuthzIT).
         return Arrays.stream(ApiRoute.values()).flatMap(route -> Stream.of("HEAD", "OPTIONS", "POST", "PUT",
-                "DELETE", "PATCH", "TRACE").map(method -> Arguments.of(route, method)));
+                "DELETE", "PATCH").map(method -> Arguments.of(route, method)));
     }
 
     @ParameterizedTest
