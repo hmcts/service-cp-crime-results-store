@@ -72,13 +72,13 @@ public class PublicEventsConfig {
                 + "redeliver it. causes={}", causeClasses(failure));
     }
 
-    /** The class names down the cause chain, outermost first; a looping chain is cut short. */
-    static String causeClasses(final Throwable failure) {
+    /** The class names down the cause chain, outermost first; a looping chain is cut at the depth limit. */
+    /* default */ static String causeClasses(final Throwable failure) {
         final StringJoiner names = new StringJoiner(" <- ");
         Throwable current = failure;
         for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
             names.add(current.getClass().getName());
-            current = current.getCause() == current ? null : current.getCause();
+            current = current.getCause();
         }
         return names.toString();
     }

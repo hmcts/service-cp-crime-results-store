@@ -469,8 +469,8 @@ proves the flow with mocked ports; the listener and configuration tests prove th
   - Gate round 1 (T007 exposure): the container error handler in `config/PublicEventsConfig.java` (outside
     the T007 file list, last touched by the skeleton) passed the throwable to the logger, so T007's rethrow of a
     cause-bearing `RetryableIntakeException` could put a PostgreSQL message quoting the failing row into the
-    log. It now logs the cause chain by class name only (`causes=a <- b <- c`, at most 16 links, a
-    self-referencing cause ends the walk) and no throwable. RED: `./gradlew test --tests
+    log. It now logs the cause chain by class name only (`causes=a <- b <- c`, at most 16 links, so a
+    self-referencing cause ends at the limit) and no throwable. RED: `./gradlew test --tests
     '*PublicEventsConfigTest'`: `error_handler_should_log_the_cause_chain_by_class_name_only_never_its_text`:
     `AssertionFailedError: [no throwable, so no stack trace or cause messages] but was: ThrowableProxy`.
     GREEN: `PublicEventsConfigTest` 5 tests, 0 failures. `RetryableFailures` still attaches the driver

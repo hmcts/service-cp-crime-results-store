@@ -75,7 +75,7 @@ class PublicEventsConfigTest {
     }
 
     @Test
-    void cause_classes_should_stop_at_a_cause_that_points_at_itself() {
+    void cause_classes_should_end_a_cause_that_points_at_itself_at_the_depth_limit() {
         final IllegalStateException loop = new IllegalStateException() {
             private static final long serialVersionUID = 1L;
 
@@ -85,7 +85,9 @@ class PublicEventsConfigTest {
             }
         };
 
-        assertThat(PublicEventsConfig.causeClasses(loop)).isEqualTo(loop.getClass().getName());
+        assertThat(PublicEventsConfig.causeClasses(loop).split(" <- "))
+                .hasSize(16)
+                .containsOnly(loop.getClass().getName());
     }
 
     @Test
