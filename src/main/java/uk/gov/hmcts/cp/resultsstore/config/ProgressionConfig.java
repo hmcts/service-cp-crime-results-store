@@ -21,30 +21,46 @@ import uk.gov.hmcts.cp.resultsstore.application.ProgressionApplications;
 @Configuration(proxyBeanMethods = false)
 public class ProgressionConfig {
 
+    private static final String ON = "true";
+
     /**
-     * Builds the client over {@link NoRedirectRequestFactory}: connect and read timeouts from the
-     * settings, redirects off; the read timeout is also the whole-response deadline.
+     * The client's transport, a bean of its own so the context closes it on shutdown: connect and read
+     * timeouts from the settings, and the read timeout also as the whole-response deadline.
      *
      * @param progression the progression settings, their shape already checked
-     * @param mapper      the application's mapper, from which the client derives its reader
+     * @return the request factory
+     */
+    @Bean
+    @ConditionalOnProperty(name = "resultsstore.publicevents.enabled", havingValue = ON)
+    @ConditionalOnProperty(name = "resultsstore.enrichment.enabled", havingValue = ON, matchIfMissing = true)
+    public NoRedirectRequestFactory progressionRequestFactory(final ProgressionProperties progression) {
+        return new NoRedirectRequestFactory(progression.connectTimeout(), progression.readTimeout(),
+                progression.readTimeout());
+    }
+
+    /**
+     * Builds the client over the request factory.
+     *
+     * @param progression    the progression settings, their shape already checked
+     * @param requestFactory the transport, from {@link #progressionRequestFactory}
+     * @param mapper         the application's mapper, from which the client derives its reader
      * @return the client
      * @throws IllegalArgumentException naming the property, never its value, when the base URL or the
      *                                  system user id is blank
      */
     @Bean
-    @ConditionalOnProperty(name = "resultsstore.publicevents.enabled", havingValue = "true")
-    @ConditionalOnProperty(name = "resultsstore.enrichment.enabled", havingValue = "true", matchIfMissing = true)
+    @ConditionalOnProperty(name = "resultsstore.publicevents.enabled", havingValue = ON)
+    @ConditionalOnProperty(name = "resultsstore.enrichment.enabled", havingValue = ON, matchIfMissing = true)
     public ProgressionApplications progressionApplications(final ProgressionProperties progression,
-            final ObjectMapper mapper) {
+            final NoRedirectRequestFactory requestFactory, final ObjectMapper mapper) {
         required(ProgressionProperties.BASE_URL, progression.baseUrl());
         required(ProgressionProperties.SYSTEM_USER_ID, progression.systemUserId());
         final RestClient restClient = RestClient.builder()
                 .baseUrl(progression.baseUrl())
-                .requestFactory(new NoRedirectRequestFactory(progression.connectTimeout(), progression.readTimeout(),
-                        progression.readTimeout()))
+                .requestFactory(requestFactory)
                 .build();
-        return new ProgressionApplicationClient(restClient, progression.systemUserId(), progression.readTimeout(),
-                mapper);
+        return new ProgressionApplicationClient(restClient, progression.systemUserId(),
+                requestFactory.getResponseDeadline(), mapper);
     }
 
     private static void required(final String name, final String value) {

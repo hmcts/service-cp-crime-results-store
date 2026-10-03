@@ -229,6 +229,18 @@ contracts/progression-lookup.md against an in-process WireMock.
     pins both on the connection); only the read timeout is proved over the wire.
   - contracts/configuration.md checked against what was built: matches (properties, defaults, no
     default for the base URL and user id, where the rules run, the conditional bean); no edit needed.
+  - Follow-up from gate round 1 (connect timeout unpinned): the old over-the-wire test could not tell
+    the connect timeout from the read timeout, so swapping them passed. The request factory is now a
+    bean of its own (`progressionRequestFactory`, same two conditions; the context closes it), and
+    `ProgressionConfigTest` and `IntakeConfigTest` build it from distinct values (connect 3 s, read 7 s)
+    and assert the connect timeout, the socket timeout and the deadline on it.
+    RED (seam: the factory bean built with the connect and read timeouts swapped):
+    `ProgressionConfigTest` → `request_factory_should_carry_the_connect_timeout_and_the_read_timeout_as_read_and_deadline() FAILED`
+    `expected: 3 SECONDS but was: 7 SECONDS`; `IntakeConfigTest` →
+    `enabled_subscription_and_enrichment_should_build_the_progression_client() FAILED`
+    `expected: 3 SECONDS but was: 7 SECONDS`.
+    GREEN: `ProgressionConfigTest` 9, `IntakeConfigTest` 7, `ConfigurationValidationTest` 60,
+    `SweepSchedulingConfigTest` 4, 0 failures; `pmdMain pmdTest` clean.
 
 ---
 

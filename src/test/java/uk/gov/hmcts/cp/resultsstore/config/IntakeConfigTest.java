@@ -5,6 +5,8 @@ import static org.mockito.Mockito.mock;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import org.apache.hc.core5.util.Timeout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +16,7 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.resultsstore.adapter.progression.NoRedirectRequestFactory;
 import uk.gov.hmcts.cp.resultsstore.adapter.progression.ProgressionApplicationClient;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.HearingResultedEventListener;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
@@ -70,10 +73,16 @@ class IntakeConfigTest {
     @Test
     void enabled_subscription_and_enrichment_should_build_the_progression_client() {
         runner.withPropertyValues("resultsstore.publicevents.enabled=true", "resultsstore.enrichment.enabled=true",
-                BASE_URL, SYSTEM_USER_ID).run(context -> {
-                    assertThat(context).hasNotFailed().hasSingleBean(ProgressionApplications.class);
+                BASE_URL, SYSTEM_USER_ID, "resultsstore.progression.connect-timeout=3s",
+                "resultsstore.progression.read-timeout=7s").run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(ProgressionApplications.class)
+                            .hasSingleBean(NoRedirectRequestFactory.class);
                     assertThat(context.getBean(ProgressionApplications.class))
                             .isInstanceOf(ProgressionApplicationClient.class);
+                    final NoRedirectRequestFactory factory = context.getBean(NoRedirectRequestFactory.class);
+                    assertThat(factory.getConnectionConfig().getConnectTimeout()).isEqualTo(Timeout.ofSeconds(3));
+                    assertThat(factory.getConnectionConfig().getSocketTimeout()).isEqualTo(Timeout.ofSeconds(7));
+                    assertThat(factory.getResponseDeadline()).isEqualTo(Duration.ofSeconds(7));
                 });
     }
 
