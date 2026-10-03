@@ -296,7 +296,7 @@ public class JdbcShareStore implements ShareStore {
     private static KeyDetails keyDetails(final Projection projection) {
         return projection instanceof Projection.Extracted extracted
                 ? extracted.keyDetails()
-                : new KeyDetails(null, null, null, null, null, null, null, null);
+                : KeyDetails.NONE;
     }
 
     private static Boolean anySubjectIsYouth(final Projection projection) {

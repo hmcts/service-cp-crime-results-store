@@ -17,4 +17,7 @@ import java.util.UUID;
  */
 public record KeyDetails(UUID courtCentreId, UUID courtRoomId, String ljaCode, String jurisdictionType,
         Boolean sjp, Boolean groupProceedings, UUID youthCourtId, Boolean reshare) {
+
+    /** No key details: what a share whose extraction failed is stored with. */
+    public static final KeyDetails NONE = new KeyDetails(null, null, null, null, null, null, null, null);
 }

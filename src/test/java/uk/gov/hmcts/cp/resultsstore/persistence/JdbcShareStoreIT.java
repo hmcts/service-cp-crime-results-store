@@ -244,9 +244,8 @@ class JdbcShareStoreIT {
         // The second defendant row repeats the first's key, so the insert fails after the share,
         // its payload and the day row are written.
         final DefendantRef defendant = new DefendantRef(SampleShares.CASE_ID, SampleShares.DEFENDANT_ID, null);
-        final StoreRequest request = with(read, new Projection.Extracted(
-                new KeyDetails(null, null, null, null, null, null, null, null), List.of(defendant, defendant),
-                null));
+        final StoreRequest request =
+                with(read, new Projection.Extracted(KeyDetails.NONE, List.of(defendant, defendant), null));
 
         assertThatThrownBy(() -> store.store(request))
                 .isInstanceOfSatisfying(RetryableIntakeException.class, failure -> {
