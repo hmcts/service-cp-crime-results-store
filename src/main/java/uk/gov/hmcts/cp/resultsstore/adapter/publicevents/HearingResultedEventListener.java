@@ -91,10 +91,11 @@ public class HearingResultedEventListener {
             LOG.info("Intake finished. outcome={} messageId={} shareId={} hearingId={} deliveryCount={}",
                     result.outcome().tag(), result.messageId(), result.shareId(), result.hearingId(), deliveryCount);
         } catch (final RetryableIntakeException failure) {
-            final Duration paused = pause.pause(deliveryCount);
+            // The pause asked for: an interrupt can end the wait early, so it is not logged as time elapsed.
+            final Duration requested = pause.pause(deliveryCount);
             LOG.warn("Intake failed and is rolled back for the broker to redeliver. stage={} cause={} "
-                            + "messageId={} deliveryCount={} pausedFor={}",
-                    failure.getStage().tag(), failure.getFailureCause().tag(), messageId, deliveryCount, paused);
+                            + "messageId={} deliveryCount={} requestedPause={}",
+                    failure.getStage().tag(), failure.getFailureCause().tag(), messageId, deliveryCount, requested);
             throw failure;
         } finally {
             MDC_KEYS.forEach(MDC::remove);

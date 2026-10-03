@@ -184,7 +184,8 @@ class HearingResultedEventListenerTest {
         final ILoggingEvent event = log.events().getFirst();
         assertThat(event.getLevel()).isEqualTo(Level.WARN);
         assertThat(event.getFormattedMessage())
-                .contains("stage=store", "cause=lock_timeout", "deliveryCount=3", "messageId=" + MESSAGE_ID)
+                .contains("stage=store", "cause=lock_timeout", "deliveryCount=3", "messageId=" + MESSAGE_ID,
+                        "requestedPause=PT8S")
                 .doesNotContain(MARKER);
         assertThat(event.getThrowableProxy()).as("no exception text in the log").isNull();
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();

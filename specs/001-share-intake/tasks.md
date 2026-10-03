@@ -496,6 +496,10 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     `JMSException`: it escapes as it is, intake is not called, nothing pauses and the logging context is
     cleared (12 tests). The new unit test classes carry a class-level `@DisplayName`.
 
+  - Gate round 1 (log field): the listener's failure line names the pause `requestedPause`, not `pausedFor`, as
+    an interrupt can end the wait early. RED: `retryable_failure_should_pause_then_rethrow_with_ids_only_in_the_log`:
+    `Expecting actual: … to contain: ["requestedPause=PT8S"]`. GREEN: `HearingResultedEventListenerTest` 12 tests.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---
