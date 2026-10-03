@@ -771,10 +771,20 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     listener must have logged. A failing check names loggers and levels only. It also asserts the counters
     of US7 scenario 1 and the failure causes (`lock_timeout`, `database`, 2 each).
 
-- [ ] T014 Full quality gate: `flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`; fix `OnlyOneReturn` / `AvoidDuplicateLiterals` and coverage gaps by code shape (or a reasoned per-site suppression) in the files of T002–T013; add any missing test before the code it covers
+- [X] T014 Full quality gate: `flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`; fix `OnlyOneReturn` / `AvoidDuplicateLiterals` and coverage gaps by code shape (or a reasoned per-site suppression) in the files of T002–T013; add any missing test before the code it covers
   - Covers: SC-011 (line ≥ 0.88, branch ≥ 0.85, PMD clean).
   - Done when: that command exits 0 with the coverage figures recorded below.
-  - RESULT: _to be recorded_
+  - RESULT: `flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew build pmdMain pmdTest jacocoTestReport
+    jacocoTestCoverageVerification` exits 0 at the T013 commit with no change needed: 639 tests, 0 failures;
+    PMD main and test clean (the T012 and T013 findings, `CloseResource` on the two-sweeps executor,
+    `AvoidFieldNameMatchingMethodName` on the meter-name constants, `ShortMethodName` on `ShareOrder.of`
+    and one `LambdaCanBeMethodReference`, were fixed by shape inside those tasks, with no suppression);
+    JaCoCo (gate scope: all but `Application` and `config/**`) line 721/725 = 0.994, branch 239/240 =
+    0.996, against 0.88 / 0.85. The lines left are the unreachable `NoSuchAlgorithmException` catch in
+    `PayloadChecksum` and `ShareId` (every Java platform provides the digests; 2 lines each); the branch
+    left is `JdbcShareStore.isDataException`'s `sqlState != null` false side (a payload-insert failure
+    with no SQLSTATE). The build has no Checkstyle task; the
+    static analysis is PMD.
 
 - [ ] T015 [US1] [US2] [US3] Test first: extend scripts/container-smoke.sh so it fails on the pre-001 build: publish a real-shaped `hearing-resulted` message (identifiers only, synthetic values, shape from quickstart.md §4) to the compose Artemis with `CPPNAME`, the same message again, and an unreadable body; assert with `psql` receipts `STORED` / `DUPLICATE` (same `share_id`) / `UNREADABLE`, one `hearing_share` (latest, `OK`), one `hearing_share_payload`, its `share_defendant` rows and one `hearing_day_head` with `share_count = 1`; then any fix the smoke finds
   - Covers: FR-047; SC-001, SC-012.
