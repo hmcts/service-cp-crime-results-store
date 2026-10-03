@@ -55,7 +55,7 @@ public class RetryableIntakeException extends RuntimeException {
         this.failedClassName = failedClassName;
     }
 
-    /** The transaction that failed. */
+    /** The intake step that failed. */
     public IntakeStage getStage() {
         return stage;
     }
