@@ -597,7 +597,7 @@ US1–US4 and US6 on Testcontainers Postgres.
     `<millis>ms`. `JdbcShareStore.Timeouts` (record; `DEFAULTS` for the persistence ITs) is built in
     `IntakeConfig` from `resultsstore.intake.store.*`.
 
-- [ ] T011 [US1] [US2] [US3] [US4] [US6] Test first: `IntakeIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/EmbeddedBrokerSupport.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/SampleShares.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/FailingFirstCommitConnectionFactory.java; then any production fix the IT finds (in the files of T005–T010)
+- [X] T011 [US1] [US2] [US3] [US4] [US6] Test first: `IntakeIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/EmbeddedBrokerSupport.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/SampleShares.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/FailingFirstCommitConnectionFactory.java; then any production fix the IT finds (in the files of T005–T010)
   - Cases: a share is stored and acknowledged; store fails once then `STORED` with attempts 2; first `session.commit()` fails → one share, receipt `STORED` on redelivery; unreadable and no-identity bodies acknowledged and not redelivered; a persistent failure ends on the dead-letter address with its attempts on the receipt; two listener containers on the one shared subscription with 50 out-of-order shares of one day → one latest, gapless chain, count 50; the same share twice at once → one `STORED`, one `DUPLICATE`; a message with no message id stored under its `sha256:` key; every receipt ends in an end state.
   - Covers: US1–US4, US6; SC-001–SC-005, SC-007.
   - Done when: `IntakeIT` green; the gate green.
@@ -618,8 +618,34 @@ US1–US4 and US6 on Testcontainers Postgres.
     `Expecting: … but context failed to start: … No qualifying bean of type '…IntakeObserver' available`.
     GREEN: `IntakeConfigTest` 2 tests, 0 failures. The `@MockitoBean IntakeObserver` stand-ins in existing
     ITs still override it until T013 removes them (wiring note).
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: `IntakeIT` was green on its first run against T008–T010 (it found no production fix; it pins the end
+    to end behaviour those tasks built). Mutation check that it bites: with `ShareChain.join` not relinking a
+    late share's successor, `./gradlew test --tests '*IntakeIT.fifty*'`: 1 failed,
+    `fifty_out_of_order_shares_on_two_consumers_should_give_one_latest_and_a_gapless_chain`: `Expecting map:
+    {… "predecessor_share_id"=null …} … but the following map entries had different values:
+    ["predecessor_share_id"=null (expected: 6118b38c-…)]`; restored, green.
+  - GREEN: `IntakeIT` 9 tests, 0 failures: stored and acknowledged (attempts stay 1); the day row held past
+    the 2 s lock timeout on the first delivery, then released → `STORED`, attempts 2; first `session.commit()`
+    refused (the annotated container stopped, a second container on `FailingFirstCommitConnectionFactory`) →
+    one share, receipt `STORED`, attempts 2, nothing left on the subscription; `UNREADABLE` (`NOT_JSON`) and
+    `NO_IDENTITY` (`MISSING_SHARED_TIME`, with the text and the partial identity) acknowledged and not
+    redelivered; the day held throughout → dead-lettered after 3 deliveries, receipt `RECEIVED` with
+    attempts 3, no share; two containers on the one shared subscription, 50 shares of one day published in a
+    shuffled order → 50 `STORED`, one latest (the greatest `sharedTime`), each predecessor the share before it,
+    `share_count` 50; the same body twice while the day is held → both receipts written, then one `STORED`
+    and one `DUPLICATE` naming the same share; no message id → keyed `sha256:<checksum>` and `STORED`. Every
+    test but the dead-letter one ends with no receipt `RECEIVED` (SC-007; the dead-letter receipt stays
+    `RECEIVED` by design, as R1 finds it). The gate exits 0: 582 tests, 0 failures; JaCoCo (gate scope) line
+    0.994, branch 0.986. `./scripts/container-smoke.sh` (under the Gradle lock) passes with the subscription
+    enabled and no stand-in.
+  - Notes: `support/EmbeddedBrokerSupport` starts a broker per suite on a free port with `public.event`
+    dead-lettering to `DLA` after the suite's `maxDeliveryAttempts`, publishes with `CPPNAME` (optionally with
+    no message id), and reports the subscription's consumers, in-flight count and dead letters;
+    `HearingResultedEventListenerIT` now uses it (10 attempts, Artemis's default). `IntakeIT` sets
+    `consumerWindowSize=0` on the broker URL, so a busy consumer holds no second message and the other
+    container gets it; `lock-timeout=2s`. The second container is built from the application's own
+    `publicEventListenerContainerFactory`. Each store IT and `IntakeIT` truncates the five tables before each
+    test (R19).
 
 **Checkpoint**: phase-gate run 3 ends with every reviewer at PASS. The MVP (US1) is complete here.
 

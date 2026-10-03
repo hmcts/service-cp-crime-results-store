@@ -3,18 +3,10 @@ package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import jakarta.jms.JMSContext;
-import jakarta.jms.JMSException;
-import jakarta.jms.TextMessage;
-import jakarta.jms.Topic;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,12 +17,12 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.test.util.TestSocketUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareId;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
+import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
@@ -46,9 +38,7 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 @ActiveProfiles("test")
 class HearingResultedEventListenerIT {
 
-    private static final String TOPIC = "public.event";
-
-    private static final String SUBSCRIPTION = "resultsstore-service.sdg";
+    private static final String SUBSCRIPTION = EmbeddedBrokerSupport.SUBSCRIPTION;
 
     private static final String HEARING_RESULTED = "public.events.hearing.hearing-resulted";
 
@@ -57,10 +47,8 @@ class HearingResultedEventListenerIT {
     /** How long a settled receipt must stay at one attempt to show no redelivery followed. */
     private static final Duration SETTLE = Duration.ofSeconds(2);
 
-    private static final String BROKER_URL = "tcp://localhost:" + TestSocketUtils.findAvailableTcpPort();
-
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
-    private static EmbeddedActiveMQ broker;
+    private static EmbeddedBrokerSupport broker;
 
     @MockitoBean
     private IntakeObserver observer;
@@ -77,7 +65,7 @@ class HearingResultedEventListenerIT {
     @DynamicPropertySource
     static void pointAtTheEmbeddedBrokerAndTheStore(final DynamicPropertyRegistry registry) throws Exception {
         startTheBroker();
-        registry.add("spring.artemis.broker-url", () -> BROKER_URL);
+        registry.add("spring.artemis.broker-url", broker::url);
         PostgresTestSupport.register(registry);
     }
 
@@ -87,7 +75,7 @@ class HearingResultedEventListenerIT {
     }
 
     @Test
-    void subscription_should_be_shared_durable_and_named() throws Exception {
+    void subscription_should_be_shared_durable_and_named() {
         assertThat(subscriptionsOnTheTopic())
                 .singleElement()
                 .satisfies(queue -> {
@@ -114,7 +102,7 @@ class HearingResultedEventListenerIT {
     }
 
     @Test
-    void delivery_that_intake_finishes_should_be_acknowledged_once_and_not_redelivered() throws Exception {
+    void delivery_that_intake_finishes_should_be_acknowledged_once_and_not_redelivered() {
         final String hearingId = UUID.randomUUID().toString();
 
         publish(HEARING_RESULTED, envelope(hearingId));
@@ -188,33 +176,16 @@ class HearingResultedEventListenerIT {
     }
 
     private static void publish(final String eventName, final String body) {
-        try (ActiveMQConnectionFactory publisher = new ActiveMQConnectionFactory(BROKER_URL);
-             JMSContext session = publisher.createContext()) {
-            final Topic topic = session.createTopic(TOPIC);
-            final TextMessage message = session.createTextMessage(body);
-            // The broker filters on this property; it cannot read the body.
-            message.setStringProperty("CPPNAME", eventName);
-            session.createProducer().send(topic, message);
-        } catch (final JMSException problem) {
-            throw new IllegalStateException("could not publish " + eventName, problem);
-        }
+        broker.publish(eventName, body);
     }
 
-    private static List<Queue> subscriptionsOnTheTopic() throws Exception {
-        return broker.getActiveMQServer().getPostOffice().listQueuesForAddress(SimpleString.of(TOPIC));
+    private static List<Queue> subscriptionsOnTheTopic() {
+        return broker.subscriptions();
     }
-
     private static synchronized void startTheBroker() throws Exception {
-        if (broker != null) {
-            return;
+        if (broker == null) {
+            // Artemis's own default of 10 deliveries; this suite never fails a delivery on purpose.
+            broker = EmbeddedBrokerSupport.start("public-event-test-broker", 10);
         }
-        final ConfigurationImpl configuration = new ConfigurationImpl();
-        configuration.setName("public-event-test-broker")
-                .setPersistenceEnabled(false)
-                .setSecurityEnabled(false)
-                .setJMXManagementEnabled(false);
-        configuration.addAcceptorConfiguration("tcp", BROKER_URL);
-        broker = new EmbeddedActiveMQ().setConfiguration(configuration);
-        broker.start();
     }
 }
