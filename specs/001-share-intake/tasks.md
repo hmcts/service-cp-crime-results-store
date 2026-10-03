@@ -549,12 +549,25 @@ US1–US4 and US6 on Testcontainers Postgres.
     there, so `StoreTimeoutIT` can go red first). `support/SampleShares` (listed under T011) is added here,
     as the store ITs need it.
 
-- [ ] T009 [US4] [US1] Test first: `ShareChainIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChainIT.java, `YouthSeenIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthSeenIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChain.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthFlags.java, called from src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
+- [X] T009 [US4] [US1] Test first: `ShareChainIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChainIT.java, `YouthSeenIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthSeenIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChain.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthFlags.java, called from src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: first share of a day is latest with no predecessor; a newer share clears the old latest before it is set and points at it; T1, T3 then T2 → chain T1 ← T2 ← T3, T3 still latest, T2 `arrived_out_of_order`; `share_count` + 1 per stored share; youth three values: TRUE sticky, NULL if any share NULL, else FALSE; `day_youth_seen` set on every share of the day when the day flag changes.
   - Covers: FR-022–FR-028.
   - Done when: both ITs green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against T008's store (every new share made latest with no predecessor, no youth flags), each IT run
+    on its own: `./gradlew test --tests '*ShareChainIT'`: 2 completed, 1 failed (failFast),
+    `duplicate_should_leave_the_chain_and_the_count_alone`: `Expecting map: … but the following map entries
+    had different values: ["predecessor_share_id"=null (expected: cf9f3df6-…)]`; `--tests '*YouthSeenIT'`:
+    failed at `share_of_another_day_should_not_change_this_day_s_flag`: `Expecting actual not to be null`.
+  - GREEN: `ShareChainIT` 6 tests, `YouthSeenIT` 15 tests (13 sequences of TRUE / FALSE / unstated / failed,
+    a late TRUE, another day), `JdbcShareStoreIT` 10 tests, 0 failures.
+  - Notes: `ShareChain.place` finds the predecessor (greatest `shared_at` below) and successor (least above)
+    before the insert, because the predecessor and `arrived_out_of_order` are written with the share and the
+    latter never changes (`hearing_share_fixed_columns_guard`). `ShareChain.join` then either clears the old
+    latest and sets the new one (newest) or points the successor at the late share (late), and moves the day
+    row's latest (newest only) and count in one statement. `YouthFlags.recompute` reads `bool_or` over the
+    day, applies `daySeen` (TRUE if any TRUE, else NULL if any unknown, else FALSE), copies the value to every
+    share of the day whose `day_youth_seen` differs, and sets the day row's `youth_seen` when it differs.
+    `StoreResult.Stored.outOfOrder` is the place's `isLate()`. A duplicate takes the place but writes nothing.
 
 - [ ] T010 [US6] Test first: `StoreTimeoutIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/StoreTimeoutIT.java; then the per-transaction `set_config(…, true)` timeouts in src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: day row held by a second connection (latch) → the store gives up within lock timeout + 1 s with `lock_timeout` cause and no rows; the next transaction on the same pooled connection has the default timeouts (no leak).

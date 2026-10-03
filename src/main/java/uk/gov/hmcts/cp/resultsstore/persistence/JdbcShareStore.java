@@ -23,9 +23,10 @@ import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
 /**
  * The share tables, written in one store transaction per share (FR-013 to FR-017, research R9 to R11).
  *
- * <p>The transaction locks the hearing day (inserting its row for the day's first share), inserts the
- * share with {@code ON CONFLICT DO NOTHING} on its identity, then its payload and defendant rows, moves
- * the day on and marks the receipt {@code STORED}. A conflict means the identity is already stored: the
+ * <p>The transaction locks the hearing day (inserting its row for the day's first share), finds the
+ * share's place in the day's chain, inserts the share with {@code ON CONFLICT DO NOTHING} on its
+ * identity, then its payload and defendant rows, links it into the chain ({@link ShareChain}),
+ * recomputes the day's youth flag ({@link YouthFlags}) and marks the receipt {@code STORED}. A conflict means the identity is already stored: the
  * receipt is marked {@code DUPLICATE} with the stored share's id, looked up by the identity (FR-012).
  * The key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
@@ -73,18 +74,6 @@ public class JdbcShareStore implements ShareStore {
             VALUES (:shareId, :caseId, :defendantId, :masterDefendantId)
             """;
 
-    private static final String CLEAR_LATEST = """
-            UPDATE hearing_share SET is_latest = FALSE
-             WHERE hearing_id = :hearingId AND hearing_day = :hearingDay AND is_latest
-            """;
-
-    private static final String SET_LATEST = "UPDATE hearing_share SET is_latest = TRUE WHERE share_id = :shareId";
-
-    private static final String MOVE_DAY = """
-            UPDATE hearing_day_head SET latest_share_id = :shareId, share_count = share_count + 1
-             WHERE hearing_id = :hearingId AND hearing_day = :hearingDay
-            """;
-
     private static final String SHARE_ID = "shareId";
 
     private static final String HEARING_ID = "hearingId";
@@ -99,6 +88,10 @@ public class JdbcShareStore implements ShareStore {
 
     private final JdbcReceiptStore receipts;
 
+    private final ShareChain chain;
+
+    private final YouthFlags youth;
+
     /**
      * Creates the store.
      *
@@ -111,6 +104,8 @@ public class JdbcShareStore implements ShareStore {
         this.jdbc = jdbc;
         this.storeTransaction = storeTransaction;
         this.receipts = receipts;
+        this.chain = new ShareChain(jdbc);
+        this.youth = new YouthFlags(jdbc);
     }
 
     /**
@@ -133,14 +128,16 @@ public class JdbcShareStore implements ShareStore {
         final ShareIdentity identity = request.identity();
         lockDay(identity);
         final boolean jsonbSafe = NulSafety.isJsonbSafe(request.text());
-        final Optional<Instant> storedAt = insertShare(request);
+        final ShareChain.Place place = chain.place(identity);
+        final Optional<Instant> storedAt = insertShare(request, place);
         final StoreResult result;
         if (storedAt.isPresent()) {
             insertPayload(request, jsonbSafe);
             insertDefendants(request);
-            joinChain(identity, request.shareId());
+            chain.join(identity, request.shareId(), place);
+            youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
-            result = new StoreResult.Stored(request.shareId(), storedAt.get(), false, !jsonbSafe);
+            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !jsonbSafe);
         } else {
             final UUID existing = existingShare(identity);
             settle(receipts.markDuplicate(request.messageId(), existing));
@@ -157,7 +154,7 @@ public class JdbcShareStore implements ShareStore {
                 .query(Integer.class).single();
     }
 
-    private Optional<Instant> insertShare(final StoreRequest request) {
+    private Optional<Instant> insertShare(final StoreRequest request, final ShareChain.Place place) {
         final ShareIdentity identity = request.identity();
         final KeyDetails details = keyDetails(request.projection());
         return jdbc.sql(INSERT_SHARE)
@@ -177,8 +174,8 @@ public class JdbcShareStore implements ShareStore {
                 .param("groupProceedings", details.groupProceedings())
                 .param("youthCourtId", details.youthCourtId())
                 .param("anySubjectIsYouth", anySubjectIsYouth(request.projection()))
-                .param("predecessor", null)
-                .param("outOfOrder", false)
+                .param("predecessor", place.predecessor())
+                .param("outOfOrder", place.isLate())
                 .param("projectionStatus", request.projection().status().name())
                 .param("projectionReason", reason(request.projection()))
                 .param("projectionVersion", KeyDetailsExtractor.EXTRACTOR_VERSION)
@@ -207,15 +204,6 @@ public class JdbcShareStore implements ShareStore {
                         .update();
             }
         }
-    }
-
-    /** Clears the old latest before setting the new one: the one-latest index is checked per statement. */
-    private void joinChain(final ShareIdentity identity, final UUID shareId) {
-        jdbc.sql(CLEAR_LATEST).param(HEARING_ID, identity.hearingId()).param(HEARING_DAY, identity.hearingDay())
-                .update();
-        jdbc.sql(SET_LATEST).param(SHARE_ID, shareId).update();
-        jdbc.sql(MOVE_DAY).param(SHARE_ID, shareId).param(HEARING_ID, identity.hearingId())
-                .param(HEARING_DAY, identity.hearingDay()).update();
     }
 
     private UUID existingShare(final ShareIdentity identity) {
