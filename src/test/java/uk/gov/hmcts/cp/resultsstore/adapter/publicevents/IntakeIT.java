@@ -446,9 +446,10 @@ class IntakeIT {
         progression.server().stubFor(get(urlPathEqualTo(path)).inScenario(scenario)
                 .whenScenarioStateIs(Scenario.STARTED).willReturn(aResponse().withStatus(503))
                 .willSetStateTo("up"));
-        // The second answer waits, so the state between the two deliveries can be seen.
+        // The second answer waits, so the state between the two deliveries can be seen; the wait is
+        // wide enough for a slow runner and still far inside WITHIN.
         progression.server().stubFor(get(urlPathEqualTo(path)).inScenario(scenario)
-                .whenScenarioStateIs("up").willReturn(finalised(applicationId).withFixedDelay(1500)));
+                .whenScenarioStateIs("up").willReturn(finalised(applicationId).withFixedDelay(5000)));
         final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
 
         broker.publish(SampleShares.HEARING_RESULTED, text);
