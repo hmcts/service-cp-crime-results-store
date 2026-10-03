@@ -41,7 +41,9 @@ class SweepSchedulingConfigTest {
                 databaseThreads.add(Thread.currentThread().getName());
                 throw new IllegalStateException("no database in this test");
             }))
-            .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class));
+            .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class))
+            // Enrichment is not under test here; on, it would need a progression base URL and user.
+            .withPropertyValues("resultsstore.enrichment.enabled=false");
 
     @Test
     void enabled_sweep_should_run_its_rounds_on_its_own_thread_and_survive_a_failed_round() {

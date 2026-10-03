@@ -162,10 +162,29 @@ contracts/progression-lookup.md against an in-process WireMock.
     answered lookup logs at DEBUG. The body is read whole through the deadline guard before it is
     parsed, so a deadline or socket timeout is never mistaken for a Jackson failure.
 
-- [ ] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
+- [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.
   - Covers: FR-024, FR-025, FR-026; SC-009.
   - Done when: both test classes and `ActuatorIntegrationTest` green; the gate green.
+  - RED (seam: `ProgressionConfig` with no `@Bean`, not imported, its method building a client with the
+    base URL only, no user, no timeouts and no blank check):
+    `ProgressionConfigTest` → `blank_base_url_should_stop_the_client_being_built(String) > [1] baseUrl = null FAILED`
+    `Expecting code to raise a throwable.` (first failure; the rest skipped by `failFast`);
+    `IntakeConfigTest` → `enabled_subscription_and_enrichment_should_build_the_progression_client() FAILED`
+    `to have a single bean of type: <…application.ProgressionApplications> but found no beans of that type`.
+  - GREEN: `ProgressionConfigTest` 8, `IntakeConfigTest` 7, `ActuatorIntegrationTest` 4 (test profile,
+    enrichment off), with `ConfigurationValidationTest` 60 and `SweepSchedulingConfigTest` 4 still green;
+    0 failures; `pmdMain pmdTest` clean.
+  - Notes: the bean is conditional on `resultsstore.publicevents.enabled=true` and
+    `resultsstore.enrichment.enabled=true` (missing counts as true, as the record's default does), so
+    `SweepSchedulingConfigTest`, which starts `IntakeConfig` with the subscription on and no
+    application.yaml, now sets enrichment off; the 001 wiring test of `IntakeConfigTest` supplies a base
+    URL and a user id. The `RestClient` is built with `RestClient.builder()`, not Boot's customised
+    builder, so nothing beyond the request factory, the base URL and the two headers shapes the request.
+    The connect timeout is passed to the factory with the read timeout (`NoRedirectRequestFactoryTest`
+    pins both on the connection); only the read timeout is proved over the wire.
+  - contracts/configuration.md checked against what was built: matches (properties, defaults, no
+    default for the base URL and user id, where the rules run, the conditional bean); no edit needed.
 
 ---
 

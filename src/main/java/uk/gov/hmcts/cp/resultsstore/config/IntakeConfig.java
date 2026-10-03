@@ -6,6 +6,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -28,9 +29,10 @@ import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
  * (tasks.md, wiring note).
  *
  * <p>The observer is {@link MicrometerIntakeObserver}; a context with the subscription enabled starts
- * with no stand-in.
+ * with no stand-in. The progression client comes from {@link ProgressionConfig}, imported here.
  */
 @Configuration(proxyBeanMethods = false)
+@Import(ProgressionConfig.class)
 @EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class, EnrichmentProperties.class,
     ProgressionProperties.class})
 public class IntakeConfig {
