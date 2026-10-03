@@ -17,6 +17,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.http.server.PathContainer;
+import uk.gov.hmcts.cp.resultsstore.domain.ReadEndpoint;
 
 @DisplayName("the read API's route table")
 class ApiRouteTest {
@@ -114,5 +115,12 @@ class ApiRouteTest {
                 .containsExactly("results-store.pull-shares", "results-store.search-shares",
                         "results-store.get-share", "results-store.get-share-payload",
                         "results-store.list-hearing-day-shares");
+    }
+
+    /** The {@code endpoint} tag each route's read meters carry (contracts/metrics.md). */
+    @Test
+    void every_route_should_name_its_endpoint_tag() {
+        assertThat(Arrays.stream(ApiRoute.values()).map(ApiRoute::endpoint)).containsExactly(ReadEndpoint.PULL,
+                ReadEndpoint.SEARCH, ReadEndpoint.SHARE, ReadEndpoint.PAYLOAD, ReadEndpoint.DAY_VERSIONS);
     }
 }
