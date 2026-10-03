@@ -36,8 +36,9 @@ public class SweepSchedulingConfig {
     @Bean
     public SweepSchedule sweepSchedule(final ExtractionSweep extractionSweep, final IntakeObserver observer,
             final SweepProperties sweep, final IntakeProperties intake) {
+        // Two store transactions at most are open for a row in turn: its write, then the record of its try.
         return new SweepSchedule(extractionSweep, sweep.initialDelay(), sweep.fixedDelay(),
-                intake.store().transactionTimeout(), roundFailureHandler(observer));
+                intake.store().transactionTimeout().multipliedBy(2), roundFailureHandler(observer));
     }
 
     /**

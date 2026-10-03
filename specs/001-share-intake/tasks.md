@@ -815,6 +815,21 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     with batch size 1 the next round takes the other `FAILED` row first, then the first again; never-tried
     then longest-since-tried selection; the stamp changes that row's `sweep_tried_at` alone), `FlywayMigrationIT`
     (V4 applies; nullable `timestamptz` with no default; the one sweep index), `JdbcShareStoreIT` 14, 0 failures.
+  - Gate round 2, ruling D (shutdown): `ExtractionSweep` has a `stopping` flag (`stop()`, cleared by
+    `start()` so a restarted context sweeps again), checked with the thread's interrupt immediately
+    before either transaction a row would open (its write and the record of its try) and before each
+    next row. `SweepSchedule.start()` clears it; `stop()` sets it, then interrupts and waits for the
+    worker to finish its current row, bounded by 2 × the store transaction timeout (the write and the
+    try), and logs a WARN, "Extraction sweep stop timed out", when the bound passes. A row whose write
+    is skipped, or whose write fails, while stopping is `cancelled` (ruling E). Tests use latches, no
+    sleeps (the earlier busy-wait round in `SweepScheduleTest` is replaced).
+    RED (seam: `ExtractionSweep.start`/`stop` no-ops, no timeout log), each class on its own:
+    `ExtractionSweepTest` 4 completed, 1 failed (failFast),
+    `stop_asked_while_a_row_is_read_should_open_no_transaction_for_it_and_cancel_it`: `Expecting actual:
+    [null, null] to contain exactly (and in same order): [CANCELLED]`; `SweepScheduleTest` 4 completed, 1
+    failed, `stop_should_give_up_waiting_at_its_bound_and_log_that_it_timed_out`: `Expected size: 1 but was:
+    0 in: []`. GREEN: `ExtractionSweepTest` 17, `SweepScheduleTest` 9, `SweepSchedulingConfigTest` 4,
+    `ExtractionSweepIT` 14, 0 failures.
 
 - [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).

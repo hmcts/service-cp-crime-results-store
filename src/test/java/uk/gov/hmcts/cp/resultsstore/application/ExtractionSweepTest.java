@@ -324,6 +324,79 @@ class ExtractionSweepTest {
     }
 
     @Test
+    void stop_asked_while_a_row_is_read_should_open_no_transaction_for_it_and_cancel_it() {
+        final SweepCandidate row = candidate(1);
+        final SweepCandidate next = candidate(1);
+        final ExtractionSweep underTest = sweep();
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
+        when(store.payloadText(row.shareId())).thenAnswer(invocation -> {
+            underTest.stop();
+            return readable(row);
+        });
+
+        final List<SweepRowOutcome> outcomes = underTest.runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.CANCELLED);
+        verify(store, never()).recordReextraction(any(), any(), anyInt());
+        verify(store, never()).recordSweepAttempt(any());
+        verify(store, never()).payloadText(next.shareId());
+        verify(observer).sweepRow(SweepRowOutcome.CANCELLED);
+        assertThat(Thread.currentThread().isInterrupted()).isFalse();
+    }
+
+    @Test
+    void stop_asked_while_a_row_is_written_should_keep_its_outcome_and_open_no_try_transaction() {
+        final SweepCandidate row = candidate(1);
+        final SweepCandidate next = candidate(1);
+        final ExtractionSweep underTest = sweep();
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row, next));
+        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
+            underTest.stop();
+            return SweepRowOutcome.FIXED;
+        });
+
+        final List<SweepRowOutcome> outcomes = underTest.runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        verify(store, never()).recordSweepAttempt(any());
+        verify(store, never()).payloadText(next.shareId());
+    }
+
+    @Test
+    void write_that_fails_while_stop_is_asked_should_be_cancelled_not_an_error() {
+        final SweepCandidate row = candidate(1);
+        final ExtractionSweep underTest = sweep();
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenAnswer(invocation -> {
+            underTest.stop();
+            throw new QueryTimeoutException("cancelled by the stop");
+        });
+
+        final List<SweepRowOutcome> outcomes = underTest.runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.CANCELLED);
+        verify(store, never()).recordSweepAttempt(any());
+    }
+
+    @Test
+    void sweep_started_again_after_a_stop_should_work_its_rows() {
+        final SweepCandidate row = candidate(1);
+        final ExtractionSweep underTest = sweep();
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
+        underTest.stop();
+        assertThat(underTest.runRound()).isEmpty();
+
+        underTest.start();
+
+        assertThat(underTest.runRound()).containsExactly(SweepRowOutcome.FIXED);
+        verify(store).recordSweepAttempt(row.shareId());
+    }
+
+    @Test
     void round_with_rows_should_log_its_counts_and_no_stored_text() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));

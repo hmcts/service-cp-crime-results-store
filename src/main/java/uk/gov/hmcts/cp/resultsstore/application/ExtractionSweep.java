@@ -35,6 +35,9 @@ public class ExtractionSweep {
 
     private final Settings settings;
 
+    /** Set by {@link #stop()}; read by the round's thread before each transaction it would open. */
+    private volatile boolean stopping;
+
     /**
      * Creates the sweep.
      *
@@ -53,8 +56,22 @@ public class ExtractionSweep {
         this.settings = settings;
     }
 
+    /** Lets rounds work their rows again after a {@link #stop()}. */
+    public void start() {
+        stopping = false;
+    }
+
     /**
-     * Runs one round. An interrupt (the schedule stopping) ends it before its next row.
+     * Asks the sweep to stop: from now on no transaction is opened for a row, neither its write nor
+     * the record of its try, and no further row is started. A row already inside a transaction runs
+     * to that transaction's end. Called by the schedule before it interrupts and waits.
+     */
+    public void stop() {
+        stopping = true;
+    }
+
+    /**
+     * Runs one round. A stop, or an interrupt, ends it before its next row.
      *
      * @return each selected row's outcome, in selection order
      */
@@ -63,7 +80,7 @@ public class ExtractionSweep {
                 .sweepCandidates(settings.extractorVersion(), settings.maxAttempts(), settings.batchSize())
                 .stream()
                 // Stopping: the rows not yet started are left for the next round, on this pod or another.
-                .takeWhile(candidate -> !Thread.currentThread().isInterrupted())
+                .takeWhile(candidate -> !isStopping())
                 .map(this::sweepRow)
                 .toList();
         if (!outcomes.isEmpty()) {
@@ -82,14 +99,13 @@ public class ExtractionSweep {
      * round stops at the retry limit (FR-035). WRITE (the store transaction): a runtime failure here is
      * operational, not the row's; nothing about the projection changes and the row is counted
      * {@code error} (FR-037). Either way the try is then recorded on its own ({@link #recordTried}), so
-     * a row that keeps failing rotates behind the others. A row met while the thread is interrupted
-     * (the schedule stopping) is {@code cancelled}: no transaction is opened for it.
+     * a row that keeps failing rotates behind the others. A row met while the sweep is stopping
+     * ({@link #stop()}, or the thread interrupted) is {@code cancelled}: no transaction is opened for it.
      */
     private SweepRowOutcome sweepRow(final SweepCandidate candidate) {
         final Projection projection = readAndExtract(candidate);
-        final SweepRowOutcome outcome = Thread.currentThread().isInterrupted()
-                ? SweepRowOutcome.CANCELLED
-                : write(candidate, projection);
+        // Checked immediately before the write's transaction would open.
+        final SweepRowOutcome outcome = isStopping() ? SweepRowOutcome.CANCELLED : write(candidate, projection);
         recordTried(candidate);
         observer.sweepRow(outcome);
         if (projection instanceof Projection.Failed failed && outcome == SweepRowOutcome.FAILED_AGAIN) {
@@ -124,19 +140,20 @@ public class ExtractionSweep {
             LOG.warn("Extraction sweep could not write a row; an operational error, so the row is left as it "
                     + "was. shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
             // A failure met while stopping is the stop's, not the row's.
-            outcome = Thread.currentThread().isInterrupted() ? SweepRowOutcome.CANCELLED : SweepRowOutcome.ERROR;
+            outcome = isStopping() ? SweepRowOutcome.CANCELLED : SweepRowOutcome.ERROR;
         }
         return outcome;
     }
 
     /**
-     * Records the try in its own short transaction, unless the thread is being stopped. When that
-     * fails too, the row stays as it is and the round goes on.
+     * Records the try in its own short transaction, unless the sweep is stopping (checked immediately
+     * before that transaction would open). When that fails too, the row stays as it is and the round
+     * goes on.
      */
     // Catch-to-log: the try's stamp is best effort; the failure is logged by class.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private void recordTried(final SweepCandidate candidate) {
-        if (!Thread.currentThread().isInterrupted()) {
+        if (!isStopping()) {
             try {
                 store.recordSweepAttempt(candidate.shareId());
             } catch (final RuntimeException failure) {
@@ -144,6 +161,11 @@ public class ExtractionSweep {
                         + "shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
             }
         }
+    }
+
+    /** Asked to stop, or the thread interrupted (the schedule stopping it). */
+    private boolean isStopping() {
+        return stopping || Thread.currentThread().isInterrupted();
     }
 
     private static int count(final List<SweepRowOutcome> outcomes, final SweepRowOutcome outcome) {

@@ -3,6 +3,8 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.timeout;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
@@ -10,6 +12,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -135,29 +140,62 @@ class SweepScheduleTest {
     }
 
     @Test
-    void stop_should_interrupt_a_round_in_progress_and_return_only_once_it_has_ended() throws InterruptedException {
-        final CountDownLatch started = new CountDownLatch(1);
+    void stop_should_tell_the_sweep_to_stop_interrupt_it_and_return_only_once_its_row_has_ended()
+            throws Exception {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final AtomicBoolean interrupted = new AtomicBoolean();
         final AtomicBoolean ended = new AtomicBoolean();
         when(sweep.runRound()).thenAnswer(invocation -> {
-            started.countDown();
-            try {
-                new CountDownLatch(1).await();
-            } catch (final InterruptedException interrupted) {
-                // A driver that ignores the interrupt for a while: the row's statement runs on.
-                busyFor(Duration.ofMillis(300));
-                Thread.currentThread().interrupt();
-            }
+            entered.countDown();
+            // A row whose statement ignores the interrupt: it runs on until the test releases it.
+            interrupted.set(awaitIgnoringInterrupts(release));
             ended.set(true);
             return List.of();
         });
         final SweepSchedule underTest = newSchedule();
         underTest.start();
-        assertThat(started.await(WITHIN.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+        verify(sweep).start();
+        assertThat(entered.await(WITHIN.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
 
-        underTest.stop();
+        try (ExecutorService stopper = Executors.newSingleThreadExecutor()) {
+            final Future<?> stopping = stopper.submit((Runnable) underTest::stop);
+            verify(sweep, timeout(WITHIN.toMillis())).stop();
+            assertThat(stopping).isNotDone();
+            assertThat(ended).isFalse();
+
+            release.countDown();
+            stopping.get(WITHIN.toMillis(), TimeUnit.MILLISECONDS);
+        } finally {
+            release.countDown();
+        }
 
         assertThat(ended).isTrue();
+        assertThat(interrupted).isTrue();
         assertThat(underTest.isRunning()).isFalse();
+    }
+
+    @Test
+    void stop_should_give_up_waiting_at_its_bound_and_log_that_it_timed_out() throws InterruptedException {
+        final CountDownLatch entered = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        when(sweep.runRound()).thenAnswer(invocation -> {
+            entered.countDown();
+            awaitIgnoringInterrupts(release);
+            return List.of();
+        });
+        schedule = new SweepSchedule(sweep, Duration.ZERO, SHORT, Duration.ofMillis(100), handled::add);
+        schedule.start();
+        assertThat(entered.await(WITHIN.toMillis(), TimeUnit.MILLISECONDS)).isTrue();
+
+        try (CapturedLog log = CapturedLog.forClass(SweepSchedule.class)) {
+            schedule.stop();
+
+            assertThat(schedule.isRunning()).isFalse();
+            assertThat(log.messages()).singleElement().asString().contains("stop timed out");
+        } finally {
+            release.countDown();
+        }
     }
 
     @Test
@@ -216,11 +254,25 @@ class SweepScheduleTest {
         assertThat(health(underTest)).isEqualTo(Status.UP);
     }
 
-    /** Waits without observing interrupts, as a blocked socket read does. */
-    private static void busyFor(final Duration duration) {
-        final long until = System.nanoTime() + duration.toNanos();
-        while (System.nanoTime() < until) {
-            Thread.onSpinWait();
+    /**
+     * Waits for the latch without giving way to interrupts, as a blocked socket read does.
+     *
+     * @return whether an interrupt arrived meanwhile (it is restored on the thread)
+     */
+    private static boolean awaitIgnoringInterrupts(final CountDownLatch latch) {
+        boolean interrupted = false;
+        boolean released = false;
+        while (!released) {
+            try {
+                latch.await();
+                released = true;
+            } catch (final InterruptedException interrupt) {
+                interrupted = true;
+            }
         }
+        if (interrupted) {
+            Thread.currentThread().interrupt();
+        }
+        return interrupted;
     }
 }

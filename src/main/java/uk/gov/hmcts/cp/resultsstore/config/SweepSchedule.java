@@ -23,10 +23,13 @@ import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
  * Kubernetes restarts the pod. Its threads are daemons, so a schedule ended this way, which the
  * context then no longer stops, never holds the JVM open.
  *
- * <p>Start and stop are idempotent. Stop interrupts a round in progress, which then ends after the
- * row it is on (a JDBC call may not notice the interrupt, so that row's transaction runs to its end,
- * bounded by the store transaction's timeout), and returns once the thread has ended or that bound has
- * passed, so the datasource is not closed under a running row.
+ * <p>Start and stop are idempotent. Stop first asks the sweep to stop ({@link ExtractionSweep#stop()}:
+ * no further transaction is opened, neither a row's write nor the record of its try), then interrupts
+ * a round in progress, which ends after the row it is on (a JDBC call may not notice the interrupt, so
+ * a transaction already open runs to its end, bounded by the store transaction's timeout), and returns
+ * once the thread has ended or the stop bound (two store transaction timeouts: the write and the try)
+ * has passed, so the datasource is not closed under a running row. A stop that reaches its bound is
+ * logged.
  */
 public class SweepSchedule implements SmartLifecycle {
 
@@ -37,6 +40,8 @@ public class SweepSchedule implements SmartLifecycle {
     private final Duration initialDelay;
 
     private final Duration fixedDelay;
+
+    private final Duration stopBound;
 
     private final ThreadPoolTaskScheduler scheduler = new ThreadPoolTaskScheduler();
 
@@ -64,6 +69,7 @@ public class SweepSchedule implements SmartLifecycle {
         scheduler.setDaemon(true);
         scheduler.setErrorHandler(failure -> handled(errorHandler, failure));
         // Interrupt on stop (shutdownNow), then wait for the round's current row to end.
+        this.stopBound = stopBound;
         scheduler.setWaitForTasksToCompleteOnShutdown(false);
         scheduler.setAwaitTerminationMillis(stopBound.toMillis());
     }
@@ -71,6 +77,7 @@ public class SweepSchedule implements SmartLifecycle {
     @Override
     public synchronized void start() {
         if (!running) {
+            sweep.start();
             scheduler.initialize();
             rounds = scheduler.scheduleWithFixedDelay(sweep::runRound, Instant.now().plus(initialDelay), fixedDelay);
             running = true;
@@ -80,9 +87,14 @@ public class SweepSchedule implements SmartLifecycle {
     @Override
     public synchronized void stop() {
         if (running) {
+            sweep.stop();
             // Interrupts a round in progress, which stops before its next row, and waits for it to end.
             scheduler.shutdown();
             running = false;
+            if (!scheduler.getScheduledExecutor().isTerminated()) {
+                LOG.warn("Extraction sweep stop timed out after {} ms; its current row may still be running.",
+                        stopBound.toMillis());
+            }
         }
     }
 
