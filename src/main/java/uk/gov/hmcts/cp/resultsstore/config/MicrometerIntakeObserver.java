@@ -74,6 +74,7 @@ public class MicrometerIntakeObserver implements IntakeObserver {
         });
         Arrays.stream(NonShareReason.values()).forEach(this::notShareCounter);
         Arrays.stream(IntakeStage.values()).forEach(stage -> Arrays.stream(IntakeFailureCause.values())
+                .filter(cause -> cause.belongsTo(stage))
                 .forEach(cause -> failed(stage, cause)));
         Arrays.stream(ExtractionStage.values()).forEach(stage -> Arrays.stream(ExtractionFailureKind.values())
                 .forEach(kind -> extractionFailedCounter(stage, kind)));

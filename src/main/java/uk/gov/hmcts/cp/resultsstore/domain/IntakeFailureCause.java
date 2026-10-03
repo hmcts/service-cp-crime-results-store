@@ -52,6 +52,23 @@ public enum IntakeFailureCause {
         return cause;
     }
 
+    /**
+     * Whether {@code resultsstore.intake.failed} pairs this cause with the stage (contracts/metrics.md):
+     * the database causes with {@code receipt} and {@code store}, the {@code progression_*} causes with
+     * {@code enrich} only, and {@code other} with every stage.
+     *
+     * @param stage the stage
+     * @return whether the pair is one the contract lists
+     */
+    public boolean belongsTo(final IntakeStage stage) {
+        return switch (this) {
+            case OTHER -> true;
+            case LOCK_TIMEOUT, STATEMENT_TIMEOUT, DATABASE -> stage != IntakeStage.ENRICH;
+            case PROGRESSION_REJECTED, PROGRESSION_REFUSED, PROGRESSION_UNAVAILABLE, PROGRESSION_UNREACHABLE,
+                    PROGRESSION_TIMEOUT, PROGRESSION_MALFORMED -> stage == IntakeStage.ENRICH;
+        };
+    }
+
     /** The {@code cause} tag. */
     public String tag() {
         return name().toLowerCase(Locale.ROOT);

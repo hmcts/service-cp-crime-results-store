@@ -68,4 +68,25 @@ class IntakeFailureCauseTest {
                 IntakeFailureCause.PROGRESSION_MALFORMED);
         assertThat(IntakeFailureCause.fromSqlState(sqlState)).isNotIn(progression);
     }
+
+    /** contracts/metrics.md: the progression causes only with {@code enrich}; the database ones never with it. */
+    @ParameterizedTest
+    @CsvSource({
+        "LOCK_TIMEOUT, true, true, false",
+        "STATEMENT_TIMEOUT, true, true, false",
+        "DATABASE, true, true, false",
+        "OTHER, true, true, true",
+        "PROGRESSION_REJECTED, false, false, true",
+        "PROGRESSION_REFUSED, false, false, true",
+        "PROGRESSION_UNAVAILABLE, false, false, true",
+        "PROGRESSION_UNREACHABLE, false, false, true",
+        "PROGRESSION_TIMEOUT, false, false, true",
+        "PROGRESSION_MALFORMED, false, false, true"
+    })
+    void cause_should_belong_to_the_stages_the_contract_pairs_it_with(final IntakeFailureCause cause,
+            final boolean receipt, final boolean store, final boolean enrich) {
+        assertThat(cause.belongsTo(IntakeStage.RECEIPT)).as("receipt").isEqualTo(receipt);
+        assertThat(cause.belongsTo(IntakeStage.STORE)).as("store").isEqualTo(store);
+        assertThat(cause.belongsTo(IntakeStage.ENRICH)).as("enrich").isEqualTo(enrich);
+    }
 }

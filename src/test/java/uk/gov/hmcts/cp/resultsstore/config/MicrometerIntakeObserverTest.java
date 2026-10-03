@@ -69,8 +69,10 @@ class MicrometerIntakeObserverTest {
             "reason", Set.of("not_text_message", "nul_character", "not_json", "not_object", "missing_hearing_id",
                     "invalid_hearing_id", "missing_hearing_day", "invalid_hearing_day", "missing_shared_time",
                     "invalid_shared_time"),
-            "stage", Set.of("receipt", "store", "intake", "sweep"),
-            "cause", Set.of("lock_timeout", "statement_timeout", "database", "other"),
+            "stage", Set.of("receipt", "store", "enrich", "intake", "sweep"),
+            "cause", Set.of("lock_timeout", "statement_timeout", "database", "other", "progression_rejected",
+                    "progression_refused", "progression_unavailable", "progression_unreachable",
+                    "progression_timeout", "progression_malformed"),
             "kind", Set.of("missing", "wrong_type", "invalid_uuid", "unstorable_text", "unexpected"),
             "outcome", Set.of("fixed", "failed_again", "skipped", "error", "cancelled"));
 
@@ -104,8 +106,12 @@ class MicrometerIntakeObserverTest {
         assertThat(registered.get(NOT_SHARE)).contains(
                 Map.of("status", "unreadable", "reason", "not_json"),
                 Map.of("status", "no_identity", "reason", "missing_shared_time"));
-        assertThat(registered.get(FAILED)).hasSize(8).contains(Map.of("stage", "store", "cause", "lock_timeout"),
-                Map.of("stage", "receipt", "cause", "other"));
+        // receipt and store with the four database causes; enrich with other and the six progression causes.
+        assertThat(registered.get(FAILED)).hasSize(15).contains(Map.of("stage", "store", "cause", "lock_timeout"),
+                Map.of("stage", "receipt", "cause", "other"), Map.of("stage", "enrich", "cause", "other"),
+                Map.of("stage", "enrich", "cause", "progression_malformed"))
+                .doesNotContain(Map.of("stage", "store", "cause", "progression_timeout"),
+                        Map.of("stage", "enrich", "cause", "database"));
         assertThat(registered.get(EXTRACTION_FAILED)).hasSize(10)
                 .contains(Map.of("stage", "intake", "kind", "invalid_uuid"), Map.of("stage", "sweep", "kind",
                         "unexpected"));
@@ -226,7 +232,8 @@ class MicrometerIntakeObserverTest {
         Arrays.stream(NonShareReason.values()).forEach(observer::notShare);
         Arrays.stream(SweepRowOutcome.values()).forEach(observer::sweepRow);
         for (final IntakeStage stage : IntakeStage.values()) {
-            Arrays.stream(IntakeFailureCause.values()).forEach(cause -> observer.intakeFailed(stage, cause));
+            Arrays.stream(IntakeFailureCause.values()).filter(cause -> cause.belongsTo(stage))
+                    .forEach(cause -> observer.intakeFailed(stage, cause));
         }
         for (final ExtractionStage stage : ExtractionStage.values()) {
             Arrays.stream(ExtractionFailureKind.values()).forEach(kind -> observer.extractionFailed(stage, kind));
