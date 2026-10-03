@@ -15,10 +15,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.support.TransactionTemplate;
-import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareId;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
@@ -28,10 +26,7 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 /**
  * The shared durable subscription against a real (embedded) Artemis broker, with the committed
  * topic, subscription name and selector, delivering to intake: each message selected reaches its
- * receipt on Testcontainers Postgres.
- *
- * <p>The observer is a stand-in until its adapter lands (tasks.md wiring note: {@code IntakeObserver}
- * in T013); the share store is the real one.
+ * receipt on Testcontainers Postgres, through the real store and observer.
  */
 @SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.receipt-timeout=7s",
     "resultsstore.intake.store.transaction-timeout=50s"})
@@ -49,9 +44,6 @@ class HearingResultedEventListenerIT {
 
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
     private static EmbeddedBrokerSupport broker;
-
-    @MockitoBean
-    private IntakeObserver observer;
 
     @Autowired
     private JdbcClient jdbc;

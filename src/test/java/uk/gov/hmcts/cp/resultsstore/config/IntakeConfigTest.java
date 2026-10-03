@@ -3,6 +3,8 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
@@ -27,6 +29,7 @@ class IntakeConfigTest {
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withUserConfiguration(IntakeConfig.class)
             .withBean(ObjectMapper.class, () -> JsonMapper.builder().build())
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
             .withBean(JdbcClient.class, () -> mock(JdbcClient.class))
             .withBean(PlatformTransactionManager.class, () -> mock(PlatformTransactionManager.class));
 
@@ -40,6 +43,7 @@ class IntakeConfigTest {
                     .hasSingleBean(IntakeObserver.class)
                     .hasSingleBean(ShareStore.class);
             assertThat(context.getBean(ShareStore.class)).isInstanceOf(JdbcShareStore.class);
+            assertThat(context.getBean(IntakeObserver.class)).isInstanceOf(MicrometerIntakeObserver.class);
         });
     }
 

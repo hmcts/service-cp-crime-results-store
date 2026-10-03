@@ -65,6 +65,9 @@ dependencies {
   // --- Observability / Actuator / OTEL / Prometheus ---
   implementation 'org.springframework.boot:spring-boot-starter-actuator'
   implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+  // The /actuator/prometheus endpoint exists only with this registry (research R16); version via the
+  // Boot BOM. Export to Azure Monitor stays with the OpenTelemetry starter above.
+  implementation 'io.micrometer:micrometer-registry-prometheus'
 
   // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
   // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable

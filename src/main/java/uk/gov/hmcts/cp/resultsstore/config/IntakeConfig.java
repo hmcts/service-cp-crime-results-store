@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.resultsstore.config;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -26,8 +27,8 @@ import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
  * enabled, its beans: so a context with no datasource (the {@code test} profile) still starts
  * (tasks.md, wiring note).
  *
- * <p>The observer is {@link PlaceholderIntakeObserver}, which records nothing, until the Micrometer
- * observer replaces it (T013); a context with the subscription enabled starts with no stand-in.
+ * <p>The observer is {@link MicrometerIntakeObserver}; a context with the subscription enabled starts
+ * with no stand-in.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class})
@@ -90,8 +91,8 @@ public class IntakeConfig {
 
     @Bean
     @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
-    public IntakeObserver intakeObserver() {
-        return new PlaceholderIntakeObserver();
+    public IntakeObserver intakeObserver(final MeterRegistry registry) {
+        return new MicrometerIntakeObserver(registry);
     }
 
     @Bean

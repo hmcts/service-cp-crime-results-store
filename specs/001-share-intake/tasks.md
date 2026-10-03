@@ -735,12 +735,41 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     throws is logged by class chain and the next round runs. No ShedLock. The two-sweeps case holds the
     day row on a second connection and releases it once `pg_stat_activity` shows both sweeps waiting.
 
-- [ ] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
+- [X] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
   - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).
   - Covers: FR-038–FR-041; SC-010.
   - Done when: both test classes green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (`config/MicrometerIntakeObserver` registering and recording nothing,
+    `domain/ShareOrder.from` always `IN_ORDER`, `IntakeConfig` still on the placeholder observer), each class
+    run on its own: `./gradlew test --tests '*MicrometerIntakeObserverTest'`: 2 completed, 1 failed (failFast),
+    `no_tag_in_the_registry_should_hold_a_value_off_the_lists_an_id_or_a_date`: `Expecting actual not to be
+    empty`; `--tests '*ShareOrderTest'`: 2 completed, 1 failed, `[2] outOfOrder = "true"`: `expected:
+    OUT_OF_ORDER but was: IN_ORDER`; `--tests '*NoPayloadInLogsIT'`: 2 completed, 1 failed,
+    `full_intake_run_should_count_each_path_and_log_ids_but_never_the_message_text`: `expected: 9.0 but was:
+    0.0` (received). Mutation check that the log rule bites: with `PublicEventsConfig.notApplied` passing
+    the throwable to the logger, `--tests '*NoPayloadInLogsIT.full*'`: 1 failed, `[loggers whose lines carry
+    message text] Expecting empty but was: ["…PublicEventsConfig ERROR", "…PublicEventsConfig ERROR"]` (the
+    two deliveries of the row-quoting failure); restored, green.
+  - GREEN: `MicrometerIntakeObserverTest` 18 tests, `NoPayloadInLogsIT` 2 tests, `ShareOrderTest` 2 tests,
+    `IntakeConfigTest` 2, `SweepSchedulingConfigTest` 4, `HearingResultedEventListenerIT` 6 with its
+    `@MockitoBean IntakeObserver` stand-in removed, 0 failures. The gate exits 0: 639 tests, 0 failures; JaCoCo
+    (gate scope) line 0.994, branch 0.996.
+  - Notes: `MicrometerIntakeObserver` (registered in `IntakeConfig` from the application's `MeterRegistry`)
+    registers every counter and both lag timers with each tag set at start, so a dashboard shows zeros, and
+    has no branches: every tag value is a `domain` enum's `tag()` (`ShareOrder`, new, for `order`;
+    `NonShareReason`, `IntakeStage`, `IntakeFailureCause`, `ExtractionStage`, `ExtractionFailureKind`,
+    `SweepRowOutcome`). A negative lag is recorded as zero (`Math.max`) as well as clamped by
+    `IntakeService`, since a timer drops a negative duration. `config/PlaceholderIntakeObserver` and its test
+    are deleted. `io.micrometer:micrometer-registry-prometheus` (Boot BOM) makes `/actuator/prometheus`
+    exist; `NoPayloadInLogsIT` scrapes it through MockMvc. That IT captures the root logger across one run:
+    stored, duplicate, an extraction failure (marker as the court centre id), unreadable, no identity, a
+    lock timeout (day held, 1 s lock timeout, dead-lettered after the broker's 2 deliveries) and a database
+    error that quotes the failing row (a test-only `CHECK … NOT VALID` on `hearing_share.lja_code`, the
+    marker as the LJA code; the test first shows, through the wired store, that the error's stack holds
+    `Failing row contains` and the marker); each line's message, arguments, MDC and whole throwable chain
+    must be free of the marker, and both `PublicEventsConfig` (the container's error handler) and the
+    listener must have logged. A failing check names loggers and levels only. It also asserts the counters
+    of US7 scenario 1 and the failure causes (`lock_timeout`, `database`, 2 each).
 
 - [ ] T014 Full quality gate: `flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`; fix `OnlyOneReturn` / `AvoidDuplicateLiterals` and coverage gaps by code shape (or a reasoned per-site suppression) in the files of T002–T013; add any missing test before the code it covers
   - Covers: SC-011 (line ≥ 0.88, branch ≥ 0.85, PMD clean).
