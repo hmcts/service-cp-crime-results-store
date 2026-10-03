@@ -2,7 +2,7 @@
 
 **Feature Branch**: `002-enrichment`
 **Created**: 2026-10-03
-**Status**: Draft
+**Status**: Implemented (phases A to C, 2026-10-03)
 **Input**: User description: "Enrichment: add finalised application results from progression to each stored share"
 
 **Sources**: the Results Store design page (CRA 321061800, v45), sections *Intake* (*Adding finalised application results*, *Why not the raw event only*, *How many transactions*, *Retries*), *Write path* (step *Enrich*), *Data model and versioning*, *Read API* and *Observability* (alert *Progression lookups failing*); the approved implementation plan for spec 002, including its "Decisions taken with Sachin (2026-10-03)", "Settled by Fable from the facts", "Facts established", "Design" and "404 ruling"; the fact-finding maps of results' enricher (cpp-context-results @063472490) and progression's application-only query; spec 001 (*Share intake*). Quotes in *italics* are the page's wording.
@@ -300,7 +300,7 @@ Settled implementation choices from the approved plan, stated so they are visibl
 
 - Parity means equal JSON content, not equal bytes; results rebuilds the whole payload, so byte parity is not possible.
 - The enriched copy is written as compact JSON with non-ASCII characters escaped; the arrived text is kept when nothing was added.
-- The progression client is a Spring `RestClient` over a simple request factory, with redirects off, and reads status and body in one place.
+- The progression client is a Spring `RestClient` over `HttpComponentsClientHttpRequestFactory` (Apache HttpClient 5, subclassed as `NoRedirectRequestFactory`), with automatic retries and redirects off and a fresh connection for every lookup. Each lookup has one absolute deadline (the read timeout, from when the request is created) that cancels it, and the client aborts the exchange on any status other than 200, so that body is never read. Status and body are read in one place. (Amended after gate round 1 of T002: research R11, R15.)
 - The existence check reuses the store's existing-share lookup.
 - The `unstorable_results` fallback re-runs the whole store transaction once.
 - No environment outside tests holds 001 rows yet, so leaving them un-enriched loses nothing.

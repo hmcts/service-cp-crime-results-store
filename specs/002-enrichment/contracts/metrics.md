@@ -52,6 +52,23 @@ A share with no application needing a lookup moves none of these.
 
 `invalid_id` is not a timer outcome: no call is made.
 
+## As built (T006, checked in T010)
+
+- **Observer port.** `IntakeObserver.applicationLookedUp(ApplicationLookupOutcome)` moves
+  `enrichment.applications`; `IntakeObserver.lookupTimed(Optional<ApplicationLookupOutcome>, Duration)`
+  records `enrichment.lookup`. `IntakeService` calls `lookupTimed` once per progression call, when the
+  call ends: with the answer's outcome when progression answered (then `applicationLookedUp` with the
+  same outcome first), or with `Optional.empty()` when the call threw a `RetryableIntakeException`
+  (a `progression_*` cause), which `MicrometerIntakeObserver` records under `outcome="failed"`. A failed
+  call moves no `enrichment.applications` outcome. The duration is taken on the injected monotonic
+  clock, from just before `ProgressionApplications.find` to the end of the enricher's classification.
+- **`invalid_id` counting rule.** Counted once per application needing results whose id is missing or
+  not a canonical UUID (`Scan.invalidIds()`), only when enrichment is on (the port is present), and
+  before the existence check, so it is counted again on a redelivery and for a share already stored.
+  With enrichment off nothing is counted for it; a share whose only applications have invalid ids makes
+  no lookup and moves no `skipped` reason. It never reaches the timer: `MicrometerIntakeObserver`
+  pre-registers every timer outcome except `invalid_id`, plus `failed`.
+
 ## Alert input
 
 *Progression lookups failing* (design page, *Observability*) reads

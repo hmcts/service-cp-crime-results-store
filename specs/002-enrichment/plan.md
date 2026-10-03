@@ -55,7 +55,7 @@ Every point above is settled in [research.md](research.md); none is left open.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Constitution 2.0.0, with the Principle II rewording to 2.1.0 planned in T010 (FR-035).
+Constitution 2.1.0 (Principle II reworded in T010, FR-035; the check below was made against 2.0.0 and still holds).
 
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|

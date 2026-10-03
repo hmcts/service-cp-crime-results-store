@@ -301,7 +301,7 @@ with Sachin, 2026-10-03.
 
 ---
 
-## R11. The client: `RestClient` over `SimpleClientHttpRequestFactory`, redirects off, `exchange()`
+## R11. The client: `RestClient` over Apache HttpClient 5 (`NoRedirectRequestFactory`), redirects and retries off, `exchange()`
 
 **Decision.** `adapter/progression/ProgressionApplicationClient` implements the
 `ProgressionApplications` port with a Spring `RestClient` built in `ProgressionConfig`:
@@ -312,9 +312,12 @@ with Sachin, 2026-10-03.
 - headers `Accept: application/vnd.progression.query.application-only+json` and
   `CJSCPPUID: <resultsstore.progression.system-user-id>`; never another service's user and never the
   sharing user (FR-008);
-- request factory: a subclass of `SimpleClientHttpRequestFactory` whose `prepareConnection` calls
-  `super` then `connection.setInstanceFollowRedirects(false)`; connect and read timeouts from the
-  properties;
+- request factory (as built, after the amendment below): `NoRedirectRequestFactory`, a subclass of
+  `HttpComponentsClientHttpRequestFactory` over Apache HttpClient 5 with automatic retries and
+  redirects off and a fresh connection for every lookup; connect and socket timeouts from the
+  properties; one absolute deadline per lookup (R15). The first draft, a subclass of
+  `SimpleClientHttpRequestFactory` calling `setInstanceFollowRedirects(false)`, was replaced; its
+  reasons are kept below as history;
 - `exchange((request, response) -> …)`, so status and body are classified in one method and Spring's
   default status handlers (whose exception messages carry the body) never run;
 - the body is read through a deadline guard (R15), then parsed with the reader of R9.
@@ -346,7 +349,9 @@ therefore `HttpComponentsClientHttpRequestFactory` over Apache HttpClient 5 (`ht
 from the Boot BOM), subclassed as `NoRedirectRequestFactory`: automatic retries, redirects, content
 compression, cookies and protocol upgrades off; no connection reuse; connect and socket timeouts
 from the properties; and each request cancelled once the response deadline (R15) has passed. The
-rest of this decision (headers, `exchange()`, the deadline guard on the body, the reader) stands.
+rest of this decision (headers, `exchange()`, the deadline guard on the body, the reader) stands. On
+any status other than 200 the client aborts the exchange (`ProgressionExchange.abort()`), so a body
+the status has already decided is never read or drained.
 
 ---
 
@@ -429,11 +434,15 @@ body, an HTML 500 and a 403 case, each holding a marker string that must appear 
 
 ## R15. Timeouts and the slow drip
 
-**Decision.** Connect timeout 5 s and read timeout 10 s by default (FR-026). The read timeout is
-also a deadline for the whole response: the body stream is wrapped in a small guard
-(`adapter/progression/DeadlineInputStream`) that, before and after each read, throws
-`SocketTimeoutException` once `read-timeout` has passed since the request was sent. The per-read
-socket timeout stays as well.
+**Decision (as built).** Connect timeout 5 s and read timeout 10 s by default (FR-026). The read
+timeout is also one absolute deadline for the whole lookup, fixed when `NoRedirectRequestFactory`
+creates the request: a daemon thread cancels the request once it has passed (closing the connection,
+which ends a blocked read in the status line, headers or body), and the body stream is wrapped in a
+guard (`adapter/progression/DeadlineInputStream`) that throws `SocketTimeoutException` on any read
+after it. The per-read socket timeout stays as well. Apache HttpClient 5 makes the call, with
+retries and redirects off and a fresh connection per lookup (R11); a non-200 status aborts the
+exchange. The first draft (a guard on the body alone, timed from when the request was sent, over
+`HttpURLConnection`) is kept below as history.
 
 **Rationale.** `HttpURLConnection`'s read timeout is per read: a server sending one byte every few
 seconds never trips it. The spec treats a slow drip past the read timeout as a timeout. The guard

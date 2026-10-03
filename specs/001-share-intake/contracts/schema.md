@@ -15,3 +15,5 @@ Rules that bind every later spec:
 4. Only the columns listed under "What may change after insert" in `data-model.md` are ever
    updated (constitution I; FR-044).
 5. `FlywayMigrationIT` holds the schema to these rules (T002).
+
+*Amended by spec 002* ([contracts/schema.md](../../002-enrichment/contracts/schema.md)): `hearing_share_payload.payload_json` is the working copy (arrived text parsed, plus finalised application results added at intake), read by extraction and the sweep; no migration changes it, and `payload_text` stays the text as received.

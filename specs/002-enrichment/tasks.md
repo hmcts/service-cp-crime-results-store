@@ -585,7 +585,7 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     `PASS: intake stored the share enriched, dropped its duplicate and recorded the unreadable message`;
     teardown clean. No fix to the script or the code was needed.
 
-- [ ] T010 Documents, analysis and Deferred list: test first, the review grep for `exactly as received`, `parsed copy`, `unread in 001`, `never the parsed copy`, `can be dropped`, `same way the validation`, `always false in 001` across specs/, .specify/memory/constitution.md, .claude/agents/code-reviewer.md and specs/002-enrichment/page-notes.md (RED: the hits it lists before the edits); then
+- [X] T010 Documents, analysis and Deferred list: test first, the review grep for `exactly as received`, `parsed copy`, `unread in 001`, `never the parsed copy`, `can be dropped`, `same way the validation`, `always false in 001` across specs/, .specify/memory/constitution.md, .claude/agents/code-reviewer.md and specs/002-enrichment/page-notes.md (RED: the hits it lists before the edits); then
   - .specify/memory/constitution.md: Principle II reworded to research R25's text; version 2.0.0 → 2.1.0 (MINOR: the working-copy clause added, the amendment-field removal named, no rule reversed); Sync Impact Report at the top updated (modified principle, templates checked, follow-ups); **Last Amended** date set;
   - specs/001-share-intake/spec.md: FR-015, FR-016, FR-036 and Key Entities (*Payload*, *Share*) brought in line with spec 002 "Changes to spec 001", each with a "Changed by 002 (see specs/002-enrichment/spec.md, *Changes to spec 001*)" cross-reference; FR-019 marked still deferred;
   - specs/001-share-intake/data-model.md and specs/001-share-intake/contracts/metrics.md, contracts/configuration.md, contracts/schema.md: the 002 deltas folded in, or a pointer to the 002 contract where the 001 text is kept as history;
@@ -601,6 +601,37 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     page-notes.md, and the metrics and configuration contracts checked against phase A's code.
     Not yet done: spec 001 data-model and contracts deltas, the plan.md constitution reference,
     `/speckit-analyze` and the final tick, after phase C.
+  - RED (review grep, `git grep -n -i` of the seven phrases over specs/, the constitution and
+    `.claude/agents/code-reviewer.md` at f86e8ff, before the docs commit): 49 hits, among them spec 001
+    FR-015 ("a parsed copy"), FR-036 ("never the parsed copy"), *Payload* ("a parsed copy that may be
+    empty") with no 002 note, and the code reviewer's *Payload altered* rule on the text alone.
+  - Remainder (phase C, 2026-10-03): spec.md *Assumptions* and research R11 and R15 now describe the
+    transport as built (Apache HttpClient 5 through `HttpComponentsClientHttpRequestFactory`, subclassed
+    as `NoRedirectRequestFactory`; retries and redirects off; a fresh connection per lookup; one absolute
+    deadline per lookup; abort on any status other than 200), the first draft kept as history; plan.md
+    names constitution 2.1.0; spec 001 `data-model.md` and `contracts/schema.md` carry a one-line
+    *Amended by spec 002* delta for `payload_json`'s role; contracts/metrics.md gains *As built*:
+    `lookupTimed(Optional)` (empty = a call ending in a `progression_*` cause, timer outcome `failed`)
+    and the `invalid_id` counting rule (enrichment on only, before the existence check, never timed);
+    spec.md status set to Implemented.
+  - GREEN (review grep at the docs commit): every remaining hit is reworded, carries an *Amended by
+    spec 002* note (spec 001 FR-015, FR-016, FR-036, Key Entities; 001 data-model and schema contract
+    headers covering the V3 DDL comments, kept stale on purpose), is 001 history (001 plan, research,
+    tasks, metrics contract), is the page's current wording quoted in page-notes.md, or uses "parsed
+    copy" as the 002 documents' name for the `payload_json` column.
+  - `/speckit-analyze` (hooks `before_analyze` / `after_analyze` disabled in `.specify/extensions.yml`):
+    41 FRs and 11 SCs, each covered by at least one task and named in plan.md; every task maps to a
+    story or to FR-035 to FR-041; no TODO, TBD or unresolved marker; no constitution conflict against
+    2.1.0. CRITICAL 0, HIGH 0. MEDIUM 3, all fixed here: (I1) spec.md *Assumptions* and research
+    R11/R15 contradicted the transport and deadline as built; (I2) plan.md cited constitution 2.0.0;
+    (U1) FR-028 did not say whether `invalid_id` counts with enrichment off or for a share already
+    stored (stated in contracts/metrics.md *As built*). LOW 2: spec.md status still Draft (fixed); the
+    tasks.md header names constitution 2.0.0 as the phase-A baseline (kept: accurate history).
+    `check-prerequisites.sh --require-tasks --include-tasks --json` exits 0.
+  - Gate (`flock -w 7200 /tmp/resultsstore-gradle.lock ./gradlew clean build pmdMain pmdTest
+    jacocoTestReport jacocoTestCoverageVerification`, JDK 25): exit 0; 934 tests, 0 failures, 0
+    skipped; JaCoCo line 99.6 %, branch 98.9 %. No wildcard import under src/; the attribution wording
+    grep finds policy text only.
   - Done when: the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` succeeds; the gate green.
   - Deferred (not in 002):
     - indexing defendants who appear only as court-application parties (spec 001 FR-019): still deferred, no change to the defendant index;
@@ -609,7 +640,14 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     - the push alternative: subscribing to `public.progression.hearing-resulted-application-updated` instead of the query (research R1); it would need a second subscription and a join with the share, and the page names the query;
     - the future self-derivation option: deriving application results from the store's own history (research R1); only once that history is complete and Principle IV is amended to allow it;
     - the V3 inline comments on `payload_json` and `enrichment_applied` stay stale on purpose (data-model.md; no `COMMENT ON` migration for wording alone);
-    - the *Progression lookups failing* alert rules themselves (contracts/metrics.md, *Alert input*).
+    - the *Progression lookups failing* alert rules themselves (contracts/metrics.md, *Alert input*);
+    - review note: `NoRedirectRequestFactory` hands the `ProgressionExchange` it creates to the Spring
+      request built around it through a `ThreadLocal` (`CREATED`). It is correct while the request is
+      created and wrapped on one thread, as `RestClient` does today; a reviewer may prefer a hand-off
+      that does not rely on that;
+    - renaming `NoRedirectRequestFactory`: it now also turns off retries, sets the deadline and makes a
+      fresh connection per lookup, so a name such as `ProgressionRequestFactory` would fit better; a
+      rename only, left for a later change.
 
 ---
 
