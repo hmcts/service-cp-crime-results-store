@@ -466,10 +466,35 @@ US1–US7 end to end and `NoPayloadInLogsIT` the log half of US8.
     (empty = `failed`), so no new enum was needed. contracts/metrics.md checked against what was built:
     matches; no edit needed.
 
-- [ ] T007 [US1] [US2] [US3] [US4] [US5] [US6] [US7] [US8] Test first: `IntakeIT` (extended; static `support/ProgressionStub` started before the context; `@DynamicPropertySource` sets `resultsstore.enrichment.enabled=true`, the stub's base URL and a synthetic system user id) in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, `NoPayloadInLogsIT` (extended, same stub) in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then any production fix the ITs find, in the files of T001–T006
+- [X] T007 [US1] [US2] [US3] [US4] [US5] [US6] [US7] [US8] Test first: `IntakeIT` (extended; static `support/ProgressionStub` started before the context; `@DynamicPropertySource` sets `resultsstore.enrichment.enabled=true`, the stub's base URL and a synthetic system user id) in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, `NoPayloadInLogsIT` (extended, same stub) in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then any production fix the ITs find, in the files of T001–T006
   - Cases (`IntakeIT`, each test with its own application ids; stubs and `verify()` per id): an application missing results → stored enriched, `enrichment_applied` true, `payload_json` holds the results without the three fields, `payload_text` equals the published text and `payload_sha256` its checksum, one GET carrying the system user; `"judicialResults": []` → enriched the same way; two applications → two GETs in array order; `LISTED` → un-enriched, `not_finalised` counted; `FINALISED` with no results → un-enriched, `no_results`; `200 {}` → un-enriched, `payload_json` equal to the arrived payload, `not_found` counted; two applications, one enriched → flag true; 503 then 200 (a WireMock scenario scoped to one id) → nothing stored after the first delivery, receipt `RECEIVED`, then one share, enriched, receipt `STORED` with 2 attempts; 503 every time → dead-lettered, no share, receipt `RECEIVED`, `intake.failed{stage=enrich,cause=progression_unavailable}` moved; 404 → redelivered, nothing stored, `progression_rejected`; 403 → `progression_refused`; HTML 200 → `progression_malformed`; the same share under a new message id → one GET in total, second receipt `DUPLICATE`, `skipped{already_stored}` = 1; a share with no applications and one already resulted → 0 requests; a result holding `\u0000` → stored with the arrived copy, flag false, `skipped{unstorable_results}`. `NoPayloadInLogsIT`: a malformed body, an HTML 500 and a 403 body each carrying a marker string; no captured log line holds the marker or the system user id.
   - Covers: FR-038; US1–US8 end to end; SC-002, SC-003 (end-to-end rows), SC-004, SC-005, SC-006, SC-007, SC-008.
   - Done when: both ITs green; the dead-letter case runs on the test profile's no-pause setting and the embedded broker's low max-delivery count (no sleeps); the gate green.
+  - RED (the extended `IntakeIT` with the stub registered by `@DynamicPropertySource` but the switch left
+    at the test profile's `false`): `intake end to end > application_missing_results_should_be_stored_enriched_with_the_arrived_text_kept() FAILED`
+    `Expecting map: {…, "enrichment_applied"=false, …} to contain entries: ["enrichment_applied"=true]`.
+    With the switch on, every case passed with no production change: T001 to T006 hold end to end, so the
+    task's "any production fix the ITs find" found none. `NoPayloadInLogsIT`'s new case was green at once:
+    the client never logs a body or the user id (T002, ruling 3), and the client and the step log only ids.
+  - GREEN: `IntakeIT` 23 (14 new: enriched; `[]` enriched; two applications in array order, one enriched is
+    enough; `LISTED`, `FINALISED` with no results and `200 {}` stored as arrived and counted; 503 then 200;
+    503 every time, 404, 403 and HTML 200 dead-lettered and counted; re-publish under a new message id; no
+    application and one already resulted; a `\u0000` result), `NoPayloadInLogsIT` 3, 0 failures;
+    `pmdMain pmdTest` clean. Full gate (`build pmdMain pmdTest jacocoTestReport`): 930 tests, 0 failures,
+    0 skipped; JaCoCo line 99.5 %, branch 98.7 %; exit 0.
+  - Notes: the stub (`support/ProgressionStub`, static, started with the broker before the context) is shared
+    by the class; every stub, scenario and request check names its own application id. The 503-then-200
+    scenario delays the second answer by 1.5 s so the state between the deliveries can be read (attempts 2,
+    receipt `RECEIVED`, no share) before the share is stored once, enriched, with 2 attempts. Lookup order
+    is read from WireMock's serve events filtered to the test's two paths. "0 requests" for a share with no
+    application is shown by the lookup timer's total not moving (no id exists to ask the stub about); for
+    the resulted application, by its own path. The fail-closed rows wait for the dead letter (3 deliveries,
+    no pause in the test profile) and check one request per delivery and `intake.failed{stage=enrich}` moved
+    by 3. `NoPayloadInLogsIT` runs with enrichment on: four progression answers carrying a marker (a
+    malformed 200, an HTML 200, an HTML 500, a 403) are dead-lettered after 2 deliveries each, and no
+    captured line holds the marker or the synthetic system user id; the 001 counts it asserts are not
+    moved by these failures. `SampleShares.shareWithApplications` builds a share with given application
+    elements.
 
 ---
 

@@ -100,9 +100,23 @@ public final class SampleShares {
      */
     public static String shareWithApplication(final UUID hearingId, final String hearingDay,
             final String sharedTime, final String applicationId) {
+        return shareWithApplications(hearingId, hearingDay, sharedTime,
+                "{\"id\":\"" + applicationId + "\",\"applicationStatus\":\"LISTED\"}");
+    }
+
+    /**
+     * A share whose {@code hearing.courtApplications} holds the given elements.
+     *
+     * @param hearingId    {@code hearing.id}
+     * @param hearingDay   {@code hearingDay}
+     * @param sharedTime   {@code sharedTime}
+     * @param applications the array's elements as raw JSON, comma separated
+     * @return the body
+     */
+    public static String shareWithApplications(final UUID hearingId, final String hearingDay,
+            final String sharedTime, final String applications) {
         return share(hearingId, hearingDay, sharedTime).replace("\"jurisdictionType\":\"MAGISTRATES\",",
-                "\"jurisdictionType\":\"MAGISTRATES\",\"courtApplications\":[{\"id\":\"" + applicationId
-                        + "\",\"applicationStatus\":\"LISTED\"}],");
+                "\"jurisdictionType\":\"MAGISTRATES\",\"courtApplications\":[" + applications + "],");
     }
 
     /**

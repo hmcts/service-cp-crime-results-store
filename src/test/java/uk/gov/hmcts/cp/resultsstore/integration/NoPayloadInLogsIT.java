@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.resultsstore.integration;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
@@ -43,6 +44,7 @@ import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
 import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
+import uk.gov.hmcts.cp.resultsstore.support.ProgressionStub;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
@@ -51,7 +53,9 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
  * stored, duplicate, extraction-failure, unreadable and no-identity paths and two failure paths, a
  * lock timeout and a database error that quotes the failing row, which also run the listener
  * container's error handler. The counters move as the contract says, and the Prometheus endpoint
- * exposes them.
+ * exposes them. With enrichment on against a progression stub, a marker in progression's answer (a
+ * malformed or HTML 200, an HTML 500, a 403) reaches no log line either, nor does the system user id
+ * (specs/002-enrichment FR-032, SC-008).
  */
 @SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.store.lock-timeout=1s"})
 @AutoConfigureMockMvc
@@ -69,8 +73,14 @@ class NoPayloadInLogsIT {
 
     private static final String MARKER_FREE_SHARE = "test_marker_free_lja_code_ck";
 
+    /** The store's synthetic system user, which no log line may hold. */
+    private static final String SYSTEM_USER_ID = "7e57c0de-0000-4000-8000-000000000003";
+
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
     private static EmbeddedBrokerSupport broker;
+
+    /** Started once for the JVM, before the context. */
+    private static ProgressionStub progression;
 
     @Autowired
     private JdbcClient jdbc;
@@ -99,6 +109,9 @@ class NoPayloadInLogsIT {
         startTheBroker();
         registry.add("spring.artemis.broker-url", broker::url);
         PostgresTestSupport.register(registry);
+        registry.add("resultsstore.enrichment.enabled", () -> "true");
+        registry.add("resultsstore.progression.base-url", progression::baseUrl);
+        registry.add("resultsstore.progression.system-user-id", () -> SYSTEM_USER_ID);
     }
 
     @BeforeEach
@@ -163,6 +176,39 @@ class NoPayloadInLogsIT {
         assertThat(lines.stream().filter(line -> everythingIn(line).contains(MARKER))
                 .map(line -> line.getLoggerName() + " " + line.getLevel()).toList())
                 .as("loggers whose lines carry message text").isEmpty();
+    }
+
+    @Test
+    void progression_answers_carrying_a_marker_should_log_neither_it_nor_the_system_user() {
+        final List<String> bodies = List.of(
+                "200|application/json|{\"courtApplication\": \"" + MARKER + "\" trailing",
+                "200|text/html|<html><body>" + MARKER + "</body></html>",
+                "500|text/html|<html><body>" + MARKER + "</body></html>",
+                "403|application/json|{\"error\": \"" + MARKER + " access denied\"}");
+        final double malformedBefore =
+                count("resultsstore.intake.failed", "stage", "enrich", "cause", "progression_malformed");
+        for (final String answer : bodies) {
+            final String[] parts = answer.split("\\|", 3);
+            final UUID applicationId = UUID.randomUUID();
+            progression.answer(applicationId, aResponse().withStatus(Integer.parseInt(parts[0]))
+                    .withHeader("Content-Type", parts[1]).withBody(parts[2]));
+            final long deadBefore = broker.deadLetters();
+            broker.publish(SampleShares.HEARING_RESULTED, SampleShares.shareWithApplication(UUID.randomUUID(), DAY,
+                    "2026-10-02T18:00:00.000Z", applicationId.toString()));
+            await().atMost(WITHIN).until(() -> broker.deadLetters() == deadBefore + 1);
+            assertThat(progression.requestsFor(applicationId)).hasSize(MAX_DELIVERY_ATTEMPTS);
+        }
+
+        assertThat(count("resultsstore.intake.failed", "stage", "enrich", "cause", "progression_malformed")
+                - malformedBefore).isEqualTo(2.0 * MAX_DELIVERY_ATTEMPTS);
+        final List<ILoggingEvent> lines = captured();
+        assertThat(lines.stream().map(ILoggingEvent::getFormattedMessage)
+                .filter(message -> message.contains("Progression lookup")).toList()).isNotEmpty();
+        // Named by logger and level only, so a failure never prints the text it found.
+        assertThat(lines.stream()
+                .filter(line -> everythingIn(line).contains(MARKER) || everythingIn(line).contains(SYSTEM_USER_ID))
+                .map(line -> line.getLoggerName() + " " + line.getLevel()).toList())
+                .as("loggers whose lines carry a progression body or the system user").isEmpty();
     }
 
     @Test
@@ -260,6 +306,9 @@ class NoPayloadInLogsIT {
     private static synchronized void startTheBroker() throws Exception {
         if (broker == null) {
             broker = EmbeddedBrokerSupport.start("no-payload-in-logs-broker", MAX_DELIVERY_ATTEMPTS);
+        }
+        if (progression == null) {
+            progression = ProgressionStub.start();
         }
     }
 }

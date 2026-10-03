@@ -1,7 +1,19 @@
 package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 
+import static com.github.tomakehurst.wiremock.client.WireMock.aResponse;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.okJson;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
+
+import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
+import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
+import com.github.tomakehurst.wiremock.verification.LoggedRequest;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.JMSException;
@@ -16,6 +28,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 import java.util.UUID;
 import javax.sql.DataSource;
@@ -23,6 +36,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,6 +58,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
 import uk.gov.hmcts.cp.resultsstore.support.FailingFirstCommitConnectionFactory;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
+import uk.gov.hmcts.cp.resultsstore.support.ProgressionStub;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
@@ -54,6 +70,10 @@ import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
  * after 2 s; the redelivery pause is off ({@code test} profile). The client takes no message ahead of
  * the one it is working on ({@code consumerWindowSize=0}), so a second consumer gets the next message
  * while the first is busy. Waits are on observable rows and queue counts, never on time alone.
+ *
+ * <p>Enrichment is on against an in-process progression stub started before the context
+ * (specs/002-enrichment US1 to US8, FR-038). Each test uses its own application ids, and stubs and
+ * request checks are per id, never global: a late redelivery may still reach the shared stub.
  */
 @SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.store.lock-timeout=2s"})
 @ActiveProfiles("test")
@@ -71,8 +91,29 @@ class IntakeIT {
 
     private static final int MAX_DELIVERY_ATTEMPTS = 3;
 
+    /** The store's synthetic system user, sent as {@code CJSCPPUID}. */
+    private static final String SYSTEM_USER_ID = "7e57c0de-0000-4000-8000-000000000002";
+
+    private static final String APPLICATIONS = "resultsstore.enrichment.applications";
+
+    private static final String OUTCOME = "outcome";
+
+    private static final String FAILED = "resultsstore.intake.failed";
+
+    private static final String SKIPPED = "resultsstore.enrichment.skipped";
+
+    private static final String APPLIED = "resultsstore.enrichment.applied";
+
+    private static final String STORED_STATUS = "STORED";
+
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
     private static EmbeddedBrokerSupport broker;
+
+    /** Started once for the JVM, before the context, for the same reason. */
+    private static ProgressionStub progression;
+
+    @Autowired
+    private MeterRegistry meters;
 
     @Autowired
     private JdbcClient jdbc;
@@ -102,10 +143,13 @@ class IntakeIT {
     private UUID hearingId;
 
     @DynamicPropertySource
-    static void brokerAndStore(final DynamicPropertyRegistry registry) throws Exception {
+    static void brokerStoreAndProgression(final DynamicPropertyRegistry registry) throws Exception {
         startTheBroker();
         registry.add("spring.artemis.broker-url", () -> broker.url() + "?consumerWindowSize=0");
         PostgresTestSupport.register(registry);
+        registry.add("resultsstore.enrichment.enabled", () -> "true");
+        registry.add("resultsstore.progression.base-url", progression::baseUrl);
+        registry.add("resultsstore.progression.system-user-id", () -> SYSTEM_USER_ID);
     }
 
     @BeforeEach
@@ -308,6 +352,254 @@ class IntakeIT {
         assertEveryReceiptSettled();
     }
 
+    @Test
+    void application_missing_results_should_be_stored_enriched_with_the_arrived_text_kept() {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, finalised(applicationId));
+        final double appliedBefore = count(APPLIED);
+        final String text = shareWith("{\"id\":\"" + applicationId + "\",\"applicationStatus\":\"LISTED\"}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        final UUID shareId = awaitStored(text);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", true)
+                .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text));
+        assertThat(payload(shareId, text))
+                .containsEntry("text_matches", true)
+                .containsEntry("results", 1)
+                .containsEntry("label", "Granted")
+                .containsEntry("amended", false)
+                .containsEntry("new_amendment", true)
+                .containsEntry("arrived_matches", false);
+        final List<LoggedRequest> requests = progression.requestsFor(applicationId);
+        assertThat(requests).hasSize(1);
+        assertThat(requests.getFirst().getHeader("CJSCPPUID")).isEqualTo(SYSTEM_USER_ID);
+        assertThat(requests.getFirst().getHeader("Accept")).isEqualTo(ProgressionStub.MEDIA_TYPE);
+        assertThat(count(APPLICATIONS, OUTCOME, "enriched")).isPositive();
+        assertThat(count(APPLIED) - appliedBefore).isEqualTo(1.0);
+        assertEveryReceiptSettled();
+    }
+
+    @Test
+    void application_with_empty_results_should_be_enriched_the_same_way() {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, finalised(applicationId));
+        final String text = shareWith("{\"id\":\"" + applicationId + "\",\"judicialResults\":[]}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        final UUID shareId = awaitStored(text);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", true);
+        assertThat(payload(shareId, text)).containsEntry("results", 1).containsEntry("amended", false);
+        assertThat(progression.requestsFor(applicationId)).hasSize(1);
+        assertEveryReceiptSettled();
+    }
+
+    @Test
+    void two_applications_should_be_looked_up_in_array_order_and_one_enriched_is_enough() {
+        final UUID first = UUID.randomUUID();
+        final UUID second = UUID.randomUUID();
+        progression.answer(first, okJson("{}"));
+        progression.answer(second, finalised(second));
+        final String text = shareWith("{\"id\":\"" + first + "\"},{\"id\":\"" + second + "\"}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        final UUID shareId = awaitStored(text);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", true);
+        final List<String> paths = progression.server().getAllServeEvents().reversed().stream()
+                .map(ServeEvent::getRequest).map(LoggedRequest::getUrl)
+                .filter(url -> url.equals(ProgressionStub.pathFor(first)) || url.equals(ProgressionStub.pathFor(second)))
+                .toList();
+        assertThat(paths).containsExactly(ProgressionStub.pathFor(first), ProgressionStub.pathFor(second));
+        assertEveryReceiptSettled();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+        listed          | {"courtApplication":{"applicationStatus":"LISTED","judicialResults":[{"label":"Adjourned"}]}} | not_finalised
+        no results      | {"courtApplication":{"applicationStatus":"FINALISED"}}                                         | no_results
+        not found       | {}                                                                                            | not_found
+        """)
+    void answer_with_nothing_to_add_should_store_the_share_as_it_arrived_and_count_it(final String name,
+            final String body, final String outcome) {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, okJson(body));
+        final double before = count(APPLICATIONS, OUTCOME, outcome);
+        final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        final UUID shareId = awaitStored(text);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", false);
+        assertThat(payload(shareId, text)).containsEntry("arrived_matches", true).containsEntry("text_matches", true);
+        assertThat(count(APPLICATIONS, OUTCOME, outcome) - before).isEqualTo(1.0);
+        assertThat(progression.requestsFor(applicationId)).hasSize(1);
+        assertEveryReceiptSettled();
+    }
+
+    @Test
+    void progression_unavailable_once_should_store_nothing_then_store_the_share_once_on_the_redelivery() {
+        final UUID applicationId = UUID.randomUUID();
+        final String path = ProgressionStub.pathFor(applicationId);
+        final String scenario = "unavailable-once-" + applicationId;
+        progression.server().stubFor(get(urlPathEqualTo(path)).inScenario(scenario)
+                .whenScenarioStateIs(Scenario.STARTED).willReturn(aResponse().withStatus(503))
+                .willSetStateTo("up"));
+        // The second answer waits, so the state between the two deliveries can be seen.
+        progression.server().stubFor(get(urlPathEqualTo(path)).inScenario(scenario)
+                .whenScenarioStateIs("up").willReturn(finalised(applicationId).withFixedDelay(1500)));
+        final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        await().atMost(WITHIN).until(() -> attempts(hearingId) == 2);
+        assertThat(receiptOf(hearingId)).containsEntry("status", "RECEIVED");
+        assertThat(shares(hearingId)).isZero();
+        final UUID shareId = awaitStored(text);
+        assertThat(receiptOf(hearingId)).containsEntry("attempts", 2);
+        assertThat(shares(hearingId)).isEqualTo(1);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", true);
+        assertThat(progression.requestsFor(applicationId)).hasSize(2);
+        assertEveryReceiptSettled();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource(delimiter = '|', textBlock = """
+        503 every time | 503 | text/plain | down                              | progression_unavailable
+        404            | 404 | text/plain | no route                          | progression_rejected
+        403            | 403 | text/plain | access denied                     | progression_refused
+        HTML 200       | 200 | text/html  | <html><body>gateway</body></html> | progression_malformed
+        """)
+    void failing_answer_should_store_nothing_and_end_on_the_dead_letter_address_counted(final String name,
+            final int status, final String contentType, final String body, final String cause) {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, aResponse().withStatus(status).withHeader("Content-Type", contentType)
+                .withBody(body));
+        final double failedBefore = count(FAILED, "stage", "enrich", "cause", cause);
+        final long deadBefore = broker.deadLetters();
+
+        broker.publish(SampleShares.HEARING_RESULTED, shareWith("{\"id\":\"" + applicationId + "\"}"));
+
+        await().atMost(WITHIN).until(() -> broker.deadLetters() == deadBefore + 1);
+        assertThat(receiptOf(hearingId))
+                .containsEntry("status", "RECEIVED")
+                .containsEntry("attempts", MAX_DELIVERY_ATTEMPTS);
+        assertThat(shares(hearingId)).isZero();
+        assertThat(progression.requestsFor(applicationId)).hasSize(MAX_DELIVERY_ATTEMPTS);
+        assertThat(count(FAILED, "stage", "enrich", "cause", cause) - failedBefore).isEqualTo(MAX_DELIVERY_ATTEMPTS);
+    }
+
+    @Test
+    void same_share_under_a_new_message_id_should_make_one_lookup_in_all_and_be_a_duplicate() {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, finalised(applicationId));
+        final double skippedBefore = count(SKIPPED, "reason", "already_stored");
+        final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+        awaitStored(text);
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        await().atMost(WITHIN).until(() -> settled(hearingId) == 2 && broker.inFlight() == 0);
+        assertThat(jdbc.sql("SELECT status FROM event_receipt WHERE hearing_id = :hearingId ORDER BY status")
+                .param("hearingId", hearingId).query(String.class).list()).containsExactly("DUPLICATE", STORED_STATUS);
+        assertThat(progression.requestsFor(applicationId)).hasSize(1);
+        assertThat(count(SKIPPED, "reason", "already_stored") - skippedBefore).isEqualTo(1.0);
+        assertThat(shares(hearingId)).isEqualTo(1);
+        assertEveryReceiptSettled();
+    }
+
+    @Test
+    void shares_with_no_application_or_one_already_resulted_should_make_no_lookup() {
+        final UUID resulted = UUID.randomUUID();
+        final double lookupsBefore = lookups();
+        final String none = SampleShares.share(hearingId, DAY, SHARED_TIME);
+        final String alreadyResulted = shareWith("{\"id\":\"" + resulted
+                + "\",\"judicialResults\":[{\"label\":\"own\"}]}").replace(SHARED_TIME, "2026-10-02T15:00:00.000Z");
+
+        broker.publish(SampleShares.HEARING_RESULTED, none);
+        broker.publish(SampleShares.HEARING_RESULTED, alreadyResulted);
+
+        await().atMost(WITHIN).until(() -> stored(hearingId) == 2 && broker.inFlight() == 0);
+        assertThat(progression.requestsFor(resulted)).isEmpty();
+        assertThat(lookups()).isEqualTo(lookupsBefore);
+        assertThat(jdbc.sql("SELECT count(*) FROM hearing_share WHERE hearing_id = :hearingId AND enrichment_applied")
+                .param("hearingId", hearingId).query(Integer.class).single()).isZero();
+        assertEveryReceiptSettled();
+    }
+
+    @Test
+    void results_jsonb_cannot_hold_should_store_the_arrived_copy_with_the_flag_false_and_count_it() {
+        final UUID applicationId = UUID.randomUUID();
+        progression.answer(applicationId, okJson("{\"courtApplication\":{\"id\":\"" + applicationId
+                + "\",\"applicationStatus\":\"FINALISED\",\"judicialResults\":[{\"label\":\"a\\u0000b\"}]}}"));
+        final double skippedBefore = count(SKIPPED, "reason", "unstorable_results");
+        final double appliedBefore = count(APPLIED);
+        final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
+
+        broker.publish(SampleShares.HEARING_RESULTED, text);
+
+        final UUID shareId = awaitStored(text);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", false);
+        assertThat(payload(shareId, text)).containsEntry("arrived_matches", true);
+        assertThat(count(SKIPPED, "reason", "unstorable_results") - skippedBefore).isEqualTo(1.0);
+        assertThat(count(APPLIED)).isEqualTo(appliedBefore);
+        assertThat(receiptOf(hearingId)).containsEntry("attempts", 1);
+        assertEveryReceiptSettled();
+    }
+
+    /** Progression's answer: the application {@code FINALISED} with one result carrying the amendment fields. */
+    private static ResponseDefinitionBuilder finalised(final UUID applicationId) {
+        return okJson("""
+                {"courtApplication":{"id":"%s","applicationStatus":"FINALISED","judicialResults":[
+                  {"judicialResultId":"%s","label":"Granted","amendmentDate":"2026-09-30",
+                   "amendmentReason":"Typing error","amendmentReasonId":"%s","isNewAmendment":true,"amount":1.50}]}}
+                """.formatted(applicationId, UUID.randomUUID(), UUID.randomUUID()));
+    }
+
+    private String shareWith(final String applications) {
+        return SampleShares.shareWithApplications(hearingId, DAY, SHARED_TIME, applications);
+    }
+
+    private UUID awaitStored(final String text) {
+        await().atMost(WITHIN).until(() -> STORED_STATUS.equals(receiptOf(hearingId).get("status")));
+        await().atMost(WITHIN).until(() -> broker.inFlight() == 0);
+        return SampleShares.read(text).identity().shareId();
+    }
+
+    private Map<String, Object> share(final UUID shareId) {
+        return jdbc.sql("SELECT * FROM hearing_share WHERE share_id = :shareId").param("shareId", shareId)
+                .query().singleRow();
+    }
+
+    /** The payload row read in the database, so a failure prints no payload. */
+    private Map<String, Object> payload(final UUID shareId, final String text) {
+        return jdbc.sql("""
+                SELECT payload_text = :text AS text_matches,
+                       payload_json = CAST(payload_text AS jsonb) AS arrived_matches,
+                       jsonb_array_length(payload_json #> '{hearing,courtApplications,0,judicialResults}') AS results,
+                       payload_json #>> '{hearing,courtApplications,0,judicialResults,0,label}' AS label,
+                       jsonb_exists(payload_json #> '{hearing,courtApplications,0,judicialResults,0}', 'amendmentDate')
+                           OR jsonb_exists(payload_json #> '{hearing,courtApplications,0,judicialResults,0}',
+                               'amendmentReason')
+                           OR jsonb_exists(payload_json #> '{hearing,courtApplications,0,judicialResults,0}',
+                               'amendmentReasonId') AS amended,
+                       (payload_json #> '{hearing,courtApplications,0,judicialResults,0,isNewAmendment}')::boolean
+                           AS new_amendment
+                  FROM hearing_share_payload WHERE share_id = :shareId
+                """).param("text", text).param("shareId", shareId).query().singleRow();
+    }
+
+    private double count(final String name, final String... tags) {
+        return Optional.ofNullable(meters.find(name).tags(tags).counter()).map(Counter::count).orElse(0.0);
+    }
+
+    /** Every lookup this service has timed, whatever its outcome. */
+    private double lookups() {
+        return meters.find("resultsstore.enrichment.lookup").timers().stream().mapToLong(Timer::count).sum();
+    }
+
     /** A second listener container on the one shared subscription, built from the same factory. */
     private void startASecondPod(final ConnectionFactory connectionFactory) {
         final SimpleJmsListenerEndpoint endpoint = new SimpleJmsListenerEndpoint();
@@ -401,6 +693,9 @@ class IntakeIT {
     private static synchronized void startTheBroker() throws Exception {
         if (broker == null) {
             broker = EmbeddedBrokerSupport.start("intake-test-broker", MAX_DELIVERY_ATTEMPTS);
+        }
+        if (progression == null) {
+            progression = ProgressionStub.start();
         }
     }
 }
