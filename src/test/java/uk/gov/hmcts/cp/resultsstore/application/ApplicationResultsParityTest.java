@@ -131,7 +131,9 @@ class ApplicationResultsParityTest {
 
     private void assertSameContent(final String expected, final Enrichment enrichment) throws JSONException {
         JSONAssert.assertEquals(resource(expected), enrichment.parsedCopy(), JSONCompareMode.STRICT);
-        assertThat(parser.readTree(enrichment.parsedCopy())).isEqualTo(enrichment.tree());
+        // A boolean, so a failure prints no hearing content.
+        assertThat(parser.readTree(enrichment.parsedCopy()).equals(enrichment.tree()))
+                .as("the parsed copy reads back as the enriched tree").isTrue();
     }
 
     private ApplicationAnswer found(final String file) {
