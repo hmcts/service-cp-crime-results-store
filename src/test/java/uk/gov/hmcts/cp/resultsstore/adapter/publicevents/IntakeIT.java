@@ -155,6 +155,7 @@ class IntakeIT {
         await().atMost(WITHIN).until(() -> "STORED".equals(receiptOf(hearingId).get("status")));
         await().atMost(WITHIN).until(() -> broker.inFlight() == 0);
         assertThat(receiptOf(hearingId)).containsEntry("attempts", 2);
+        assertThat(receipts(hearingId)).isEqualTo(1);
         assertThat(shares(hearingId)).isEqualTo(1);
         assertEveryReceiptSettled();
     }
@@ -171,6 +172,7 @@ class IntakeIT {
         await().atMost(WITHIN).until(() -> attempts(hearingId) == 2 && broker.inFlight() == 0);
         assertThat(failing.hasFailed()).isTrue();
         assertThat(receiptOf(hearingId)).containsEntry("status", "STORED");
+        assertThat(receipts(hearingId)).isEqualTo(1);
         assertThat(shares(hearingId)).isEqualTo(1);
         assertNoRedelivery(hearingId);
         assertEveryReceiptSettled();
