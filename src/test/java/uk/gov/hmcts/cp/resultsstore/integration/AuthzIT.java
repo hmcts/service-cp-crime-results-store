@@ -23,6 +23,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -191,6 +192,38 @@ class AuthzIT {
                 "Accept", "application/vnd.results-store.anything+json"));
 
         assertThat(response.statusCode()).isNotIn(401, 403);
+    }
+
+    /**
+     * FR-048 (d) in the running chain: the guard runs after authorisation, sees the route the action filter
+     * left on the wrapped request, and classifies the {@code Content-Type} as sent even when a vendor token in
+     * a parameter was neutralised for the authorisation library.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"multipart/form-data; boundary=x",
+        "multipart/related; type=\"application/vnd.results-store.anything+json\"; boundary=x"})
+    void multipart_from_a_system_users_caller_should_be_refused_415_and_counted(final String contentType)
+            throws IOException, InterruptedException {
+        final double unsupported = refused("unsupported_content_type");
+
+        final HttpResponse<String> response = get(samplePath(ApiRoute.GET_SHARE),
+                Map.of(USER_ID_HEADER, SYSTEM_USER, "Content-Type", contentType));
+
+        assertThat(response.statusCode()).isEqualTo(415);
+        assertThat(response.headers().firstValue("Content-Type")).contains("application/problem+json");
+        assertThat(MAPPER.readTree(response.body()).get("reason").asString()).isEqualTo("unsupported_content_type");
+        assertThat(refused("unsupported_content_type")).isEqualTo(unsupported + 1);
+    }
+
+    @Test
+    void multipart_without_an_identity_should_be_401_not_415() throws IOException, InterruptedException {
+        final double unsupported = refused("unsupported_content_type");
+
+        final HttpResponse<String> response = get(samplePath(ApiRoute.GET_SHARE),
+                Map.of("Content-Type", "multipart/form-data; boundary=x"));
+
+        assertBoundedBody(response, 401, "Unauthorized", "unauthenticated");
+        assertThat(refused("unsupported_content_type")).isEqualTo(unsupported);
     }
 
     @Test

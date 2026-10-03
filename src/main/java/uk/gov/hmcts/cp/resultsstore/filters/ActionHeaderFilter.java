@@ -20,7 +20,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  * <ul>
  *   <li>A mapped route: the request goes on wrapped ({@link ActionRequestWrapper#forRoute}), carrying the
  *       route's action whatever the caller sent, with vendor media types answered as JSON; the matched
- *       {@link ApiRoute} is left in the request attribute {@link ApiRoute#REQUEST_ATTRIBUTE}.</li>
+ *       {@link ApiRoute} is left in the request attribute {@link ApiRoute#REQUEST_ATTRIBUTE}, and the
+ *       {@code Content-Type} as sent in {@link #SENT_CONTENT_TYPE_ATTRIBUTE}.</li>
  *   <li>A known path with another method ({@code HEAD} and {@code OPTIONS} included):
  *       {@code 405 method_not_allowed} with {@code Allow}. The authorisation library always lets
  *       {@code OPTIONS} through, so it is refused here.</li>
@@ -34,6 +35,12 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  * audit filter. The body names the reason only, never the path.
  */
 public class ActionHeaderFilter extends OncePerRequestFilter {
+
+    /**
+     * The request attribute under which a mapped route's {@code Content-Type} is left as the caller sent it,
+     * before {@link ActionRequestWrapper} neutralises vendor tokens: the {@code 415} guard classifies that.
+     */
+    public static final String SENT_CONTENT_TYPE_ATTRIBUTE = ActionHeaderFilter.class.getName() + ".sentContentType";
 
     private static final String ALLOW = "Allow";
 
@@ -68,6 +75,7 @@ public class ActionHeaderFilter extends OncePerRequestFilter {
                 final ApiRoute route = ApiRoute.resolve(request.getMethod(), path,
                         name -> request.getParameter(name) != null).orElseThrow();
                 request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, route);
+                request.setAttribute(SENT_CONTENT_TYPE_ATTRIBUTE, request.getContentType());
                 filterChain.doFilter(ActionRequestWrapper.forRoute(request, route), response);
             } else {
                 response.setHeader(ALLOW, String.join(", ", allowed));

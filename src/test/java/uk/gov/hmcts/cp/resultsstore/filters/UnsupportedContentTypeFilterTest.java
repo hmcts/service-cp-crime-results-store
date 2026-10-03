@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static uk.gov.hmcts.cp.resultsstore.support.ApiRouteSamples.samplePath;
 
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServlet;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,6 +33,7 @@ class UnsupportedContentTypeFilterTest {
         request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, ApiRoute.GET_SHARE);
         if (contentType != null) {
             request.setContentType(contentType);
+            request.setAttribute(ActionHeaderFilter.SENT_CONTENT_TYPE_ATTRIBUTE, contentType);
         }
         return request;
     }
@@ -69,6 +73,53 @@ class UnsupportedContentTypeFilterTest {
         assertThat(chain.getRequest()).isNotNull();
         assertThat(response.getStatus()).isEqualTo(200);
         assertThat(observer.refusals()).isEmpty();
+    }
+
+    /**
+     * A vendor token in a multipart parameter is neutralised to {@code application/json} for the authorisation
+     * library; the guard still classifies the {@code Content-Type} the caller sent.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"multipart/related; type=\"application/vnd.results-store.anything+json\"; boundary=x",
+        "multipart/form-data; boundary=x; x=application/vnd.results-store.get-share+json"})
+    void multipart_with_a_vendor_parameter_behind_the_action_filter_should_still_be_refused_415(
+            final String contentType) throws ServletException, IOException {
+        final MockHttpServletRequest request = new MockHttpServletRequest("GET", samplePath(ApiRoute.GET_SHARE));
+        request.setContentType(contentType);
+        final MockHttpServletResponse response = new MockHttpServletResponse();
+        final MockServlet servlet = new MockServlet();
+
+        new MockFilterChain(servlet, new ActionHeaderFilter(observer), guard).doFilter(request, response);
+
+        assertThat(servlet.called).isFalse();
+        assertThat(response.getStatus()).isEqualTo(415);
+        assertThat(observer.refusals()).containsExactly(RouteRefusal.UNSUPPORTED_CONTENT_TYPE);
+    }
+
+    @Test
+    void json_behind_the_action_filter_should_reach_the_servlet() throws ServletException, IOException {
+        final MockHttpServletRequest request = new MockHttpServletRequest("GET", samplePath(ApiRoute.GET_SHARE));
+        request.setContentType("application/vnd.results-store.anything+json");
+        final MockServlet servlet = new MockServlet();
+
+        new MockFilterChain(servlet, new ActionHeaderFilter(observer), guard)
+                .doFilter(request, new MockHttpServletResponse());
+
+        assertThat(servlet.called).isTrue();
+        assertThat(observer.refusals()).isEmpty();
+    }
+
+    /** Records whether the request got past the filters. */
+    private static final class MockServlet extends HttpServlet {
+
+        private static final long serialVersionUID = 1L;
+
+        private boolean called;
+
+        @Override
+        protected void service(final HttpServletRequest request, final HttpServletResponse response) {
+            called = true;
+        }
     }
 
     @Test

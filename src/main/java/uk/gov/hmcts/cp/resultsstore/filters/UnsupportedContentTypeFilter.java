@@ -16,7 +16,10 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  * (FR-048 (d)): no request to the API has a body. Registered by {@code ApiWebConfig} after the authorisation
  * library and before the audit filter, so the audit library never buffers a multipart body. A route is
  * recognised by the {@link ApiRoute} the action filter left on the request; {@code /actuator} and
- * {@code /error} carry none and are never refused. The refusal is counted and its body names the reason only.
+ * {@code /error} carry none and are never refused. The media type classified is the {@code Content-Type} as
+ * the caller sent it ({@link ActionHeaderFilter#SENT_CONTENT_TYPE_ATTRIBUTE}), not the wrapped request's: the
+ * wrapper answers {@code application/json} for any value carrying a vendor token, a multipart parameter
+ * included. The refusal is counted and its body names the reason only.
  */
 public class UnsupportedContentTypeFilter extends OncePerRequestFilter {
 
@@ -37,7 +40,8 @@ public class UnsupportedContentTypeFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(final HttpServletRequest request, final HttpServletResponse response,
                                     final FilterChain filterChain) throws ServletException, IOException {
-        if (request.getAttribute(ApiRoute.REQUEST_ATTRIBUTE) != null && isMultipart(request.getContentType())) {
+        if (request.getAttribute(ApiRoute.REQUEST_ATTRIBUTE) != null
+                && isMultipart(request.getAttribute(ActionHeaderFilter.SENT_CONTENT_TYPE_ATTRIBUTE))) {
             refusals.refused(RouteRefusal.UNSUPPORTED_CONTENT_TYPE);
             RefusalWriter.write(response, ProblemReason.UNSUPPORTED_CONTENT_TYPE);
         } else {
@@ -45,7 +49,7 @@ public class UnsupportedContentTypeFilter extends OncePerRequestFilter {
         }
     }
 
-    private static boolean isMultipart(final String contentType) {
-        return contentType != null && contentType.strip().toLowerCase(Locale.ROOT).startsWith(MULTIPART);
+    private static boolean isMultipart(final Object contentType) {
+        return contentType instanceof String sent && sent.strip().toLowerCase(Locale.ROOT).startsWith(MULTIPART);
     }
 }
