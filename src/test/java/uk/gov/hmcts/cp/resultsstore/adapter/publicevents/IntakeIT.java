@@ -136,8 +136,8 @@ class IntakeIT {
         assertThat(receiptOf(hearingId)).containsEntry("share_id", shareId).containsEntry("attempts", 1);
         assertThat(jdbc.sql("SELECT is_latest FROM hearing_share WHERE share_id = :shareId")
                 .param("shareId", shareId).query(Boolean.class).single()).isTrue();
-        assertThat(jdbc.sql("SELECT payload_text FROM hearing_share_payload WHERE share_id = :shareId")
-                .param("shareId", shareId).query(String.class).single()).isEqualTo(text);
+        assertThat(jdbc.sql("SELECT payload_text = :text FROM hearing_share_payload WHERE share_id = :shareId")
+                .param("text", text).param("shareId", shareId).query(Boolean.class).single()).isTrue();
         assertEveryReceiptSettled();
     }
 

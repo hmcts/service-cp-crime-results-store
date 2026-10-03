@@ -114,8 +114,8 @@ class JdbcShareStoreIT {
                 .containsEntry("projection_version", KeyDetailsExtractor.EXTRACTOR_VERSION)
                 .containsEntry("projection_attempts", 1);
         assertThat(instant(share, "shared_at")).isEqualTo(Instant.parse(SHARED_TIME));
-        assertThat(payload(request.shareId()))
-                .containsEntry("payload_text", text)
+        assertThat(payload(request.shareId(), text))
+                .containsEntry("text_matches", true)
                 .containsEntry("text_bytes", text.getBytes(StandardCharsets.UTF_8).length)
                 .containsEntry("parsed_matches", true);
         assertThat(defendants(request.shareId())).containsExactly(List.of(SampleShares.CASE_ID,
@@ -168,8 +168,8 @@ class JdbcShareStoreIT {
 
         assertThat(result).isInstanceOfSatisfying(Stored.class,
                 stored -> assertThat(stored.parsedCopySkipped()).isTrue());
-        assertThat(payload(request.shareId()))
-                .containsEntry("payload_text", text)
+        assertThat(payload(request.shareId(), text))
+                .containsEntry("text_matches", true)
                 .containsEntry("parsed_matches", null);
         assertThat(share(request.shareId())).containsEntry("projection_status", "OK");
     }
@@ -187,8 +187,8 @@ class JdbcShareStoreIT {
 
         assertThat(result).isInstanceOfSatisfying(Stored.class,
                 stored -> assertThat(stored.parsedCopySkipped()).isTrue());
-        assertThat(payload(request.shareId()))
-                .containsEntry("payload_text", text)
+        assertThat(payload(request.shareId(), text))
+                .containsEntry("text_matches", true)
                 .containsEntry("parsed_matches", null);
         assertThat(defendants(request.shareId())).hasSize(1);
         assertThat(day()).containsEntry("latest_share_id", request.shareId()).containsEntry("share_count", 1);
@@ -204,17 +204,18 @@ class JdbcShareStoreIT {
 
         store.store(request);
 
+        // Compared in the database and by checksum, so a failure never prints the payload.
         final Map<String, Object> stored = jdbc.sql("""
-                SELECT p.payload_text, p.text_bytes, s.payload_sha256,
+                SELECT p.payload_text = :text AS text_matches, p.text_bytes, s.payload_sha256,
                        encode(sha256(convert_to(p.payload_text, 'UTF8')), 'hex') AS database_sha256
                   FROM hearing_share_payload p JOIN hearing_share s USING (share_id)
                  WHERE share_id = :shareId
-                """).param("shareId", request.shareId()).query().singleRow();
-        assertThat(stored.get("payload_text")).isEqualTo(text);
-        assertThat(stored.get("text_bytes")).isEqualTo(text.getBytes(StandardCharsets.UTF_8).length);
-        assertThat(stored.get("payload_sha256"))
-                .isEqualTo(PayloadChecksum.sha256Hex((String) stored.get("payload_text")))
-                .isEqualTo(stored.get("database_sha256"));
+                """).param("text", text).param("shareId", request.shareId()).query().singleRow();
+        assertThat(stored)
+                .containsEntry("text_matches", true)
+                .containsEntry("text_bytes", text.getBytes(StandardCharsets.UTF_8).length)
+                .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
+                .containsEntry("database_sha256", PayloadChecksum.sha256Hex(text));
     }
 
     @Test
@@ -286,13 +287,14 @@ class JdbcShareStoreIT {
                 .param("shareId", shareId).query().singleRow();
     }
 
-    private Map<String, Object> payload(final UUID shareId) {
+    /** The payload row, its text compared in the database so a failure never prints the payload. */
+    private Map<String, Object> payload(final UUID shareId, final String text) {
         return jdbc.sql("""
-                SELECT payload_text, text_bytes,
+                SELECT payload_text = :text AS text_matches, text_bytes,
                        CASE WHEN payload_json IS NOT NULL THEN payload_json = CAST(payload_text AS jsonb) END
                            AS parsed_matches
                   FROM hearing_share_payload WHERE share_id = :shareId
-                """).param("shareId", shareId).query().singleRow();
+                """).param("text", text).param("shareId", shareId).query().singleRow();
     }
 
     private List<List<Object>> defendants(final UUID shareId) {
