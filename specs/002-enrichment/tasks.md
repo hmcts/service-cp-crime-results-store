@@ -551,7 +551,7 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     `payloadText` is gone from `ShareStore` and `JdbcShareStore`; the sweep reads `payloadForExtraction`
     (`COALESCE(payload_json::text, payload_text)`), so the T005 stop-gap duplication is removed.
 
-- [ ] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
+- [X] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
   - Covers: FR-039; SC-010.
   - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the new checks fail on the build without T001–T008's wiring or without the mapping); the gate green.
   - RED (2026-10-03, branch `002-enrichment-docs` at 30fcf3b + this task's script and mapping, i.e. phase A
@@ -573,7 +573,17 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     `FAIL: 8 intake check(s) failed`; teardown clean.
     The mapping itself was checked in a throwaway WireMock 3.13.2: the first id answers 200 with the
     `FINALISED` body, the second `200 {}`, a request without the headers 404.
-    GREEN: to be recorded after phase B (T004–T007) lands.
+    GREEN (2026-10-03, branch `002-enrichment` at a6ef7ca, i.e. T001–T008 with the script and mapping of
+    f86e8ff unchanged; `flock -w 7200 /tmp/resultsstore-gradle.lock ./scripts/container-smoke.sh`, Docker
+    29.7.2), exit 0: `PASS: readiness reported UP within the 60s budget`; the eight 001 checks `ok`;
+    `ok: enrichment: flag, one result added, no amendment field, other fields kept, not-found left as it arrived`;
+    `ok: enrichment: the arrived text unchanged and its checksum the published text's`;
+    `ok: progression asked once for the enriched application`, `… once for the not-found application`,
+    `… twice in all`; `ok: metric` for the four 001 lines and for
+    `resultsstore_enrichment_applied_total 1.0`, `resultsstore_enrichment_applications_total{outcome="enriched"} 1.0`,
+    `{outcome="not_found"} 1.0`, `resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0`;
+    `PASS: intake stored the share enriched, dropped its duplicate and recorded the unreadable message`;
+    teardown clean. No fix to the script or the code was needed.
 
 - [ ] T010 Documents, analysis and Deferred list: test first, the review grep for `exactly as received`, `parsed copy`, `unread in 001`, `never the parsed copy`, `can be dropped`, `same way the validation`, `always false in 001` across specs/, .specify/memory/constitution.md, .claude/agents/code-reviewer.md and specs/002-enrichment/page-notes.md (RED: the hits it lists before the edits); then
   - .specify/memory/constitution.md: Principle II reworded to research R25's text; version 2.0.0 → 2.1.0 (MINOR: the working-copy clause added, the amendment-field removal named, no rule reversed); Sync Impact Report at the top updated (modified principle, templates checked, follow-ups); **Last Amended** date set;
