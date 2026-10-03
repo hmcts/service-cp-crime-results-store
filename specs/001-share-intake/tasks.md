@@ -404,14 +404,22 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     `RetryableIntakeException(stage, cause)`; `JdbcReceiptStore.recordArrival` does so now (T008 uses the same
     for the store). The stage tag is `domain/IntakeStage.java` (`receipt` / `store`). `fromSqlState(null)` is
     `OTHER` (non-database). Files beyond the list: `IntakeStage`, `RetryableFailures` and its test, and the
-    `JdbcReceiptStore` / `JdbcReceiptStoreIT` change. The service catches only `RetryableIntakeException`;
-    anything else escapes uncounted and the container still rolls back. `IntakeCommand` carries a fourth
+    `JdbcReceiptStore` / `JdbcReceiptStoreIT` change. A `RetryableIntakeException` is counted with its own
+    stage and cause; any other `RuntimeException` from a port call is counted once as `cause=other` at the
+    stage it happened in and rethrown unchanged (not paused), so the container still rolls back (gate round 1). `IntakeCommand` carries a fourth
     component, `textMessage`, so a non-`TextMessage` stays `NOT_TEXT_MESSAGE` (contracts/inbound-event.md)
     while a `TextMessage` with null text reads as `NOT_JSON`; built with `ofText` / `ofNotText`. Extraction
     runs on the store path (after the receipt, before the store transaction, FR-021), so a settled redelivery
     is not extracted. The lag is clamped at zero in the service. `StoreResult.Stored` carries
     `parsedCopySkipped` for T008. A non-share whose receipt was not inserted by this delivery is
     `ALREADY_SETTLED` and not counted again.
+  - Gate round 1: `IntakeService.counted` takes the stage and also catches `RuntimeException` (count as
+    `other`, rethrow the same exception; Principle VIII, contracts/metrics.md "anything else → other"). RED:
+    `./gradlew test --tests '*IntakeServiceTest'`: 2 failed,
+    `unexpected_receipt_failure_should_propagate_unchanged_counted_once_as_other_and_never_store`:
+    `Wanted but not invoked: observer.intakeFailed(RECEIPT, OTHER)`, and the store twin
+    `observer.intakeFailed(STORE, OTHER)`. GREEN: `IntakeServiceTest` 18 tests, 0 failures. Such a failure is
+    not wrapped in `RetryableIntakeException`, so the listener does not pause before it escapes.
 
 - [X] T007 [US1] [US6] [US7] Test first: `HearingResultedEventListenerTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerTest.java, `RedeliveryPauseTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPauseTest.java, `PublicEventsConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/PublicEventsConfigTest.java, `ConfigurationValidationTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, and the subscription-shape update of src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListenerIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/HearingResultedEventListener.java (rewrite), src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/RedeliveryPause.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/Sleeper.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/SweepProperties.java, src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java, src/main/resources/application.yaml, src/test/resources/application-test.yaml
   - Cases: the listener builds `IntakeCommand(messageId, deliveryCount, text|null)` and a non-text body becomes a null text; MDC holds message id, share id and hearing id and is cleared in `finally`; on `RetryableIntakeException` it pauses then rethrows; logs hold ids only; pause is `min(2^deliveryCount s, cap)`, off when disabled, and an interrupt restores the flag and rethrows; the container factory is transacted, has no JMS transaction manager, shared durable subscription, concurrency 1; every rule in contracts/configuration.md refuses a bad value at start; the subscription name, topic and selector are unchanged; the context-load tests still start without a datasource (wiring note).

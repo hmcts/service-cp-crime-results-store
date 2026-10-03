@@ -326,6 +326,34 @@ class IntakeServiceTest {
             verifyNoMoreInteractions(observer);
         }
 
+        @Test
+        void unexpected_receipt_failure_should_propagate_unchanged_counted_once_as_other_and_never_store() {
+            final IllegalStateException failure = new IllegalStateException("not a database failure");
+            when(receipts.recordArrival(any())).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
+                    .isSameAs(failure);
+
+            verify(observer).received();
+            verify(observer).intakeFailed(IntakeStage.RECEIPT, IntakeFailureCause.OTHER);
+            verifyNoMoreInteractions(observer);
+            verifyNoInteractions(shareStore);
+        }
+
+        @Test
+        void unexpected_store_failure_should_propagate_unchanged_counted_once_as_other() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            final IllegalStateException failure = new IllegalStateException("not a database failure");
+            when(shareStore.store(any())).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
+                    .isSameAs(failure);
+
+            verify(observer).received();
+            verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
+            verifyNoMoreInteractions(observer);
+        }
+
         private RetryableIntakeException failure(final IntakeStage stage, final IntakeFailureCause cause) {
             return new RetryableIntakeException(stage, cause, new SQLException("refused"));
         }

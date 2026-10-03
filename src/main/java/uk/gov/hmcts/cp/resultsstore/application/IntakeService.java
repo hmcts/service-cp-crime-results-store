@@ -8,7 +8,9 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
@@ -20,8 +22,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
  * stop for a non-share or a redelivery whose receipt is already settled; otherwise read the key
  * details, outside any transaction, and store the share in one transaction. Each port call returns
  * after its commit, so every report to the observer follows the commit it describes. A failed
- * transaction is counted once and its {@link RetryableIntakeException} rethrown, so the listener rolls
- * the message back to the broker.
+ * transaction is counted once and its exception rethrown unchanged, so the listener rolls the message
+ * back to the broker: a {@link RetryableIntakeException} after the capped pause, anything else at once.
  */
 public class IntakeService {
 
@@ -66,7 +68,7 @@ public class IntakeService {
                 ? parser.read(command.text())
                 : NotShare.because(NonShareReason.NOT_TEXT_MESSAGE);
         final Arrival arrival = new Arrival(command.messageId(), command.deliveryCount(), command.text(), reading);
-        final ReceiptState receipt = counted(() -> receipts.recordArrival(arrival));
+        final ReceiptState receipt = counted(IntakeStage.RECEIPT, () -> receipts.recordArrival(arrival));
         if (command.messageId() == null) {
             observer.messageIdMissing();
         }
@@ -102,7 +104,7 @@ public class IntakeService {
         final Projection projection = extractor.extract(share.body());
         final StoreRequest request = new StoreRequest(messageId, identity, identity.shareId(),
                 SharedDays.from(identity.sharedAt()), PayloadChecksum.sha256Hex(text), text, projection);
-        return switch (counted(() -> shareStore.store(request))) {
+        return switch (counted(IntakeStage.STORE, () -> shareStore.store(request))) {
             case Stored stored -> stored(stored, messageId, identity, projection);
             case Duplicate duplicate -> {
                 observer.duplicate();
@@ -131,12 +133,23 @@ public class IntakeService {
                 identity.sharedAt());
     }
 
-    /** Runs one transaction's port call; a failure is counted once, after its rollback, and rethrown. */
-    private <T> T counted(final Supplier<T> transaction) {
+    /**
+     * Runs one transaction's port call; a failure is counted once, after its rollback, and rethrown
+     * unchanged. A {@link RetryableIntakeException} carries its own stage and cause; any other
+     * runtime failure is not a classified database failure, so it is counted as {@code other} at the
+     * stage it happened in (contracts/metrics.md) and still escapes, so the container rolls back.
+     */
+    // Catch-to-count-then-rethrow: nothing is swallowed, and an unexpected failure still moves the
+    // failed counter with a bounded reason (Principle VIII). Errors are not caught.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private <T> T counted(final IntakeStage stage, final Supplier<T> transaction) {
         try {
             return transaction.get();
         } catch (final RetryableIntakeException failure) {
             observer.intakeFailed(failure.getStage(), failure.getFailureCause());
+            throw failure;
+        } catch (final RuntimeException failure) {
+            observer.intakeFailed(stage, IntakeFailureCause.OTHER);
             throw failure;
         }
     }
