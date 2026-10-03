@@ -517,12 +517,37 @@ Must finish before phase 4: the sweep reads rows only this phase writes.
 **Independent test**: `IntakeIT` publishes to the embedded Artemis broker and asserts the rows of
 US1–US4 and US6 on Testcontainers Postgres.
 
-- [ ] T008 [US1] [US2] Test first: `JdbcShareStoreIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java, `NulSafetyTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafetyTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafety.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean ShareStore` stand-ins removed)
+- [X] T008 [US1] [US2] Test first: `JdbcShareStoreIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java, `NulSafetyTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafetyTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafety.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean ShareStore` stand-ins removed)
   - Cases: one share writes the share, payload (text, `text_bytes`, parsed copy), defendant rows, day row and receipt `STORED` in one transaction; identity conflict → `DUPLICATE` with the existing share's id looked up by identity; `\u0000` or an unpaired surrogate → `payload_json` NULL and the skip reported; a 2.4 MB payload stored byte for byte with a matching checksum; a failure part way leaves no share, payload, defendant or day change and the receipt still `RECEIVED`; extraction is never run inside the transaction; SQLSTATE classified into `RetryableIntakeException`.
   - Covers: FR-013–FR-017, FR-020; SC-008.
   - Done when: both test classes green; the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: against compile-safe seams (`NulSafety.isJsonbSafe` returning true, `JdbcShareStore.store` writing
+    nothing and returning `Stored(shareId, EPOCH, false, false)`), each class run on its own:
+    `./gradlew test --tests '*NulSafetyTest'`: 19 completed, 8 failed, e.g. `text = "{\"a\":\"\\u0000\"}"`:
+    `Expecting value to be false but was true`; `--tests '*JdbcShareStoreIT'`: 2 completed, 1 failed (failFast),
+    `payload_that_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy [note = "a\\u0000b"]`:
+    `Expecting value to be true but was false`.
+  - GREEN: `JdbcShareStoreIT` 10 tests, `NulSafetyTest` 21 tests (`\U0000`, invalid JSON that never reaches the
+    store, dropped from the refusal list), 0 failures; `HearingResultedEventListenerIT` 6 tests with the
+    `@MockitoBean ShareStore` stand-in removed (the share's receipt now ends `STORED` with the computed share
+    id, and the wired store transaction times out at `store.transaction-timeout`).
+  - Notes: the store transaction is its own `TransactionTemplate` (timeout `store.transaction-timeout`,
+    registered in `IntakeConfig` with `JdbcShareStore`). It locks the day (`INSERT … ON CONFLICT DO NOTHING`,
+    then `SELECT … FOR UPDATE`), inserts the share with `is_latest = false` and `ON CONFLICT (hearing_id,
+    hearing_day, shared_at) DO NOTHING RETURNING stored_at`, then the payload (`text_bytes` from the UTF-8
+    length, `payload_json` `CAST(:text AS jsonb)` or NULL when `NulSafety` says `jsonb` would refuse it),
+    the defendant rows, the chain (here: clear any latest, set the new one, day row latest + count; T009
+    replaces this with the full chain), and `markStored`. No row back is a duplicate: the stored `share_id`
+    is looked up by the identity and `markDuplicate` is called. Identity values bind as `LocalDate` /
+    `OffsetDateTime` at UTC; `projection_version` is `KeyDetailsExtractor.EXTRACTOR_VERSION`. A
+    `DataAccessException` / `TransactionException` is classified by `RetryableFailures` at stage `store`.
+    Decision (least behaviour): a receipt that `markStored` / `markDuplicate` finds not `RECEIVED` (only
+    another delivery of the same message id can have settled it) throws `IllegalStateException`, so the
+    whole transaction rolls back and the broker's redelivery finds the receipt settled. `NulSafety` reads
+    escapes as JSON does (an escaped backslash before `u0000` is text), so it is exact rather than the
+    over-cautious substring check R8 allowed. The `set_config` timeouts land with T010 (tasks.md puts them
+    there, so `StoreTimeoutIT` can go red first). `support/SampleShares` (listed under T011) is added here,
+    as the store ITs need it.
 
 - [ ] T009 [US4] [US1] Test first: `ShareChainIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChainIT.java, `YouthSeenIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthSeenIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChain.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthFlags.java, called from src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: first share of a day is latest with no predecessor; a newer share clears the old latest before it is set and points at it; T1, T3 then T2 → chain T1 ← T2 ← T3, T3 still latest, T2 `arrived_out_of_order`; `share_count` + 1 per stored share; youth three values: TRUE sticky, NULL if any share NULL, else FALSE; `day_youth_seen` set on every share of the day when the day flag changes.

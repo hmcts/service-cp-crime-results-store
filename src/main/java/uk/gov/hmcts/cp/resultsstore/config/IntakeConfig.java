@@ -19,15 +19,15 @@ import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
 
 /**
  * The intake's settings, always bound and checked (FR-046), and, only while the subscription is
  * enabled, its beans: so a context with no datasource (the {@code test} profile) still starts
  * (tasks.md, wiring note).
  *
- * <p>The share store ({@link ShareStore}, T008) and the observer ({@link IntakeObserver}, T013) are
- * not registered here yet; until they are, a context with the subscription enabled needs them from
- * elsewhere.
+ * <p>The observer ({@link IntakeObserver}, T013) is not registered here yet; until it is, a context
+ * with the subscription enabled needs it from elsewhere.
  */
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties({IntakeProperties.class, SweepProperties.class})
@@ -75,6 +75,15 @@ public class IntakeConfig {
         final TransactionTemplate receiptTransaction = new TransactionTemplate(transactions);
         receiptTransaction.setTimeout(seconds(intake.receiptTimeout()));
         return new JdbcReceiptStore(jdbc, receiptTransaction);
+    }
+
+    @Bean
+    @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
+    public JdbcShareStore jdbcShareStore(final JdbcClient jdbc, final PlatformTransactionManager transactions,
+            final JdbcReceiptStore receipts, final IntakeProperties intake) {
+        final TransactionTemplate storeTransaction = new TransactionTemplate(transactions);
+        storeTransaction.setTimeout(seconds(intake.store().transactionTimeout()));
+        return new JdbcShareStore(jdbc, storeTransaction, receipts);
     }
 
     @Bean

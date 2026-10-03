@@ -2,18 +2,12 @@ package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
 
 import jakarta.jms.JMSContext;
 import jakarta.jms.JMSException;
 import jakarta.jms.TextMessage;
 import jakarta.jms.Topic;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import org.apache.activemq.artemis.api.core.SimpleString;
@@ -34,9 +28,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.util.TestSocketUtils;
 import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
-import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
-import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.domain.ShareId;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
@@ -44,11 +38,11 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
  * topic, subscription name and selector, delivering to intake: each message selected reaches its
  * receipt on Testcontainers Postgres.
  *
- * <p>The share store and the observer are stand-ins until their adapters land (tasks.md wiring note:
- * {@code ShareStore} in T008, {@code IntakeObserver} in T013), so a share's receipt stays
- * {@code RECEIVED} here.
+ * <p>The observer is a stand-in until its adapter lands (tasks.md wiring note: {@code IntakeObserver}
+ * in T013); the share store is the real one.
  */
-@SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.receipt-timeout=7s"})
+@SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.receipt-timeout=7s",
+    "resultsstore.intake.store.transaction-timeout=50s"})
 @ActiveProfiles("test")
 class HearingResultedEventListenerIT {
 
@@ -69,9 +63,6 @@ class HearingResultedEventListenerIT {
     private static EmbeddedActiveMQ broker;
 
     @MockitoBean
-    private ShareStore shareStore;
-
-    @MockitoBean
     private IntakeObserver observer;
 
     @Autowired
@@ -79,6 +70,9 @@ class HearingResultedEventListenerIT {
 
     @Autowired
     private JdbcReceiptStore receiptStore;
+
+    @Autowired
+    private JdbcShareStore shareStore;
 
     @DynamicPropertySource
     static void pointAtTheEmbeddedBrokerAndTheStore(final DynamicPropertyRegistry registry) throws Exception {
@@ -89,8 +83,6 @@ class HearingResultedEventListenerIT {
 
     @BeforeEach
     void awaitTheSubscription() {
-        when(shareStore.store(any())).thenAnswer(invocation -> new Stored(UUID.randomUUID(), Instant.now(), false,
-                false));
         await().atMost(WITHIN).until(() -> !subscriptionsOnTheTopic().isEmpty());
     }
 
@@ -112,13 +104,13 @@ class HearingResultedEventListenerIT {
 
         publish(HEARING_RESULTED, envelope(hearingId));
 
-        await().atMost(WITHIN).until(() -> receipts(hearingId) == 1);
-        assertThat(jdbc.sql("SELECT status FROM event_receipt WHERE hearing_id = :hearingId")
-                .param("hearingId", UUID.fromString(hearingId)).query(String.class).single()).isEqualTo("RECEIVED");
-        verify(shareStore, timeout(WITHIN.toMillis())).store(argThat(request ->
-                request.identity().rawHearingId().equals(hearingId)
-                        && "2026-09-30".equals(request.identity().rawHearingDay())
-                        && "2026-09-30T15:04:05.000Z".equals(request.identity().rawSharedTime())));
+        await().atMost(WITHIN).until(() -> "STORED".equals(status(hearingId)));
+        final UUID expectedShareId = ShareId.from(hearingId, "2026-09-30", "2026-09-30T15:04:05.000Z");
+        assertThat(jdbc.sql("SELECT share_id FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId)).query(UUID.class).single())
+                .isEqualTo(expectedShareId);
+        assertThat(jdbc.sql("SELECT count(*) FROM hearing_share WHERE share_id = :shareId")
+                .param("shareId", expectedShareId).query(Integer.class).single()).isEqualTo(1);
     }
 
     @Test
@@ -154,6 +146,21 @@ class HearingResultedEventListenerIT {
 
         await().atMost(WITHIN).until(() -> receipts(delivered) == 1);
         assertThat(receipts(filtered)).isZero();
+    }
+
+    @Test
+    void store_transaction_should_time_out_at_the_configured_transaction_timeout() {
+        assertThat(ReflectionTestUtils.getField(shareStore, "storeTransaction"))
+                .isInstanceOfSatisfying(TransactionTemplate.class,
+                        template -> assertThat(template.getTimeout()).isEqualTo(50));
+    }
+
+    private String status(final String hearingId) {
+        return jdbc.sql("SELECT status FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(String.class)
+                .optional()
+                .orElse(null);
     }
 
     private int attempts(final String hearingId) {
