@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.sql.SQLException;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -14,6 +15,7 @@ import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 
+@DisplayName("retryable failure classification")
 class RetryableFailuresTest {
 
     @ParameterizedTest
@@ -57,6 +59,33 @@ class RetryableFailuresTest {
         final CannotCreateTransactionException failure = new CannotCreateTransactionException("no connection");
 
         assertThat(RetryableFailures.classify(IntakeStage.RECEIPT, failure).getFailureCause())
+                .isEqualTo(IntakeFailureCause.DATABASE);
+    }
+
+    @Test
+    void sql_state_past_the_search_depth_should_not_be_found() {
+        RuntimeException failure = new QueryTimeoutException("timed out", new SQLException("lock", "55P03"));
+        for (int link = 0; link < 40; link++) {
+            failure = new IllegalStateException("wrapped", failure);
+        }
+
+        assertThat(RetryableFailures.classify(IntakeStage.STORE, failure).getFailureCause())
+                .as("the search stops before a chain this long reaches its SQLSTATE")
+                .isEqualTo(IntakeFailureCause.DATABASE);
+    }
+
+    @Test
+    void cause_that_points_at_itself_should_end_the_search_as_database() {
+        final IllegalStateException loop = new IllegalStateException("loop") {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public synchronized Throwable getCause() {
+                return this;
+            }
+        };
+
+        assertThat(RetryableFailures.classify(IntakeStage.RECEIPT, loop).getFailureCause())
                 .isEqualTo(IntakeFailureCause.DATABASE);
     }
 
