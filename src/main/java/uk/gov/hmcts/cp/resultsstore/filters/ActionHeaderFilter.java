@@ -31,6 +31,10 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  *       untouched.</li>
  * </ul>
  *
+ * <p>Pull and search are told apart by the raw query string alone ({@link QueryParameterNames}): nothing
+ * here asks the container for parameters, parts or the body, so no request body is parsed before
+ * authorisation.
+ *
  * <p>Every refusal is counted once through the {@link RefusalObserver}, after its body has been written and
  * flushed, so a refusal the client never received is not counted; refused requests never reach the
  * audit filter. The body names the reason only, never the path.
@@ -74,7 +78,7 @@ public class ActionHeaderFilter extends OncePerRequestFilter {
                 refuse(response, RouteRefusal.ROUTE_NOT_FOUND, ProblemReason.ROUTE_NOT_FOUND);
             } else if (allowed.contains(request.getMethod())) {
                 final ApiRoute route = ApiRoute.resolve(request.getMethod(), path,
-                        name -> request.getParameter(name) != null).orElseThrow();
+                        name -> QueryParameterNames.contains(request.getQueryString(), name)).orElseThrow();
                 request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, route);
                 request.setAttribute(SENT_CONTENT_TYPE_ATTRIBUTE, request.getContentType());
                 filterChain.doFilter(ActionRequestWrapper.forRoute(request, route), response);

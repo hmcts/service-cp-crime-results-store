@@ -12,6 +12,7 @@ import static uk.gov.hmcts.cp.resultsstore.support.ApiRouteSamples.samplePath;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -46,6 +47,14 @@ class ActionHeaderFilterTest {
 
     private static final String JSON = "application/json";
 
+    private static final String MULTIPART_BODY = """
+            --x\r
+            Content-Disposition: form-data; name="storedAfterSeq"\r
+            \r
+            0\r
+            --x--\r
+            """;
+
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
     private final RecordingRefusalObserver observer = new RecordingRefusalObserver();
@@ -75,6 +84,7 @@ class ActionHeaderFilterTest {
     private static MockHttpServletRequest requestFor(final ApiRoute route) {
         final MockHttpServletRequest request = new MockHttpServletRequest("GET", samplePath(route));
         if (needsStoredAfterSeq(route)) {
+            request.setQueryString("storedAfterSeq=0");
             request.setParameter("storedAfterSeq", "0");
         }
         return request;
@@ -146,8 +156,10 @@ class ActionHeaderFilterTest {
     @Test
     void pull_and_search_should_derive_different_actions() throws ServletException, IOException {
         final MockHttpServletRequest pull = new MockHttpServletRequest("GET", "/results-store/v1/shares");
+        pull.setQueryString("storedAfterSeq=12");
         pull.setParameter("storedAfterSeq", "12");
         final MockHttpServletRequest search = new MockHttpServletRequest("GET", "/results-store/v1/shares");
+        search.setQueryString("courtCentreId=2b3c4d5e-0000-4000-8000-000000000002");
         search.setParameter("courtCentreId", "2b3c4d5e-0000-4000-8000-000000000002");
 
         assertThat(filter(pull).seen().getHeader(ACTION_HEADER)).isEqualTo("results-store.pull-shares");
@@ -169,6 +181,34 @@ class ActionHeaderFilterTest {
             verify(request, never()).getParameterMap();
             verify(request, never()).getParameterNames();
         }
+    }
+
+    /**
+     * Pull and search are told apart from the raw query string alone: nothing may parse the request's
+     * parameters or body before authorisation, so a multipart body naming {@code storedAfterSeq} is never read.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"storedAfterSeq=0|results-store.pull-shares",
+        "courtCentreId=2b3c4d5e-0000-4000-8000-000000000002|results-store.search-shares"})
+    void a_multipart_get_on_shares_should_derive_its_action_without_reading_parameters_or_body(final String query)
+            throws ServletException, IOException {
+        final String[] queryAndAction = query.split("\\|");
+        final MockHttpServletRequest request = spy(new MockHttpServletRequest("GET", "/results-store/v1/shares"));
+        request.setContentType("multipart/form-data; boundary=x");
+        request.setContent(MULTIPART_BODY.getBytes(StandardCharsets.UTF_8));
+        request.setQueryString(queryAndAction[0]);
+
+        final HttpServletRequest seen = filter(request).seen();
+
+        assertThat(seen.getHeader(ACTION_HEADER)).isEqualTo(queryAndAction[1]);
+        verify(request, never()).getParameter(anyString());
+        verify(request, never()).getParameterValues(anyString());
+        verify(request, never()).getParameterMap();
+        verify(request, never()).getParameterNames();
+        verify(request, never()).getInputStream();
+        verify(request, never()).getReader();
+        verify(request, never()).getParts();
+        verify(request, never()).getPart(anyString());
     }
 
     @ParameterizedTest

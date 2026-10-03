@@ -231,6 +231,27 @@ class AuthzIT {
         assertThat(refused("unsupported_content_type")).isEqualTo(unsupported);
     }
 
+    /**
+     * The action filter tells pull from search by the raw query string alone, so a multipart body is never
+     * parsed before authorisation: with no identity the answer is the library's {@code 401}, and usersgroups is
+     * never asked.
+     */
+    @Test
+    void a_multipart_get_on_shares_without_an_identity_should_be_401_and_never_reach_usersgroups()
+            throws IOException, InterruptedException {
+        final HttpRequest request = HttpRequest.newBuilder(
+                        URI.create("http://localhost:" + port + "/results-store/v1/shares?storedAfterSeq=0"))
+                .header("Content-Type", "multipart/form-data; boundary=x")
+                .method("GET", HttpRequest.BodyPublishers.ofString("--x\r\nContent-Disposition: form-data; "
+                        + "name=\"storedAfterSeq\"\r\n\r\n0\r\n--x--\r\n"))
+                .build();
+
+        final HttpResponse<String> response = CLIENT.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertBoundedBody(response, 401, "Unauthorized", "unauthenticated");
+        USERSGROUPS.verify(0, getRequestedFor(urlPathEqualTo(IDENTITY_PATH)).withoutHeader(USER_ID_HEADER));
+    }
+
     /** The library reads the action from a configurable header; the wrapper writes a fixed one. */
     @Test
     void the_configured_action_header_should_be_the_one_the_wrapper_writes() {
