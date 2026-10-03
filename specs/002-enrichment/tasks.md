@@ -564,6 +564,10 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     extracting, not committed): `sweep_should_make_no_progression_request_with_enrichment_wired_to_the_stub() FAILED`
     `Expecting empty but was: [{"url" : "/progression-query-api/query/api/rest/progression/applications/bd867363-…", "method" : "GET", … "CJSCPPUID" : "7e57c0de-…-000000000002" …}]`.
     GREEN: that `IntakeIT` case 1, `ExtractionSweepIT` 18, 0 failures.
+  - Full suite (T001 note): the phase's full gate is recorded under T010. At T008's commit a6ef7ca it
+    was 934 tests, 0 failures, 0 skipped; JaCoCo line 99.6 %, branch 98.9 %. After gate round 1
+    (`clean build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`, JDK 25): exit 0;
+    935 tests, 0 failures, 0 skipped; JaCoCo line 99.6 %, branch 98.9 %; PMD clean.
 
 - [X] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
   - Covers: FR-039; SC-010.
@@ -598,6 +602,20 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     `{outcome="not_found"} 1.0`, `resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0`;
     `PASS: intake stored the share enriched, dropped its duplicate and recorded the unreadable message`;
     teardown clean. No fix to the script or the code was needed.
+  - Gate round 1 (range review): the script and mapping (f86e8ff) and the first T010 docs commit
+    (5c08ab3) reached the branch by a fast-forward between phase B's last remediation (7d8dac9) and
+    phase C's `baseCommit`, so the phase C gate's diff did not show them. `git diff 7d8dac9..5c08ab3`
+    was read in full in the remediation round: the smoke adds the two applications to the published
+    share; the working-copy check reads `enrichment_applied`, the result count, the absence of the three
+    amendment fields, the kept `judicialResultId` and `label`, and the not-found application's empty
+    array; the arrived-text check reads that the first application still has no `judicialResults` key
+    and that `payload_sha256` equals the host's SHA-256 of the published text; the request counts are
+    per application path and in all, each filtered by `Accept` and the compose `CJSCPPUID`
+    (`00000000-…`, docker-compose.yml since 30fcf3b); the four enrichment metric lines are added; the
+    001 checks are unchanged. The two mappings match the path, `Accept` and a 36-character
+    `CJSCPPUID`. The docs part (constitution 2.1.0, `.claude/agents/`, `.claude/rules/`, spec 001 notes,
+    page-notes.md, the 002 metrics and configuration contracts) matches the code as built. No finding.
+    A gate verdict on that range from the phase-gate reviewers is the orchestrator's to run.
 
 - [X] T010 Documents, analysis and Deferred list: test first, the review grep for `exactly as received`, `parsed copy`, `unread in 001`, `never the parsed copy`, `can be dropped`, `same way the validation`, `always false in 001` across specs/, .specify/memory/constitution.md, .claude/agents/code-reviewer.md and specs/002-enrichment/page-notes.md (RED: the hits it lists before the edits); then
   - .specify/memory/constitution.md: Principle II reworded to research R25's text; version 2.0.0 → 2.1.0 (MINOR: the working-copy clause added, the amendment-field removal named, no rule reversed); Sync Impact Report at the top updated (modified principle, templates checked, follow-ups); **Last Amended** date set;
@@ -646,6 +664,12 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
     jacocoTestReport jacocoTestCoverageVerification`, JDK 25): exit 0; 934 tests, 0 failures, 0
     skipped; JaCoCo line 99.6 %, branch 98.9 %. No wildcard import under src/; the attribution wording
     grep finds policy text only.
+  - Gate round 1 remediation: spec.md *Assumptions* now names the Principle VI widening of 2.1.0
+    beside Principle II; research R15 and plan.md *Performance Goals* state that one lookup is
+    bounded by the 10 s deadline, armed when the request is created and so covering the connect, with
+    the 5 s connect timeout subordinate to it; plan.md's Principle II entry is in the completed tense
+    with the final wording. Full gate after the round: exit 0; 935 tests, 0 failures, 0 skipped;
+    JaCoCo line 99.6 %, branch 98.9 %; no wildcard import; attribution grep clean.
   - Done when: the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` succeeds; the gate green.
   - Deferred (not in 002):
     - indexing defendants who appear only as court-application parties (spec 001 FR-019): still deferred, no change to the defendant index;

@@ -445,16 +445,19 @@ exchange. The first draft (a guard on the body alone, timed from when the reques
 `HttpURLConnection`) is kept below as history.
 
 **Rationale.** `HttpURLConnection`'s read timeout is per read: a server sending one byte every few
-seconds never trips it. The spec treats a slow drip past the read timeout as a timeout. The guard
-bounds one lookup to about connect + read timeout + one socket read (about 15 to 25 s at the
-defaults), with no extra thread. WireMock's chunked dribble delay pins it.
+seconds never trips it. The spec treats a slow drip past the read timeout as a timeout. The first
+draft's guard bounded one lookup to about connect + read timeout + one socket read (about 15 to 25 s
+at the defaults), with no extra thread; the amendment below tightens that to the deadline alone. WireMock's chunked dribble delay pins it.
 
 **Amended after gate round 1 (T002).** The guard on the body cannot see a slow status line or slow
 headers. The request factory now also cancels each request once the deadline has passed since it was
 created, which closes the connection and ends a blocked read at once; the client reads any I/O
 failure after its deadline as `progression_timeout`. This needs one daemon thread per factory, which
-only ever cancels requests. One lookup is then bounded by about the connect timeout plus the read
-timeout.
+only ever cancels requests. The deadline is armed when the request is created, before the connection
+is opened, so connecting falls inside it: one lookup is bounded by the read timeout (10 s at the
+defaults) plus the scheduler's latency, whatever the connect timeout. The 5-second connect timeout is
+subordinate to that deadline; it only ends a connect attempt sooner. (Corrected after phase C gate
+round 1: this paragraph first said connect timeout plus read timeout.)
 
 **Worst case per share.** N lookups × that bound. Shares with applications usually carry one or two;
 the broker has no processing timeout on a consumer, and the store transaction opens only after the

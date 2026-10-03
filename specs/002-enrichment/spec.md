@@ -305,4 +305,4 @@ Settled implementation choices from the approved plan, stated so they are visibl
 - The `unstorable_results` fallback re-runs the whole store transaction once.
 - No environment outside tests holds 001 rows yet, so leaving them un-enriched loses nothing.
 - The V3 column comments are left as they are.
-- No principle other than Principle II changes.
+- Principle II is reworded (FR-035). Principle VI's retryable-failure wording is also widened in the same 2.1.0 amendment, to cover a progression answer the store cannot accept (a routing, access or contract fault), which fails closed and goes back to the broker (FR-021, FR-022). No other principle changes, and no rule is reversed.
