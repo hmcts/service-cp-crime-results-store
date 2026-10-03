@@ -8,6 +8,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import ch.qos.logback.classic.Level;
 import com.github.tomakehurst.wiremock.client.ResponseDefinitionBuilder;
 import com.github.tomakehurst.wiremock.http.Fault;
 import com.github.tomakehurst.wiremock.verification.LoggedRequest;
@@ -29,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.ClientHttpResponse;
 import org.springframework.mock.http.client.MockClientHttpRequest;
 import org.springframework.web.client.RestClient;
@@ -470,6 +472,32 @@ class ProgressionApplicationClientTest {
                         .allSatisfy(line -> assertThat(line).doesNotContain(MARKER).doesNotContain(SYSTEM_USER_ID))
                         .anySatisfy(line -> assertThat(line).contains(ids.getFirst().toString()));
                 assertThat(log.events()).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+            }
+        }
+
+        /**
+         * With every logger at DEBUG, the transport's own header and wire logs would print the system
+         * user and the body; logback.xml pins both OFF, whatever the root level.
+         */
+        @Test
+        void debug_logging_everywhere_should_hold_neither_the_system_user_nor_the_body() {
+            final UUID applicationId = answered(okJson("""
+                    {"courtApplication": {"applicationStatus": "FINALISED",
+                     "judicialResults": [{"label": "%s"}]}}""".formatted(MARKER)));
+            final ch.qos.logback.classic.Logger root =
+                    (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+            final Level before = root.getLevel();
+            root.setLevel(Level.DEBUG);
+            try (CapturedLog log = CapturedLog.everyLogger()) {
+                assertThat(client.find(applicationId)).isInstanceOf(ApplicationAnswer.Found.class);
+
+                assertThat(log.messages()).isNotEmpty()
+                        .allSatisfy(line -> assertThat(line).doesNotContain(SYSTEM_USER_ID).doesNotContain(MARKER));
+                assertThat(log.events()).allSatisfy(event -> assertThat(event.getThrowableProxy() == null
+                        ? "" : event.getThrowableProxy().getMessage())
+                        .doesNotContain(SYSTEM_USER_ID).doesNotContain(MARKER));
+            } finally {
+                root.setLevel(before);
             }
         }
     }

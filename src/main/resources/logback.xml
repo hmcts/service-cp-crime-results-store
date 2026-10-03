@@ -19,6 +19,11 @@
         </encoder>
     </appender>
 
+    <!-- The progression client's transport logs every header (CJSCPPUID, the system user id) and the
+         raw bytes of every exchange (the body) at DEBUG. Pinned OFF so no root level can print them. -->
+    <logger name="org.apache.hc.client5.http.headers" level="OFF"/>
+    <logger name="org.apache.hc.client5.http.wire" level="OFF"/>
+
     <root level="INFO">
         <appender-ref ref="JSON"/>
     </root>

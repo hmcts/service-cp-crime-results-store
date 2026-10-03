@@ -284,6 +284,19 @@ contracts/progression-lookup.md against an in-process WireMock.
     GREEN: `ProgressionApplicationClientTest` 60 (not answered 10), `NoRedirectRequestFactoryTest` 3,
     `ProgressionExchangeTest` 4, `DeadlineInputStreamTest` 5, `ProgressionConfigTest` 9, `IntakeConfigTest` 8,
     0 failures; `pmdMain pmdTest` clean.
+  - Ruling 3 (orchestrator, phase A close-out: transport logs): HttpClient 5 logs every request header
+    (`org.apache.hc.client5.http.headers`, `CJSCPPUID` with the system user id) and the raw bytes of each
+    exchange (`org.apache.hc.client5.http.wire`, the body) at DEBUG, so raising the root level would put
+    both in the logs. src/main/resources/logback.xml pins the two loggers `OFF` (there is no separate
+    test logback; the tests load this one). `support/CapturedLog` gains `everyLogger()` (an appender on
+    the root).
+    RED: `ProgressionApplicationClientTest` →
+    `logging > debug_logging_everywhere_should_hold_neither_the_system_user_nor_the_body() FAILED`
+    `Expecting actual: "http-outgoing-4 >> CJSCPPUID: 0b0e7f5c-…" not to contain: "0b0e7f5c-1d2e-4f3a-9b8c-7d6e5f4a3b2c"`,
+    and on the wire logger `"http-outgoing-4 << " "judicialResults": [{"label": "BODY-MARKER-7f3c"}]}}[\r][\n]""
+    not to contain: "BODY-MARKER-7f3c"` (root at DEBUG, one 200 lookup with a body, every logger captured).
+    GREEN: `ProgressionApplicationClientTest` 61 (logging 2), 0 failures; the DEBUG lines of the
+    client's own and HttpClient's other loggers stay and hold neither value; `pmdMain pmdTest` clean.
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.

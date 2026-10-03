@@ -6,21 +6,26 @@ import ch.qos.logback.core.read.ListAppender;
 import java.util.List;
 import org.slf4j.LoggerFactory;
 
-/** Captures one logger's events for the life of a test. Close it to detach. */
+/** Captures one logger's events, or every logger's, for the life of a test. Close it to detach. */
 public final class CapturedLog implements AutoCloseable {
 
     private final Logger logger;
 
     private final ListAppender<ILoggingEvent> appender = new ListAppender<>();
 
-    private CapturedLog(final Class<?> owner) {
-        logger = (Logger) LoggerFactory.getLogger(owner);
+    private CapturedLog(final org.slf4j.Logger owner) {
+        logger = (Logger) owner;
         appender.start();
         logger.addAppender(appender);
     }
 
     public static CapturedLog forClass(final Class<?> owner) {
-        return new CapturedLog(owner);
+        return new CapturedLog(LoggerFactory.getLogger(owner));
+    }
+
+    /** Captures every logger that reaches the root, at whatever level each is configured. */
+    public static CapturedLog everyLogger() {
+        return new CapturedLog(LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME));
     }
 
     /** The formatted messages captured so far. */
