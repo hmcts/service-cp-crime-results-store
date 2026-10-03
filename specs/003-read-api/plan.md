@@ -50,7 +50,7 @@ audit filter buffers it (8 MB for a 2.4 MB payload)
 line; JaCoCo 0.88 line / 0.85 branch; PMD 7.22.0 clean on main and test (`OnlyOneReturn`: single exit or
 a site suppression with a reason); no wildcard imports; V1 to V4 never edited
 **Scale/Scope**: about 4,800 shares a day; consumers: YOT (nightly), probation (bridge, `limit=200`
-every 30 s), court register. About 30 new production classes, 8 changed; 13 tasks in four phases (D
+every 30 s), court register. About 40 new production classes, 12 changed; 13 tasks in four phases (D
 conditional)
 
 Every point above is settled in [research.md](research.md) or is a row of spec.md *Decisions pending
@@ -158,6 +158,7 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + ShareSummaryResponse.java, KeyDetailsResponse.java, PullPageResponse.java,
 │   │     SearchPageResponse.java, DayVersionsResponse.java
 │   ├── + ShareParameters.java     # strict query-parameter parsing (unknown, repeated, conflicting)
+│   ├── + ReadMetricsInterceptor.java    # requests and duration, by route and status
 │   └── + ReadApiExceptionHandler.java   # extends ResponseEntityExceptionHandler
 └── config/
     ├── + ApiWebConfig.java        # filter registrations, ErrorAttributes, authz-required check,
@@ -184,7 +185,7 @@ src/test/java/uk/gov/hmcts/cp/resultsstore/
 ├── acl/          ~ ResultsStoreRulesTest
 ├── api/          + OpenApiDocumentTest, OpenApiContractTest, ProblemReasonTest, BoundedErrorAttributesTest,
 │                   InstantFormatTest, ShareParametersTest, SharesControllerTest, SharePayloadControllerTest,
-│                   HearingDaySharesControllerTest, ReadApiExceptionHandlerTest
+│                   HearingDaySharesControllerTest, ReadApiExceptionHandlerTest, ReadMetricsInterceptorTest
 ├── filters/      + ApiRouteTest, ActionRequestWrapperTest, UnsupportedContentTypeFilterTest,
 │                   PayloadBodyFreeAuditPayloadGenerationServiceTest; ~ ActionHeaderFilterTest
 ├── domain/       + ReadEndpointTest, ReadOutcomeTest, RouteRefusalTest, ShareViewTest, DayYouthFilterTest,
@@ -232,7 +233,7 @@ schema, ports and service of phase B; phase D needs everything and runs only if 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
 | T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source) | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag | FR-017, FR-018, FR-045, FR-056; SC-008 |
-| T010 | `ShareParametersTest`, `InstantFormatTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ReadApiExceptionHandlerTest`, `OpenApiContractTest` | controllers, responses, advice, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053 |
+| T010 | `ShareParametersTest`, `InstantFormatTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | controllers, responses, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053 |
 | T011 | `ReadApiIT`, `AuditIT`, `NoPayloadInLogsIT`, `PayloadBodyFreeAuditPayloadGenerationServiceTest` | fixes found; D-AUDIT option 4 (or option 1 branch) | US1–US7; FR-022–FR-025, FR-051, FR-052; SC-003–SC-006, SC-011 |
 | T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred | FR-057–FR-060; SC-012, SC-013 |
 

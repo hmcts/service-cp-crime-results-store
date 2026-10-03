@@ -14,8 +14,10 @@ line points here, and this file stays as the record of the change.
   rather than nothing. `MicrometerRefusalObserver` (T003) registers `resultsstore.read.refused`;
   `MicrometerReadObserver` (T005) the other read meters; `MicrometerIntakeObserver` (T008) the overrun
   counter.
-- **Read meters describe a request, not a transaction.** They fire once the answer is decided, after the
-  query. The overrun counter fires after the store transaction's commit has returned.
+- **Read meters describe a request, not a transaction.** `requests` and `duration` are recorded by
+  `api/ReadMetricsInterceptor` when the request completes; `page.items` and `payload.bytes` by
+  `ShareReadService` when the answer is built. The overrun counter fires after the store transaction's
+  commit has returned.
 - `outcome=not_modified` exists for `payload` and `arrived_payload` only; every other
   (endpoint, outcome) pair is registered.
 
@@ -23,7 +25,7 @@ line points here, and this file stays as the record of the change.
 
 | Name | Tags (allowed values) | Moves when | FR |
 |---|---|---|---|
-| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (only if D-RAW); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the answer is decided. `bad_request` = any `400`; `not_found` = `share_not_found` or `hearing_day_not_found`; `unavailable` = `503 store_unavailable`; `failed` = `500 internal_error` | FR-055 |
+| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (only if D-RAW); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status). `bad_request` = any `400`; `not_found` = `share_not_found` or `hearing_day_not_found`; `unavailable` = `503 store_unavailable`; `failed` = `500 internal_error` | FR-055 |
 | `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` | this service's filters refuse a request before authorisation or audit. These requests are not audited, so this counter is their only record | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN, pending Sachin) | FR-020 |
 
@@ -31,7 +33,7 @@ line points here, and this file stays as the record of the change.
 
 | Name | Tags | Records | FR |
 |---|---|---|---|
-| `resultsstore.read.duration` | `endpoint` (as above) | from controller entry to the answer decided, including the query. Not the filters, not the audit, not writing the body | FR-055 |
+| `resultsstore.read.duration` | `endpoint` (as above) | from the handler's start to the request's completion in Spring MVC, including the query and writing the body. Not this service's filters, not the authorisation or audit filters | FR-055 |
 
 ## Distribution summaries (no tags)
 

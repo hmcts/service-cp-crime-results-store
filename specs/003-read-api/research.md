@@ -501,7 +501,11 @@ changes.
 `resultsstore.intake.visibility.overrun`. Tag values are lower-case enum names from `domain/`, every
 combination registered at start. Refusals are counted through a `RefusalObserver` port created with the
 filter in T002 (so phase A needs nothing from phase B); `MicrometerRefusalObserver` (T003) and
-`MicrometerReadObserver` (T005) implement the two ports.
+`MicrometerReadObserver` (T005) implement the two ports. `requests` and `duration` are recorded by a
+handler interceptor (`api/ReadMetricsInterceptor`, T010) when the request completes, from the route the
+action filter matched and the response status, so a `304` decided by Spring after the controller returns
+is counted `not_modified`, and an exception mapped by the advice is counted by its status; the service
+records page sizes and payload bytes. The service never catches an exception to count it.
 
 ---
 

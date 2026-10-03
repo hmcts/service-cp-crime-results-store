@@ -13,7 +13,7 @@
 
 ## Requirement Completeness
 
-- [x] No [NEEDS CLARIFICATION] markers remain — every open point is a row of *Decisions pending Sachin* with the default applied and the alternatives listed; the requirements carry the default and say "pending Sachin".
+- [x] No clarification markers remain — every open point is a row of *Decisions pending Sachin* with the default applied and the alternatives listed; the requirements carry the default and say "pending Sachin".
 - [x] Requirements are testable and unambiguous — each FR names a route, a field, a status and reason, a header, a counter, a start-up refusal or a document change that a test or a grep can check.
 - [x] Success criteria are measurable — each SC has a count, a percentage or a pass/fail threshold.
 - [x] Success criteria are technology-agnostic (no implementation details) — outcomes are responses, counts and refusals. SC-007 names the database's query plans because Principle III is about which data a query reads; SC-013 names the coverage tool only because the build gate requires it.
