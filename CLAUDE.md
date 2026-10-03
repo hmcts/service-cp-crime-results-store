@@ -96,6 +96,7 @@ a payload. Read-API rules admit "System Users". Audit runs on the audit library'
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan:
-`specs/001-share-intake/plan.md` (share intake, the write path), with its
+`specs/002-enrichment/plan.md` (enrichment from progression), with its
 `research.md`, `data-model.md`, `contracts/` and `quickstart.md` beside it.
+Spec 001 (`specs/001-share-intake/`) describes the write path it extends.
 <!-- SPECKIT END -->
