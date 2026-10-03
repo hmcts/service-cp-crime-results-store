@@ -40,7 +40,7 @@ A consumer such as YOT's nightly job or probation's bridge keeps a cursor, `stor
 **Acceptance Scenarios**:
 
 1. **Given** shares stored more than the visibility lag ago, **When** a consumer pulls with `storedAfterSeq=0`, **Then** they come back in ascending `storedSeq`, at most `limit` of them, with `hasMore` true exactly when more remain.
-2. **Given** a share stored less than the visibility lag ago, **When** a consumer pulls, **Then** it is not returned, and neither is any share stored after it.
+2. **Given** a share whose store transaction is still open, **When** a consumer pulls, **Then** neither it nor any share with a higher `storedSeq` is returned until it has committed or rolled back.
 3. **Given** a filter (`dayYouthSeen`, `courtCentreId`) that matches nothing in a range, **When** the page is not full, **Then** `nextStoredAfterSeq` still moves to the highest sequence number the store can vouch for, so the next call does not rescan the range.
 4. **Given** any pull, **Then** the response carries `visibleUpTo`, and every share stored at or before it with `storedSeq` up to `nextStoredAfterSeq` has been presented (YOT's 18:00 barrier).
 5. **Given** a share presented with `projectionStatus` `FAILED` or `dayYouthSeen` null, **When** the sweep later fills its key details, **Then** the share is not presented again by pull, and the contract tells the consumer to re-read it with `GET /shares/{shareId}`.
@@ -199,12 +199,12 @@ Probation (S10) builds today's EXT view from the raw event. It fetches `GET /sha
 - **FR-011**: `dayYouthSeen=notFalse` MUST select days whose flag is not `false` (unknown stays visible); `true` MUST select days whose flag is `true`; absent MUST mean any day. Any other value MUST give `400 invalid_day_youth_seen`.
 - **FR-012**: `courtCentreId` on pull MUST select shares of that court centre AND shares whose extraction is `FAILED` (court unknown) (D-COURT-FAILED, pending Sachin).
 - **FR-013**: The pull response MUST be `{ items, nextStoredAfterSeq, hasMore, visibleUpTo }`. `hasMore` MUST be exact (the store reads one row more than `limit`).
-- **FR-014**: When `hasMore` is true, `nextStoredAfterSeq` MUST be the last item's `storedSeq`. When it is false, `nextStoredAfterSeq` MUST be the greater of the request's `storedAfterSeq` and the highest `storedSeq` of every visible share, filter or no filter, worked out in the same database statement as the page.
+- **FR-014**: When `hasMore` is true, `nextStoredAfterSeq` MUST be the last item's `storedSeq`. When it is false, `nextStoredAfterSeq` MUST be the greater of the request's `storedAfterSeq` and the visibility bound of FR-016 (the highest `storedSeq` the store can vouch for, filter or no filter), worked out in the same database statement as the page.
 - **FR-015**: `visibleUpTo` MUST be the database's current time minus the visibility lag, from the same statement. The contract MUST state: every share stored at or before `visibleUpTo` with `storedSeq` at or below `nextStoredAfterSeq` has been presented (if it matched the filters at the time of the read).
 
 **Pull safety**
 
-- **FR-016**: Pull MUST return only shares whose `stored_at` is at or before the database's current time minus the visibility lag. Both times MUST come from the database clock.
+- **FR-016**: Pull MUST return only shares whose `storedSeq` is at or below the visibility bound: the highest `storedSeq` among shares whose `stored_at` is at or before the database's current time minus the visibility lag. Both times MUST come from the database clock. A share below the bound is returned even if its own `stored_at` is a moment later than the cut-off, because its transaction has ended (research R4).
 - **FR-017**: The default visibility lag MUST be the store transaction timeout plus twice the statement timeout plus the idle-in-transaction timeout: 110 seconds at the intake defaults (D-LAG-VALUE, pending Sachin). The bound MUST rest on limits PostgreSQL enforces, not on the JDBC driver's client-side cancel.
 - **FR-018**: The service MUST refuse to start when the lag is below that sum or above 10 minutes. When the lag is not set and the derived default is above 10 minutes, the error MUST name `resultsstore.intake.store.transaction-timeout`.
 - **FR-019**: A database trigger MUST set `stored_at` from the clock when each share row is inserted, after its `stored_seq` is assigned, so a share's `stored_at` is never earlier than the moment its sequence number was taken.
