@@ -24,8 +24,8 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 /**
  * Requests the HTTP connector rejects before they reach the service (contracts/read-api.md §6), on a real
  * server and over a raw socket, since an HTTP client would refuse to send most of them. Tomcat answers each
- * {@code 400} itself; the host's error report writes the four-field problem body, never the URI, and the
- * refusal is not counted. A path with a dot segment, which the connector accepts and normalises, is refused by
+ * {@code 400} itself; the host's error report writes the four-field problem body, never the URI, and
+ * counts the refusal as {@code connector_rejected}, once. A path with a dot segment, which the connector accepts and normalises, is refused by
  * the action filter instead, on its raw text.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -89,9 +89,10 @@ class ConnectorRejectionIT {
         "/results-store/v1/shares/zq%zzsecret", "/results-store/v1/shares/zq%5Csecret",
         "/results-store/v1/shares/zq%secret", "/results-store/v1/shares/zq|secret", "/results-store/v1/shares/zq{secret",
         "/results-store/v1/shares?zq=|secret"})
-    void a_uri_the_connector_rejects_should_get_a_400_with_the_four_field_problem_body(final String target)
-            throws IOException {
+    void a_uri_the_connector_rejects_should_get_a_400_with_the_four_field_problem_body_and_be_counted_once(
+            final String target) throws IOException {
         final double refused = refusedInAll();
+        final double rejected = refused("connector_rejected");
 
         final RawResponse response = send(target);
 
@@ -104,7 +105,8 @@ class ConnectorRejectionIT {
         assertThat(body.get("title").asString()).isEqualTo("Bad Request");
         assertThat(body.get("status").asInt()).isEqualTo(400);
         assertThat(body.get("reason").asString()).isEqualTo("bad_request");
-        assertThat(refusedInAll()).isEqualTo(refused);
+        assertThat(refused("connector_rejected")).isEqualTo(rejected + 1);
+        assertThat(refusedInAll()).isEqualTo(refused + 1);
     }
 
     /**

@@ -30,6 +30,7 @@ class MicrometerRefusalObserverTest {
                 .extracting(counter -> counter.getId().getTag("reason"))
                 .containsExactlyInAnyOrderElementsOf(Arrays.stream(RouteRefusal.values()).map(RouteRefusal::tag)
                         .toList());
+        assertThat(registry.find(METER).tag("reason", "connector_rejected").counter()).isNotNull();
         assertThat(registry.find(METER).counters()).allSatisfy(counter -> {
             assertThat(counter.count()).isZero();
             assertThat(counter.getId().getTags()).hasSize(1);

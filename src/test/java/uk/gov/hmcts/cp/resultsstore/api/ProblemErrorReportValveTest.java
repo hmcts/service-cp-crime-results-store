@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -21,18 +22,23 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
+import uk.gov.hmcts.cp.resultsstore.support.RecordingRefusalObserver;
 
 /**
  * The host's error report (contracts/read-api.md §6): an error Tomcat answers itself, before the service, gets
- * the four-field problem body and never the request's URI.
+ * the four-field problem body and never the request's URI. A {@code 4xx} so reported is the connector's
+ * refusal, counted as {@code connector_rejected} once the body has been written, never before.
  */
 @DisplayName("the problem error report valve")
 class ProblemErrorReportValveTest {
 
     private static final JsonMapper MAPPER = JsonMapper.builder().build();
 
-    private final ProblemErrorReportValve valve = new ProblemErrorReportValve();
+    private final RecordingRefusalObserver refusals = new RecordingRefusalObserver();
+
+    private final ProblemErrorReportValve valve = new ProblemErrorReportValve(refusals);
 
     private final Request request = mock(Request.class);
 
@@ -69,6 +75,40 @@ class ProblemErrorReportValveTest {
         verify(response).finishResponse();
     }
 
+    @ParameterizedTest
+    @CsvSource({"400", "404", "414", "499"})
+    void a_4xx_report_written_in_full_should_be_counted_once_as_connector_rejected(final int status)
+            throws IOException {
+        final Response response = errorResponse(status);
+
+        valve.report(request, response, null);
+
+        assertThat(refusals.refusals()).containsExactly(RouteRefusal.CONNECTOR_REJECTED);
+    }
+
+    /** A {@code 5xx} is the server's failure, not a refusal of the request. */
+    @ParameterizedTest
+    @CsvSource({"500", "503"})
+    void a_5xx_report_should_not_be_counted(final int status) throws IOException {
+        final Response response = errorResponse(status);
+
+        valve.report(request, response, null);
+
+        assertThat(refusals.refusals()).isEmpty();
+    }
+
+    /** Counted after the write: a response that cannot be finished is not counted. */
+    @Test
+    void a_report_that_cannot_be_finished_should_not_be_counted() throws IOException {
+        final Response response = errorResponse(400);
+        doThrow(new IOException("broken pipe")).when(response).finishResponse();
+
+        valve.report(request, response, null);
+
+        assertThat(written.size()).isPositive();
+        assertThat(refusals.refusals()).isEmpty();
+    }
+
     @Test
     void the_body_should_never_hold_the_uri_or_the_exception() throws IOException {
         when(request.getRequestURI()).thenReturn("/results-store/v1/shares/zq-secret");
@@ -87,6 +127,7 @@ class ProblemErrorReportValveTest {
 
         assertThat(written.size()).isZero();
         verify(response, never()).setContentType(anyString());
+        assertThat(refusals.refusals()).isEmpty();
     }
 
     @Test
@@ -109,6 +150,7 @@ class ProblemErrorReportValveTest {
 
         assertThat(written.size()).isZero();
         verify(response, never()).setStatus(anyInt());
+        assertThat(refusals.refusals()).isEmpty();
     }
 
     /** A client that has gone: the failure is logged with the status only, and nothing escapes the valve. */
@@ -124,6 +166,7 @@ class ProblemErrorReportValveTest {
             assertThat(log.messages()).hasSize(1);
             assertThat(log.messages().getFirst()).contains("400").doesNotContain("zq-secret");
         }
+        assertThat(refusals.refusals()).isEmpty();
     }
 
     /** A servlet output stream over a byte buffer. */

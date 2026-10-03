@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.core.Ordered;
 import uk.gov.hmcts.cp.resultsstore.api.ProblemErrorReportValve;
+import uk.gov.hmcts.cp.resultsstore.support.RecordingRefusalObserver;
 
 /** The connector policy and the host's error report, set explicitly so nobody loosens them by accident. */
 @DisplayName("the Tomcat edge customiser")
@@ -21,7 +22,7 @@ class TomcatEdgeCustomizerTest {
 
     private final TomcatServletWebServerFactory factory = new TomcatServletWebServerFactory();
 
-    private final TomcatEdgeCustomizer customizer = new TomcatEdgeCustomizer();
+    private final TomcatEdgeCustomizer customizer = new TomcatEdgeCustomizer(new RecordingRefusalObserver());
 
     /**
      * {@code TRACE} is let through the connector so the action filter refuses it like any other method

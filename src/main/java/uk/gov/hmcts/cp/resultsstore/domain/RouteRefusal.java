@@ -5,7 +5,8 @@ import java.util.Locale;
 /**
  * Why a request was refused before it reached the audit filter: the {@code reason} tag of
  * {@code resultsstore.read.refused} (contracts/metrics.md). The first three are this service's filters'
- * refusals; the last two the authorisation library's, counted by the service's error controller.
+ * refusals; the next two the authorisation library's, counted by the service's error controller; the last the
+ * HTTP connector's, counted by the host's error report.
  */
 public enum RouteRefusal {
 
@@ -18,7 +19,12 @@ public enum RouteRefusal {
     /** No {@code CJSCPPUID}: the authorisation library's {@code 401}, counted at {@code /error}. */
     UNAUTHENTICATED,
     /** A caller in neither admitted group: the authorisation library's {@code 403}, counted at {@code /error}. */
-    FORBIDDEN;
+    FORBIDDEN,
+    /**
+     * A request target the HTTP connector rejects before the service sees it: Tomcat's {@code 400}, answered
+     * {@code bad_request} and counted by the host's error report once its body is written.
+     */
+    CONNECTOR_REJECTED;
 
     /** The {@code reason} tag. */
     public String tag() {

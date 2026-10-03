@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.resultsstore.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.webmvc.error.ErrorAttributes;
 import org.springframework.context.annotation.Bean;
@@ -88,10 +89,13 @@ public class ApiWebConfig {
         return registration;
     }
 
-    /** The connector policy and the host's problem error report. */
+    /**
+     * The connector policy and the host's problem error report. The refusal observer is looked up when a
+     * refusal is counted, not when the web server is built, so the meter registry is not created early.
+     */
     @Bean
-    public TomcatEdgeCustomizer tomcatEdgeCustomizer() {
-        return new TomcatEdgeCustomizer();
+    public TomcatEdgeCustomizer tomcatEdgeCustomizer(final ObjectProvider<RefusalObserver> refusalObserver) {
+        return new TomcatEdgeCustomizer(reason -> refusalObserver.getObject().refused(reason));
     }
 
     /** The bounded {@code /error} attributes; Boot's {@code DefaultErrorAttributes} backs off. */

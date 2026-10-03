@@ -12,6 +12,7 @@ import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.core.Ordered;
 import uk.gov.hmcts.cp.resultsstore.api.ProblemErrorReportValve;
+import uk.gov.hmcts.cp.resultsstore.application.RefusalObserver;
 
 /**
  * The read API's HTTP connector policy and the host's error report (contracts/read-api.md §2.2, §6).
@@ -32,10 +33,21 @@ import uk.gov.hmcts.cp.resultsstore.api.ProblemErrorReportValve;
  */
 public class TomcatEdgeCustomizer implements WebServerFactoryCustomizer<TomcatServletWebServerFactory>, Ordered {
 
+    private final RefusalObserver refusals;
+
+    /**
+     * Creates the customiser.
+     *
+     * @param refusals handed to the host's error report, which counts each connector-level refusal
+     */
+    public TomcatEdgeCustomizer(final RefusalObserver refusals) {
+        this.refusals = refusals;
+    }
+
     @Override
     public void customize(final TomcatServletWebServerFactory factory) {
         factory.addConnectorCustomizers(TomcatEdgeCustomizer::connectorPolicy);
-        factory.addContextCustomizers(TomcatEdgeCustomizer::problemErrorReport);
+        factory.addContextCustomizers(this::problemErrorReport);
     }
 
     @Override
@@ -49,14 +61,14 @@ public class TomcatEdgeCustomizer implements WebServerFactoryCustomizer<TomcatSe
         connector.setAllowTrace(true);
     }
 
-    private static void problemErrorReport(final Context context) {
+    private void problemErrorReport(final Context context) {
         final Container parent = context.getParent();
         if (parent instanceof StandardHost host) {
             final Pipeline pipeline = host.getPipeline();
             Arrays.stream(pipeline.getValves())
                     .filter(ErrorReportValve.class::isInstance)
                     .forEach(pipeline::removeValve);
-            pipeline.addValve(new ProblemErrorReportValve());
+            pipeline.addValve(new ProblemErrorReportValve(refusals));
             host.setErrorReportValveClass(ProblemErrorReportValve.class.getName());
         }
     }
