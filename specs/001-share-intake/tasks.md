@@ -786,11 +786,34 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
     with no SQLSTATE). The build has no Checkstyle task; the
     static analysis is PMD.
 
-- [ ] T015 [US1] [US2] [US3] Test first: extend scripts/container-smoke.sh so it fails on the pre-001 build: publish a real-shaped `hearing-resulted` message (identifiers only, synthetic values, shape from quickstart.md §4) to the compose Artemis with `CPPNAME`, the same message again, and an unreadable body; assert with `psql` receipts `STORED` / `DUPLICATE` (same `share_id`) / `UNREADABLE`, one `hearing_share` (latest, `OK`), one `hearing_share_payload`, its `share_defendant` rows and one `hearing_day_head` with `share_count = 1`; then any fix the smoke finds
+- [X] T015 [US1] [US2] [US3] Test first: extend scripts/container-smoke.sh so it fails on the pre-001 build: publish a real-shaped `hearing-resulted` message (identifiers only, synthetic values, shape from quickstart.md §4) to the compose Artemis with `CPPNAME`, the same message again, and an unreadable body; assert with `psql` receipts `STORED` / `DUPLICATE` (same `share_id`) / `UNREADABLE`, one `hearing_share` (latest, `OK`), one `hearing_share_payload`, its `share_defendant` rows and one `hearing_day_head` with `share_count = 1`; then any fix the smoke finds
   - Covers: FR-047; SC-001, SC-012.
   - Done when: `./scripts/container-smoke.sh` exits 0 locally against the compose stack (and fails on the commit before T015's production fixes, recorded as RED); the gate green.
-  - RED: _to be recorded_
-  - GREEN: _to be recorded_
+  - RED: the extended script, run against the tree before spec 001's production code (`534870f`, the commit
+    that adds this file; exported with `git archive` into a scratch directory, the script copied in), under
+    the Gradle lock: readiness `UP`, the listener on the subscription, the three messages published, then
+    `FAIL: the three messages did not settle within 30s`, exit 1; the diagnostic query met `ERROR: column
+    "status" does not exist` (V1's `event_receipt` has no status, and there is no `hearing_share`). T015
+    found no production fix, so there is no later "before the fixes" commit to fail on.
+  - GREEN: `flock -w 7200 /tmp/resultsstore-gradle.lock ./scripts/container-smoke.sh` exits 0 at the T014
+    commit: readiness within the 60 s budget, then every check `ok` (receipts `DUPLICATE,STORED,UNREADABLE`;
+    `STORED` and `DUPLICATE` both naming the one share; `UNREADABLE` with `NOT_JSON`, its text and no share;
+    one share, latest, no predecessor, in order, `OK`, LJA `2577`, `MAGISTRATES`, not a re-share, youth
+    TRUE, `shared_at` back to `2026-10-02T14:19:50.706Z`; one payload of 1000 bytes with the body's MD5, a
+    parsed copy and a matching `payload_sha256`; two defendant rows; one day row with `share_count = 1`,
+    the share as latest and `youth_seen` TRUE; Prometheus `received` 3, `stored{in_order}` 1, `duplicate` 1,
+    `not_share{not_json,unreadable}` 1), `PASS`, the stack torn down.
+  - Notes: after readiness (its 60 s budget unchanged) the script waits up to 30 s for a consumer on the
+    subscription (a topic message published before it exists reaches no one), matched by the name up to its
+    dot because the broker escapes the dot in a shared subscription's queue name
+    (`resultsstore-service\.sdg`), then publishes with the broker's own CLI (`docker compose exec -T
+    artemis … producer --properties` with `CPPNAME`) and checks with `docker compose exec -T postgres psql`,
+    so CI needs only docker compose, curl and coreutils. The body is real-shaped and synthetic: `_metadata`
+    with id, name, createdAt, causation, stream and context; hearing with `courtCentre` (id, roomId, `lja`),
+    one prosecution case with two defendants (`isYouth` false and true), `hearingDay`, `sharedTime` in
+    milliseconds with `Z`, `isReshare`. Every check runs and is reported before the script fails, so a red
+    run names each wrong row. SC-001's 1 s bound is not timed here; the script waits up to 30 s for the
+    three receipts to settle.
 
 **Checkpoint**: phase-gate run 4 ends with every reviewer at PASS.
 
