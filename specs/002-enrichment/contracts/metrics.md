@@ -25,8 +25,14 @@ contract is updated to match, and this file stays as the record of the change.
 |---|---|---|---|
 | `resultsstore.intake.failed` | `stage` = `receipt` \| `store` \| **`enrich`**; `cause` = `lock_timeout` \| `statement_timeout` \| `database` \| `other` \| **`progression_rejected`** \| **`progression_refused`** \| **`progression_unavailable`** \| **`progression_unreachable`** \| **`progression_timeout`** \| **`progression_malformed`** | an intake attempt throws. `stage=enrich` for a failed lookup (cause from contracts/progression-lookup.md) or an unexpected failure in the enrichment step (`other`). A failed existence check counts `stage=store` with a database cause | FR-027 |
 
-The `progression_*` causes appear only with `stage=enrich`. `IntakeFailureCause.fromSqlState` never
-returns one.
+The `progression_*` causes appear only with `stage=enrich`, and `stage=enrich` pairs only with them and
+`other` (`IntakeFailureCause.belongsTo`); every allowed pair is pre-registered.
+`IntakeFailureCause.fromSqlState` never returns a `progression_*` cause.
+
+The tag values are the lower-case names of `domain/IntakeStage`, `domain/IntakeFailureCause`,
+`domain/ApplicationLookupOutcome` and `domain/EnrichmentSkip` (phase A). The `resultsstore.enrichment.*`
+meters below are registered by `MicrometerIntakeObserver` in T006; the timer's `failed` outcome is not
+a value of `ApplicationLookupOutcome`.
 
 ## New counters
 

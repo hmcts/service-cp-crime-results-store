@@ -35,7 +35,7 @@ You are a senior Spring Boot developer on the Crime Common Platform (MOJ/HMCTS),
 
 ### Service-specific rules
 - **Every share is an immutable version.** Never update a share's facts or payload. Only the latest pointer, the predecessor link and the day's youth flag change, under the hearing-day lock; and the key-details and `projection_*` columns, by the extraction sweep alone, from the stored payload. Latest is the greatest `sharedTime`, never arrival order.
-- **Store the payload exactly as received** (plus the finalised application results added at intake). Every indexed column is derived from it and can be rebuilt from it.
+- **Store the arrived text exactly as received** in `payload_text`, with the checksum over it. `payload_json` is the working copy: that text parsed, plus the finalised application results added at intake. Every indexed column is derived from the working copy and can be rebuilt from it.
 - **Consumers search indexed columns.** Pull and search queries never read the payload table.
 - **No business rules in capture.** Record facts as the payload states them; leave interpretation to consumers.
 - **Never refuse to store.** Only `hearing.id`, `hearingDay`, `sharedTime` are required. Extraction failure sets `projection_status = FAILED`; it never drops the share.

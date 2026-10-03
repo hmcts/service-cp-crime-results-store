@@ -1,6 +1,49 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.0.0 → 2.1.0 (2026-10-03, spec 002 enrichment)
+Bump rationale: MINOR. Principle II gains the working-copy clause: the
+                arrived text (payload_text, with the checksum over it) and
+                the working copy (payload_json, enriched at intake) are
+                named apart, and the removal of the three amendment fields
+                is named. Principle VI's retryable-failure wording is
+                widened to cover a progression answer the store cannot
+                accept. No rule is reversed.
+
+Principles changed in 2.1.0:
+  II.   The Payload Is the Source of Truth - payload_text is the message as
+        it arrived, with the SHA-256 checksum over it; payload_json is the
+        working copy, enriched at intake with finalised application results
+        from progression (amendmentDate, amendmentReason and
+        amendmentReasonId removed), held as jsonb, which keeps content but
+        not key order, spacing or duplicate keys; indexed columns are read
+        from the working copy; the read API serves the working copy
+  VI.   Idempotent, Transactional Intake - "a failure a retry can fix" now
+        also covers a progression answer the store cannot accept (a routing,
+        access or contract fault): it fails closed, goes back to the broker
+        and reaches the dead-letter queue when the attempts run out
+Principles unchanged: I, III, IV, V, VII, VIII, IX, X, XI, XII.
+
+Templates checked (2.1.0):
+  ✅ .specify/templates/plan-template.md      - no change needed
+  ✅ .specify/templates/spec-template.md      - no change needed
+  ✅ .specify/templates/tasks-template.md     - no change needed
+  ✅ .claude/agents/code-reviewer.md          - "Payload altered" aligned with
+                                                the working-copy role
+  ✅ .claude/rules/*                          - checked; aligned where they
+                                                described the parsed copy
+  ✅ specs/001-share-intake/spec.md           - "Amended by spec 002" notes on
+                                                FR-015, FR-016, FR-036 and Key
+                                                Entities
+
+Follow-up TODOs (2.1.0):
+  - Design page wording (Data model bullet 2, hearing_share_payload row,
+    read API payload row): forward notes in specs/002-enrichment/page-notes.md
+    for the page owner.
+  - Re-run /speckit-analyze on spec 002 once its phase C lands.
+
+Previous change, kept for the record:
+
 Version change: 1.0.0 → 2.0.0
 Bump rationale: MAJOR. Principle V is reversed: a message without an
                 identity, or with an unreadable body, is no longer
@@ -92,14 +135,26 @@ works if a stored version means the same thing every time it is read.
 
 ### II. The Payload Is the Source of Truth (NON-NEGOTIABLE)
 
-The store keeps each payload exactly as it was received, plus the finalised
-application results added at intake. Nothing else is added, removed or
-reformatted. Every indexed column is read from the payload, and can be
-rebuilt from it if the extraction rules change. The payload checksum is
-SHA-256 over the stored text.
+The store keeps each message exactly as it arrived, byte for byte, header
+included, in `payload_text`. The payload checksum is SHA-256 over that text.
+
+Beside it the store keeps one working copy, `payload_json`: that text parsed,
+with the finalised application results from progression set into
+`courtApplications[].judicialResults` at intake, each result without
+`amendmentDate`, `amendmentReason` and `amendmentReasonId`. Nothing else in
+the content is added, removed or changed. The working copy is held as jsonb,
+which keeps content but not key order, spacing or duplicate keys.
+
+Every indexed column is read from the working copy (from the text when the
+working copy is empty), and can be rebuilt from it if the extraction rules
+change. The read API serves the working copy, and the text when the working
+copy is empty.
 
 **Rationale**: if the columns can always be rebuilt from the payload, an
-extraction bug is a re-run, not a data loss.
+extraction bug is a re-run, not a data loss. Keeping the text as it arrived
+means the checksum always proves what hearing sent, while the working copy
+holds what results holds today, so consumers moving off results lose
+nothing.
 
 ### III. Consumers Search Indexed Columns (NON-NEGOTIABLE)
 
@@ -165,8 +220,12 @@ see. A share stored with a failed extraction can be fixed later.
   stored payload stays; payloads are not compared and nothing is recorded
   beyond the receipt.
 - **Retryable failures go back to the broker.** A failure a retry can fix
-  (database or progression unreachable) is thrown so the message rolls back
-  and the broker redelivers it. Before throwing, the listener pauses for
+  (database or progression unreachable), and a progression answer the store
+  cannot accept (a routing, access or contract fault such as a 404, a 403 or
+  a body it cannot read), is thrown so the message rolls back and the broker
+  redelivers it. Such a fault fails closed: the share is not stored
+  un-enriched, and if the fault is not fixed the message reaches the
+  dead-letter queue when the broker's attempts run out. Before throwing, the listener pauses for
   `min(2^deliveryCount s, 30 s)`, so the broker's immediate redeliveries are
   not used up during a brief outage. There is no retry loop in the store.
 - The progression lookup for finalised application results runs between the
@@ -360,4 +419,4 @@ match.
 - Reviewers block a merge that breaks a NON-NEGOTIABLE principle without a
   written waiver.
 
-**Version**: 2.0.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-02
+**Version**: 2.1.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-03

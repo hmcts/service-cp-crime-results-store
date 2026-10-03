@@ -569,6 +569,12 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
   - `/speckit-analyze` (`.claude/skills/speckit-analyze/SKILL.md`, read-only) over spec.md, plan.md and tasks.md, with the constitution, research, data-model and contracts as context; every CRITICAL and HIGH finding resolved, MEDIUM fixed or listed below with a reason; the result recorded under this task;
   - the Deferred list below, completed with anything the phases left open.
   - Covers: FR-035, FR-036, FR-037, FR-040, FR-041; SC-011.
+  - Progress (2026-10-03): docs part done on `002-enrichment-docs`: constitution 2.1.0 (Principle II
+    working copy, Principle VI widened), "Amended by spec 002" notes in spec 001 (FR-015, FR-016,
+    FR-036, Key Entities), `.claude/agents/` and `.claude/rules/` aligned with the working-copy role,
+    page-notes.md, and the metrics and configuration contracts checked against phase A's code.
+    Not yet done: spec 001 data-model and contracts deltas, the plan.md constitution reference,
+    `/speckit-analyze` and the final tick, after phase C.
   - Done when: the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` succeeds; the gate green.
   - Deferred (not in 002):
     - indexing defendants who appear only as court-application parties (spec 001 FR-019): still deferred, no change to the defendant index;

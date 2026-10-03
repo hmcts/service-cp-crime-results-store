@@ -28,10 +28,11 @@ private JdbcShareStore store;
 ## DTOs and Data Classes
 
 - Java records for ALL value types — immutable by design
-- **The payload stays as received.** Keep the exact text for storage and return; parse it into a
-  Jackson tree (`tools.jackson`, Jackson 3) only to read the identity fields and extract the
-  indexed columns. Never bind the whole hearing payload to a typed model, and never re-serialise a
-  tree in place of the original text
+- **The arrived text stays as received.** Keep the exact text in `payload_text`, with the checksum
+  over it. Parse it into a Jackson tree (`tools.jackson`, Jackson 3) to read the identity fields,
+  add the intake enrichment and extract the indexed columns; that tree, stored as `payload_json`,
+  is the working copy the read API serves (constitution Principle II). Never bind the whole
+  hearing payload to a typed model, and never re-serialise a tree in place of `payload_text`
 - What this service *produces* (API responses) is typed records
 - Use sealed interfaces for polymorphic types (e.g. intake outcomes)
 

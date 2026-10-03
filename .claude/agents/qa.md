@@ -45,7 +45,7 @@ with the behaviour it leaves unpinned.
 - Out-of-order arrival — stored, not latest, linked by `sharedTime`, `arrived_out_of_order = true`
 - Two shares of the same day at once — the hearing-day lock orders them; latest decided by `sharedTime`
 - Enrichment — application without `judicialResults` gets FINALISED results without the amendment fields; otherwise left as it arrived; `enrichmentApplied` recorded
-- Payload returned byte-for-byte as received
+- `payload_text` and `payload_sha256` byte-for-byte as received; the read API returns the working copy (`payload_json`), with an `ETag` over the bytes served
 
 ### Integration Tests
 - **Testcontainers PostgreSQL** (`support/PostgresTestSupport`) for the store and Flyway migrations — never a mocked repository where the container is available

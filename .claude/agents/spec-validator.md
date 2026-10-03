@@ -39,7 +39,7 @@ The design is on Confluence ([Results Store Service](https://hmcts.atlassian.net
 - Intake order: receipt (keyed by the broker's message id, own transaction) → identify → [enrich: spec 002] → store with `ON CONFLICT DO NOTHING` in one transaction → acknowledge after commit; the progression call outside any transaction (Principle VI).
 - A stored share's facts and payload are never updated; only the latest pointer, predecessor link and youth flag, under the hearing-day lock, and the key-details and `projection_*` columns, by the extraction sweep alone (Principle I).
 - Latest by `sharedTime`, never arrival order; late shares linked in with `arrived_out_of_order = true`.
-- Payload stored and returned exactly as received, plus intake enrichment only (Principle II).
+- `payload_text` stored exactly as received, with the checksum over it; `payload_json` the working copy, changed only by the intake enrichment, and the copy the read API returns (Principle II).
 - Indexed columns derivable from the payload alone; extraction failure marks `projection_status = FAILED` and keeps the share.
 - Facts recorded as the payload states them — no business interpretation (Principle IV).
 - Redelivery stores nothing new: the unique key with `ON CONFLICT DO NOTHING` drops it, the receipt is marked `DUPLICATE`, the message is acknowledged, no error is raised. Payloads are not compared.
@@ -79,5 +79,5 @@ For each finding:
 ## Verdict
 
 End with one of:
-- **COMPLIANT** — every share with an identity is stored once and never changed; the payload is kept and returned as received; queries use indexed columns; intake is transactional and acknowledges after commit; every endpoint is described, mapped, allowed by its own rule and audited; nothing is published on Artemis; telemetry carries identifiers only
+- **COMPLIANT** — every share with an identity is stored once and never changed; the arrived text is kept as received and the working copy changes only by the intake enrichment; queries use indexed columns; intake is transactional and acknowledges after commit; every endpoint is described, mapped, allowed by its own rule and audited; nothing is published on Artemis; telemetry carries identifiers only
 - **DRIFT DETECTED** — list the count of HIGH/MEDIUM/LOW findings

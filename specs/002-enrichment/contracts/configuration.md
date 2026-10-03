@@ -42,9 +42,13 @@ resultsstore:
   range always; base URL and user id shape only when not blank.
 - The blank check, which depends on `resultsstore.enrichment.enabled`, runs in `ProgressionConfig`
   when it builds the client. It fails start with an `IllegalArgumentException` naming the property
-  (`resultsstore.progression.base-url` or `resultsstore.progression.system-user-id`), never its value.
+  (`resultsstore.progression.base-url` or `resultsstore.progression.system-user-id`), never its value:
+  `<property> must be set when resultsstore.enrichment.enabled is true`. The shape checks fail the
+  same way (`… must be an absolute http or https URL …`, `… must be a canonical UUID`).
+  `ProgressionProperties.toString()` leaves out both values.
 - The client and its `RestClient` are built only when `resultsstore.publicevents.enabled` and
-  `resultsstore.enrichment.enabled` are both true. With enrichment off, both values may be blank.
+  `resultsstore.enrichment.enabled` are both true (the second also when it is not set, matching its
+  `true` default). With enrichment off, both values may be blank.
 - `config/Rules` gains `absoluteHttpUrl(name, value)` and `uuid(name, value)` beside `within` and
   `positive`.
 

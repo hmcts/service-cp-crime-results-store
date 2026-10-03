@@ -55,7 +55,7 @@ Nothing in `application/` or `domain/` imports a JMS, JDBC or HTTP-client type.
 |---|---|
 | `hearing_day_head` | One row per hearing day. The write lock point. Latest share, share count, `youth_seen` (becomes true once any share of the day had a youth subject, and stays true) |
 | `hearing_share` | One row per share: `share_id` (UUID from `hearingId` + `hearingDay` + `sharedTime`), shared and stored times, key details (court centre, room, LJA, jurisdiction, SJP, group proceedings, youth court), re-share flag, youth facts, chain columns (latest, predecessor, out-of-order), payload checksum (SHA-256 over the stored text), enrichment applied, extraction status, expiry. Unique key on `hearingId` + `hearingDay` + `sharedTime` |
-| `hearing_share_payload` | The exact text received (returned unchanged, checksum reproducible) and a parsed `jsonb` copy for rebuilding columns and R2, not for consumers |
+| `hearing_share_payload` | `payload_text`: the exact text received, with the checksum over it. `payload_json`: the working copy (the text parsed, enriched at intake with finalised application results, the three amendment fields removed); permanent, read by the extraction and the sweep, served by the read API |
 | `share_defendant` | `defendant_id`, `master_defendant_id`, `case_id` per share. Ids only |
 | `event_receipt` | One row per message, keyed by the broker's message id: arrival time, delivery/attempt count, the share's identity when the message had one, status (`RECEIVED`, `STORED`, `DUPLICATE`, `UNREADABLE`, `NO_IDENTITY`), `share_id` once stored, and the reason and message text when it was not a share. The intake log R1 checks |
 | `reconciliation_finding` | Reconciliation findings (R1, R2) |
@@ -105,7 +105,7 @@ happening ends on the broker's dead-letter queue, after its own redelivery attem
 | `GET /shares?storedAfterSeq=&limit=&dayYouthSeen=notFalse&courtCentreId=` | Pull: shares stored after a sequence number, in stored order, key details only |
 | `GET /shares?courtCentreId=&sharedDayFrom=&sharedDayTo=&dayYouthSeen=&latestOnly=` | Search |
 | `GET /shares/{shareId}` | One share's key details, version, latest, predecessor, youth facts |
-| `GET /shares/{shareId}/payload` | The payload exactly as received; `ETag` = payload checksum |
+| `GET /shares/{shareId}/payload` | The working copy (`payload_json`), or `payload_text` when the working copy is empty; `ETag` over the exact bytes served, never `payload_sha256` |
 | `GET /hearings/{hearingId}/days/{hearingDay}/shares` | Every version of one day, in `sharedTime` order |
 
 **Pull safety:** never return a row while a lower-numbered row is still being written. Each pull
