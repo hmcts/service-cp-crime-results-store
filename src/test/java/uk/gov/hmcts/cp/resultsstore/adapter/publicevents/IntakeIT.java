@@ -46,8 +46,9 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 import uk.gov.hmcts.cp.resultsstore.support.SampleShares;
 
 /**
- * Intake end to end (US1 to US4, US6; SC-001 to SC-005, SC-007): messages published to an embedded
- * Artemis broker reach the real listener, intake and store on Testcontainers Postgres, with no stand-in.
+ * Intake end to end (US1 to US4, US6; SC-002 to SC-005, SC-007; SC-001's path, not its 1 s bound, which
+ * is measured on the compose stack): messages published to an embedded Artemis broker reach the real
+ * listener, intake and store on Testcontainers Postgres, with no stand-in.
  *
  * <p>The broker dead-letters a message after 3 deliveries; the store gives up waiting for the day lock
  * after 2 s; the redelivery pause is off ({@code test} profile). The client takes no message ahead of

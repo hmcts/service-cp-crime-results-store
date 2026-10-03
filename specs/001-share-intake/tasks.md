@@ -623,7 +623,8 @@ US1–US4 and US6 on Testcontainers Postgres.
 
 - [X] T011 [US1] [US2] [US3] [US4] [US6] Test first: `IntakeIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/publicevents/IntakeIT.java, with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/EmbeddedBrokerSupport.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/SampleShares.java, src/test/java/uk/gov/hmcts/cp/resultsstore/support/FailingFirstCommitConnectionFactory.java; then any production fix the IT finds (in the files of T005–T010)
   - Cases: a share is stored and acknowledged; store fails once then `STORED` with attempts 2; first `session.commit()` fails → one share, receipt `STORED` on redelivery; unreadable and no-identity bodies acknowledged and not redelivered; a persistent failure ends on the dead-letter address with its attempts on the receipt; two listener containers on the one shared subscription with 50 out-of-order shares of one day → one latest, gapless chain, count 50; the same share twice at once → one `STORED`, one `DUPLICATE`; a message with no message id stored under its `sha256:` key; every receipt ends in an end state.
-  - Covers: US1–US4, US6; SC-001–SC-005, SC-007.
+  - Covers: US1–US4, US6; SC-002–SC-005, SC-007; SC-001's stored-and-acknowledged path only (its 1 s bound
+    is a compose-stack measure, T015; `IntakeIT` waits up to 30 s and does not time it).
   - Done when: `IntakeIT` green; the gate green.
   - Ruling (a), pause before every rollback (see T007): `HearingResultedEventListenerTest`'s
     `other_failure_should_escape_without_a_pause_and_clear_the_context` became
