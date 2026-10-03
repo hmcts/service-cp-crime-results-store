@@ -117,8 +117,8 @@ public class IntakeConfig {
     @Bean
     @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
     public HearingResultedEventListener hearingResultedEventListener(final IntakeService intake,
-            final RedeliveryPause pause) {
-        return new HearingResultedEventListener(intake, pause);
+            final RedeliveryPause pause, final IntakeObserver observer) {
+        return new HearingResultedEventListener(intake, pause, observer);
     }
 
     /** A Spring transaction timeout is whole seconds; the settings' rules keep it at 1 or more. */

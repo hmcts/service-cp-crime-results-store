@@ -14,10 +14,13 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  */
 public interface IntakeObserver {
 
-    /** A message reached intake (every delivery, before any work). */
+    /** A message reached the listener (every delivery, before any field of it is read). */
     void received();
 
-    /** The message had no {@code JMSMessageID} and was keyed by its checksum (FR-005). */
+    /**
+     * The message had no {@code JMSMessageID}, so its receipt is keyed by its checksum (FR-005); reported
+     * for the delivery, before the receipt is written.
+     */
     void messageIdMissing();
 
     /**

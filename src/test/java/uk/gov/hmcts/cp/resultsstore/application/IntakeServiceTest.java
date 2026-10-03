@@ -109,7 +109,6 @@ class IntakeServiceTest {
             assertThat(arrival.getValue().keptText()).isEqualTo("not json");
             verifyNoInteractions(shareStore);
             final InOrder order = inOrder(observer, receipts);
-            order.verify(observer).received();
             order.verify(receipts).recordArrival(any());
             order.verify(observer).notShare(NonShareReason.NOT_JSON);
             verifyNoMoreInteractions(observer);
@@ -183,7 +182,6 @@ class IntakeServiceTest {
             assertThat(result).isEqualTo(new IntakeResult(IntakeOutcome.STORED, MESSAGE_ID, SHARE_ID, HEARING_ID,
                     LocalDate.parse(HEARING_DAY), SHARED_AT));
             final InOrder order = inOrder(observer, receipts, shareStore);
-            order.verify(observer).received();
             order.verify(receipts).recordArrival(any());
             order.verify(shareStore).store(any());
             order.verify(observer).stored(false, Duration.ofSeconds(3));
@@ -335,7 +333,6 @@ class IntakeServiceTest {
             assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
                     .isSameAs(failure);
 
-            verify(observer).received();
             verify(observer).intakeFailed(IntakeStage.RECEIPT, IntakeFailureCause.LOCK_TIMEOUT);
             verifyNoMoreInteractions(observer);
             verifyNoInteractions(shareStore);
@@ -351,7 +348,6 @@ class IntakeServiceTest {
                     IntakeCommand.ofText(MESSAGE_ID, 1, SHARE_WITH_A_BAD_COURT_CENTRE)))
                     .isSameAs(failure);
 
-            verify(observer).received();
             verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.STATEMENT_TIMEOUT);
             verifyNoMoreInteractions(observer);
         }
@@ -364,7 +360,6 @@ class IntakeServiceTest {
             assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
                     .isSameAs(failure);
 
-            verify(observer).received();
             verify(observer).intakeFailed(IntakeStage.RECEIPT, IntakeFailureCause.OTHER);
             verifyNoMoreInteractions(observer);
             verifyNoInteractions(shareStore);
@@ -379,8 +374,21 @@ class IntakeServiceTest {
             assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
                     .isSameAs(failure);
 
-            verify(observer).received();
             verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
+            verifyNoMoreInteractions(observer);
+        }
+
+        @Test
+        void receipt_failure_of_a_message_with_no_id_should_still_report_the_missing_id() {
+            final RetryableIntakeException failure = failure(IntakeStage.RECEIPT, IntakeFailureCause.DATABASE);
+            when(receipts.recordArrival(any())).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(null, 1, SHARE))).isSameAs(failure);
+
+            final InOrder order = inOrder(observer, receipts);
+            order.verify(observer).messageIdMissing();
+            order.verify(receipts).recordArrival(any());
+            order.verify(observer).intakeFailed(IntakeStage.RECEIPT, IntakeFailureCause.DATABASE);
             verifyNoMoreInteractions(observer);
         }
 

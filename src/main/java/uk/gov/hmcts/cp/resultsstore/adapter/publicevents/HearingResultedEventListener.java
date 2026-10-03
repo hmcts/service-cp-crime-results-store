@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.jms.annotation.JmsListener;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeCommand;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeResult;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
@@ -25,7 +26,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
  * container commit the transacted session, which acknowledges the message; intake returns only after
  * its transactions commit. A {@link RetryableIntakeException}, or any other runtime failure, is
  * rethrown after the capped pause, so the container rolls the session back and the broker redelivers.
- * A {@code JMSException} reading the message escapes at once, before intake runs.
+ * A {@code JMSException} reading the message escapes at once, before intake runs; the delivery has
+ * already been counted as received.
  *
  * <p>The logging context holds the message id from the start and the share's ids once intake returns,
  * and is cleared after every message (FR-041). Log lines hold ids, counts and bounded codes only:
@@ -57,15 +59,20 @@ public class HearingResultedEventListener {
 
     private final RedeliveryPause pause;
 
+    private final IntakeObserver observer;
+
     /**
      * Creates the listener.
      *
-     * @param intake the intake service
-     * @param pause  the pause before a rollback
+     * @param intake   the intake service
+     * @param pause    the pause before a rollback
+     * @param observer the metrics port, told of every delivery
      */
-    public HearingResultedEventListener(final IntakeService intake, final RedeliveryPause pause) {
+    public HearingResultedEventListener(final IntakeService intake, final RedeliveryPause pause,
+            final IntakeObserver observer) {
         this.intake = intake;
         this.pause = pause;
+        this.observer = observer;
     }
 
     /**
@@ -83,6 +90,8 @@ public class HearingResultedEventListener {
     // waits the capped pause before it escapes (orchestrator ruling, T011). Errors are not caught.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void onHearingResulted(final Message message) throws JMSException {
+        // Every delivery, before any field is read: one whose fields cannot be read is still counted.
+        observer.received();
         final String messageId = message.getJMSMessageID();
         final int deliveryCount = deliveryCount(message);
         try {

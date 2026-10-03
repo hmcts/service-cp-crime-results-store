@@ -65,15 +65,16 @@ public class IntakeService {
      * @throws RetryableIntakeException when a transaction failed; the message goes back to the broker
      */
     public IntakeResult receive(final IntakeCommand command) {
-        observer.received();
+        // received() is the listener's, counted before any message field is read.
+        if (command.messageId() == null) {
+            // Counted for the delivery, whether or not its receipt then commits.
+            observer.messageIdMissing();
+        }
         final Reading reading = command.textMessage()
                 ? parser.read(command.text())
                 : NotShare.because(NonShareReason.NOT_TEXT_MESSAGE);
         final Arrival arrival = new Arrival(command.messageId(), command.deliveryCount(), command.text(), reading);
         final ReceiptState receipt = counted(IntakeStage.RECEIPT, () -> receipts.recordArrival(arrival));
-        if (command.messageId() == null) {
-            observer.messageIdMissing();
-        }
         return switch (reading) {
             case NotShare notShare -> notShare(notShare, receipt, arrival);
             case Share share -> receipt.isSettled()

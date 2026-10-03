@@ -3,9 +3,11 @@ package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -26,8 +28,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.InOrder;
 import org.slf4j.MDC;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeCommand;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeResult;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
@@ -54,8 +58,10 @@ class HearingResultedEventListenerTest {
 
     private final List<Duration> slept = new ArrayList<>();
 
+    private final IntakeObserver observer = mock(IntakeObserver.class);
+
     private final HearingResultedEventListener listener = new HearingResultedEventListener(intake,
-            new RedeliveryPause(slept::add, true, Duration.ofSeconds(30)));
+            new RedeliveryPause(slept::add, true, Duration.ofSeconds(30)), observer);
 
     private CapturedLog log;
 
@@ -78,6 +84,30 @@ class HearingResultedEventListenerTest {
         listener.onHearingResulted(text(MARKER, 3));
 
         verify(intake).receive(IntakeCommand.ofText(MESSAGE_ID, 3, MARKER));
+    }
+
+    @Test
+    void every_delivery_should_be_counted_received_before_intake() throws JMSException {
+        when(intake.receive(any())).thenReturn(STORED);
+
+        listener.onHearingResulted(text(MARKER, 1));
+
+        final InOrder order = inOrder(observer, intake);
+        order.verify(observer).received();
+        order.verify(intake).receive(any());
+        verifyNoMoreInteractions(observer);
+    }
+
+    @Test
+    void delivery_whose_fields_cannot_be_read_should_still_be_counted_received() throws JMSException {
+        final TextMessage message = mock(TextMessage.class);
+        final JMSException unreadable = new JMSException("broker gone");
+        when(message.getJMSMessageID()).thenThrow(unreadable);
+
+        assertThatThrownBy(() -> listener.onHearingResulted(message)).isSameAs(unreadable);
+
+        verify(observer).received();
+        verifyNoInteractions(intake);
     }
 
     @Test

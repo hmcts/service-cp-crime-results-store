@@ -7,7 +7,8 @@ replaces dots with underscores and adds `_total` to counters (and `_seconds` to 
 Rules (FR-040, Principle XI):
 - every tag value comes from the fixed list shown; no id, date, field path or free text, ever;
 - a meter describing a transaction fires only after that transaction commits; a failure counter
-  fires after the rollback;
+  fires after the rollback; `received` and `message.id.missing` describe the delivery, not a
+  transaction, and fire before any work;
 - every tag value is an enum constant's lower-case name, held in `domain/` so the mapping is
   covered by tests.
 
@@ -21,7 +22,7 @@ Rules (FR-040, Principle XI):
 | `resultsstore.intake.duplicate` | — | a share already stored is dropped (after commit) | FR-038 |
 | `resultsstore.intake.already.settled` | — | a redelivery finds its receipt in an end state and is acknowledged with no work | FR-004 |
 | `resultsstore.intake.failed` | `stage` = `receipt` \| `store`; `cause` = `lock_timeout` \| `statement_timeout` \| `database` \| `other` | an intake attempt throws (after the rollback, before the pause) | FR-038 |
-| `resultsstore.intake.message.id.missing` | — | a message had no `JMSMessageID` | FR-005 |
+| `resultsstore.intake.message.id.missing` | — | a message had no `JMSMessageID` (counted for the delivery, before its receipt is written) | FR-005 |
 | `resultsstore.intake.parsed.copy.skipped` | — | a payload's parsed copy was left empty (`\u0000` or unpaired surrogate) | FR-015 |
 | `resultsstore.extraction.failed` | `stage` = `intake` \| `sweep`; `kind` = `missing` \| `wrong_type` \| `invalid_uuid` \| `unstorable_text` \| `unexpected` | key details could not be read (after the commit that records it) | FR-032 |
 | `resultsstore.sweep.rows` | `outcome` = `fixed` \| `failed_again` \| `skipped` \| `error` | the sweep finishes one row (`failed_again`: still unreadable, or the row's work threw and was recorded as an `UNEXPECTED` attempt; `skipped`: another pod changed it first; `error`: the row's work threw and recording the failed attempt threw too, so nothing was written) | FR-037, FR-038 |
