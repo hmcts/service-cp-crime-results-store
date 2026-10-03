@@ -175,7 +175,7 @@ class IntakeServiceTest {
         void receive_should_store_after_the_receipt_and_report_after_the_store_returns() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             final Instant storedAt = SHARED_AT.plusSeconds(3);
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, storedAt, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, storedAt, false, false, false));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -191,7 +191,7 @@ class IntakeServiceTest {
         @Test
         void receive_should_hand_the_store_the_share_as_received_with_its_key_details() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -212,7 +212,7 @@ class IntakeServiceTest {
         @Test
         void receive_with_unreadable_key_details_should_still_store_and_report_the_failure_after() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
 
             final IntakeResult result = service().receive(
                     IntakeCommand.ofText(MESSAGE_ID, 1, SHARE_WITH_A_BAD_COURT_CENTRE));
@@ -228,7 +228,7 @@ class IntakeServiceTest {
         @Test
         void receive_of_a_late_share_should_report_it_out_of_order_with_a_lag_never_below_zero() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT.minusSeconds(5), true, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT.minusSeconds(5), true, false, false));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -238,7 +238,7 @@ class IntakeServiceTest {
         @Test
         void receive_whose_parsed_copy_was_skipped_should_report_it() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, true));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, true, false));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -264,7 +264,7 @@ class IntakeServiceTest {
         @Test
         void redelivery_whose_receipt_is_still_received_should_store_again() {
             when(receipts.recordArrival(any())).thenReturn(received(false));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 2, SHARE));
 
@@ -299,7 +299,7 @@ class IntakeServiceTest {
             final String key = "sha256:" + PayloadChecksum.sha256Hex(SHARE);
             when(receipts.recordArrival(any())).thenReturn(
                     new ReceiptState(key, ReceiptStatus.RECEIVED, null, 1, true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(null, 1, SHARE));
 
@@ -313,7 +313,7 @@ class IntakeServiceTest {
         @Test
         void receive_of_a_message_with_an_id_should_not_report_a_missing_id() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 

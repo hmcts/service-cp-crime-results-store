@@ -174,6 +174,7 @@ class ShareChainIT {
         return switch (result) {
             case Stored stored -> stored.shareId();
             case StoreResult.Duplicate duplicate -> duplicate.existingShareId();
+            case StoreResult.EnrichedCopyRefused _ -> throw new AssertionError("no enriched copy is stored here");
         };
     }
 

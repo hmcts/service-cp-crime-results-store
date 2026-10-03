@@ -37,7 +37,11 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  * conflict means the identity is already stored: the receipt is marked {@code DUPLICATE} with the
  * stored share's id, looked up by the identity (FR-012). The payload's parsed copy is written under a
  * savepoint: when PostgreSQL refuses the {@code jsonb} conversion, the payload row is written without
- * it and the skip is reported, so a payload {@code jsonb} cannot hold is still stored (FR-015).
+ * it and the skip is reported, so a payload {@code jsonb} cannot hold is still stored (FR-015). An
+ * enriched working copy takes no savepoint: if {@code jsonb} cannot hold it, the whole transaction is
+ * rolled back and {@link StoreResult.EnrichedCopyRefused} returned, so the caller can store the arrived
+ * copy instead and {@code enrichment_applied} is never true with no parsed copy (specs/002-enrichment
+ * FR-018, FR-019, research R18).
  * The transaction first sets its own lock, statement and idle-in-transaction timeouts (FR-020). The
  * key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
@@ -76,11 +80,11 @@ public class JdbcShareStore implements ShareStore {
                 (share_id, hearing_id, hearing_day, shared_at, shared_day_london, shared_day_utc, payload_sha256,
                  is_reshare, court_centre_id, court_room_id, lja_code, jurisdiction_type, is_sjp,
                  is_group_proceedings, youth_court_id, any_subject_is_youth, is_latest, predecessor_share_id,
-                 arrived_out_of_order, projection_status, projection_reason, projection_version)
+                 arrived_out_of_order, enrichment_applied, projection_status, projection_reason, projection_version)
             VALUES (:shareId, :hearingId, :hearingDay, :sharedAt, :sharedDayLondon, :sharedDayUtc, :checksum,
                     :reshare, :courtCentreId, :courtRoomId, :ljaCode, :jurisdictionType, :sjp,
                     :groupProceedings, :youthCourtId, :anySubjectIsYouth, FALSE, :predecessor,
-                    :outOfOrder, :projectionStatus, :projectionReason, :projectionVersion)
+                    :outOfOrder, :enrichmentApplied, :projectionStatus, :projectionReason, :projectionVersion)
             ON CONFLICT (hearing_id, hearing_day, shared_at) DO NOTHING
             RETURNING stored_at
             """;
@@ -121,6 +125,11 @@ public class JdbcShareStore implements ShareStore {
 
     private static final String PAYLOAD_TEXT = """
             SELECT payload_text FROM hearing_share_payload WHERE share_id = :shareId
+            """;
+
+    /** The working copy, or the arrived text when there is none (specs/002-enrichment research R19). */
+    private static final String PAYLOAD_FOR_EXTRACTION = """
+            SELECT COALESCE(payload_json::text, payload_text) FROM hearing_share_payload WHERE share_id = :shareId
             """;
 
     /** Taken after the day lock, the store transaction's lock order. */
@@ -205,11 +214,18 @@ public class JdbcShareStore implements ShareStore {
      */
     @Override
     public StoreResult store(final StoreRequest request) {
-        try {
-            return storeTransaction.execute(status -> storeLocked(request, status));
-        } catch (final DataAccessException | TransactionException failure) {
-            throw RetryableFailures.classify(IntakeStage.STORE, failure);
+        final StoreResult result;
+        if (request.enrichmentApplied() && !NulSafety.isJsonbSafe(request.parsedCopy())) {
+            // Refused before any transaction opens: nothing to roll back (specs/002-enrichment research R18).
+            result = new StoreResult.EnrichedCopyRefused();
+        } else {
+            try {
+                result = storeTransaction.execute(status -> storeLocked(request, status));
+            } catch (final DataAccessException | TransactionException failure) {
+                throw RetryableFailures.classify(IntakeStage.STORE, failure);
+            }
         }
+        return result;
     }
 
     private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status) {
@@ -219,8 +235,17 @@ public class JdbcShareStore implements ShareStore {
         final ShareChain.Place place = chain.place(identity);
         final Optional<Instant> storedAt = insertShare(request, place);
         final StoreResult result;
-        if (storedAt.isPresent()) {
-            final boolean parsed = NulSafety.isJsonbSafe(request.text()) && insertPayloadParsed(request, status);
+        if (storedAt.isEmpty()) {
+            final UUID existing = existingShare(identity);
+            settle(receipts.markDuplicate(request.messageId(), existing));
+            result = new StoreResult.Duplicate(existing);
+        } else if (request.enrichmentApplied() && !insertEnrichedPayload(request)) {
+            // The whole transaction goes: the caller runs it again with the arrived copy.
+            status.setRollbackOnly();
+            result = new StoreResult.EnrichedCopyRefused();
+        } else {
+            final boolean parsed = request.enrichmentApplied()
+                    || NulSafety.isJsonbSafe(request.parsedCopy()) && insertPayloadParsed(request, status);
             if (!parsed) {
                 insertPayload(request, null);
             }
@@ -230,13 +255,31 @@ public class JdbcShareStore implements ShareStore {
             chain.join(identity, request.shareId(), place);
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
-            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !parsed);
-        } else {
-            final UUID existing = existingShare(identity);
-            settle(receipts.markDuplicate(request.messageId(), existing));
-            result = new StoreResult.Duplicate(existing);
+            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !parsed,
+                    request.enrichmentApplied());
         }
         return result;
+    }
+
+    /**
+     * Writes the payload row with the enriched copy, with no savepoint. A data exception (SQLSTATE class
+     * 22) is {@code jsonb} refusing the copy: the outcome is "refused", and the caller rolls the whole
+     * transaction back, since PostgreSQL has aborted it. Any other failure is thrown.
+     *
+     * @return whether the row was written
+     */
+    private boolean insertEnrichedPayload(final StoreRequest request) {
+        boolean written;
+        try {
+            insertPayload(request, request.parsedCopy());
+            written = true;
+        } catch (final DataAccessException failure) {
+            if (!isDataException(failure)) {
+                throw failure;
+            }
+            written = false;
+        }
+        return written;
     }
 
     @Override
@@ -262,6 +305,43 @@ public class JdbcShareStore implements ShareStore {
     public String payloadText(final UUID shareId) {
         try {
             return jdbc.sql(PAYLOAD_TEXT).param(SHARE_ID, shareId).query(String.class).single();
+        } catch (final IncorrectResultSizeDataAccessException missing) {
+            throw missing;
+        } catch (final DataAccessException failure) {
+            throw RetryableFailures.classify(IntakeStage.STORE, failure);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The existing-share select, run on its own as one autocommit read: no transaction, no lock.
+     */
+    @Override
+    public Optional<UUID> storedShareId(final ShareIdentity identity) {
+        try {
+            return jdbc.sql(EXISTING_SHARE)
+                    .param(HEARING_ID, identity.hearingId())
+                    .param(HEARING_DAY, identity.hearingDay())
+                    .param(SHARED_AT, utc(identity.sharedAt()))
+                    .query(UUID.class)
+                    .optional();
+        } catch (final DataAccessException failure) {
+            throw RetryableFailures.classify(IntakeStage.STORE, failure);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @throws uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException when the database read
+     *         fails, classified by its SQLSTATE
+     * @throws IncorrectResultSizeDataAccessException when the share has no payload row, thrown as it is
+     */
+    @Override
+    public String payloadForExtraction(final UUID shareId) {
+        try {
+            return jdbc.sql(PAYLOAD_FOR_EXTRACTION).param(SHARE_ID, shareId).query(String.class).single();
         } catch (final IncorrectResultSizeDataAccessException missing) {
             throw missing;
         } catch (final DataAccessException failure) {
@@ -366,6 +446,7 @@ public class JdbcShareStore implements ShareStore {
                 .param(ANY_SUBJECT_IS_YOUTH, anySubjectIsYouth(request.projection()))
                 .param("predecessor", place.predecessor())
                 .param("outOfOrder", place.isLate())
+                .param("enrichmentApplied", request.enrichmentApplied())
                 .param("projectionStatus", request.projection().status().name())
                 .param(PROJECTION_REASON, reason(request.projection()))
                 .param(PROJECTION_VERSION, KeyDetailsExtractor.EXTRACTOR_VERSION)
@@ -400,7 +481,7 @@ public class JdbcShareStore implements ShareStore {
         final Object savepoint = status.createSavepoint();
         boolean parsed;
         try {
-            insertPayload(request, request.text());
+            insertPayload(request, request.parsedCopy());
             parsed = true;
         } catch (final DataAccessException failure) {
             if (!isDataException(failure)) {

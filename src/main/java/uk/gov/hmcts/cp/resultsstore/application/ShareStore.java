@@ -1,8 +1,10 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
+import uk.gov.hmcts.cp.resultsstore.domain.ShareIdentity;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 
 /**
@@ -21,6 +23,17 @@ public interface ShareStore {
      * @throws RetryableIntakeException when the transaction fails; nothing is left behind
      */
     StoreResult store(StoreRequest request);
+
+    /**
+     * The id of the share already stored with this identity, if any (specs/002-enrichment FR-006,
+     * research R16): one read outside any transaction, taking no lock. It only saves progression calls;
+     * the store transaction's unique key stays the real guard.
+     *
+     * @param identity the share's identity
+     * @return the stored share's id, or empty when none is stored
+     * @throws RetryableIntakeException at stage {@code STORE} when the database read fails
+     */
+    Optional<UUID> storedShareId(ShareIdentity identity);
 
     /**
      * The {@code FAILED} shares due a retry, never tried by the sweep first, then the longest since
@@ -46,6 +59,18 @@ public interface ShareStore {
      * @throws RuntimeException any other, e.g. no payload row for the share: the row's own failure
      */
     String payloadText(UUID shareId);
+
+    /**
+     * A share's working copy for extraction: {@code payload_json} as text, or {@code payload_text} when
+     * the working copy is empty (specs/002-enrichment FR-033). Read outside any transaction: it never
+     * changes.
+     *
+     * @param shareId the share
+     * @return the copy to extract from
+     * @throws RetryableIntakeException when the database read fails
+     * @throws RuntimeException any other, e.g. no payload row for the share
+     */
+    String payloadForExtraction(UUID shareId);
 
     /**
      * Records a re-extraction in one transaction under the hearing-day lock, then the share row's lock,

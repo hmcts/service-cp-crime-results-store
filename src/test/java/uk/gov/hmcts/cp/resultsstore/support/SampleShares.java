@@ -1,8 +1,13 @@
 package uk.gov.hmcts.cp.resultsstore.support;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import tools.jackson.databind.json.JsonMapper;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationAnswer;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationResultsEnricher;
 import uk.gov.hmcts.cp.resultsstore.application.Arrival;
+import uk.gov.hmcts.cp.resultsstore.application.Enrichment;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
@@ -38,6 +43,9 @@ public final class SampleShares {
     private static final ShareIdentityParser PARSER = new ShareIdentityParser(JsonMapper.builder().build());
 
     private static final KeyDetailsExtractor EXTRACTOR = new KeyDetailsExtractor();
+
+    private static final ApplicationResultsEnricher ENRICHER =
+            new ApplicationResultsEnricher(JsonMapper.builder().build());
 
     private SampleShares() {
         // Static fixture builders.
@@ -78,6 +86,67 @@ public final class SampleShares {
                  "hearingDay":"%s","sharedTime":"%s","isReshare":false,"note":"%s"}
                 """.formatted(UUID.randomUUID(), HEARING_RESULTED, hearingId, COURT_CENTRE, COURT_ROOM, CASE_ID,
                 DEFENDANT_ID, MASTER_DEFENDANT_ID, youth, hearingDay, sharedTime, note);
+    }
+
+    /**
+     * A share with one court application that arrives without {@code judicialResults}, so it needs a
+     * progression lookup (specs/002-enrichment).
+     *
+     * @param hearingId     {@code hearing.id}
+     * @param hearingDay    {@code hearingDay}
+     * @param sharedTime    {@code sharedTime}
+     * @param applicationId the application's {@code id}
+     * @return the body
+     */
+    public static String shareWithApplication(final UUID hearingId, final String hearingDay,
+            final String sharedTime, final String applicationId) {
+        return share(hearingId, hearingDay, sharedTime).replace("\"jurisdictionType\":\"MAGISTRATES\",",
+                "\"jurisdictionType\":\"MAGISTRATES\",\"courtApplications\":[{\"id\":\"" + applicationId
+                        + "\",\"applicationStatus\":\"LISTED\"}],");
+    }
+
+    /**
+     * A progression answer: the application {@code FINALISED} with one result.
+     *
+     * @param resultLabel the result's {@code label}, raw JSON string content (escapes allowed)
+     * @return the answer
+     */
+    public static ApplicationAnswer finalised(final String resultLabel) {
+        return new ApplicationAnswer.Found(PARSER.readTree("{\"applicationStatus\":\"FINALISED\","
+                + "\"judicialResults\":[{\"label\":\"" + resultLabel + "\",\"amendmentDate\":\"2026-10-01\","
+                + "\"isNewAmendment\":true}]}"));
+    }
+
+    /**
+     * The working copy intake builds for a body, every application needing results answered alike.
+     *
+     * @param text   the body
+     * @param answer progression's answer for every application looked up
+     * @return the enrichment
+     */
+    public static Enrichment enrichment(final String text, final ApplicationAnswer answer) {
+        final Share share = read(text);
+        final Map<UUID, ApplicationAnswer> answers = new LinkedHashMap<>();
+        ENRICHER.scan(share.body()).lookups().forEach(id -> answers.put(id, answer));
+        return ENRICHER.enrich(text, share.body(), answers);
+    }
+
+    /**
+     * The store request intake builds for a body after enrichment: the arrived text and its checksum,
+     * the working copy and its flag, the key details read from the working copy.
+     *
+     * @param messageId the receipt's key
+     * @param text      the body
+     * @param answer    progression's answer for every application looked up
+     * @return the request
+     */
+    public static StoreRequest enrichedRequest(final String messageId, final String text,
+            final ApplicationAnswer answer) {
+        final Share share = read(text);
+        final Enrichment enrichment = enrichment(text, answer);
+        return new StoreRequest(messageId, share.identity(), share.identity().shareId(),
+                SharedDays.from(share.identity().sharedAt()), PayloadChecksum.sha256Hex(text), text,
+                enrichment.parsedCopy(), enrichment.applied(), EXTRACTOR.extract(enrichment.tree()));
     }
 
     /**

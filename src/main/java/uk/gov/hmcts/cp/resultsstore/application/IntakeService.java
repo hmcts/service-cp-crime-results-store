@@ -7,6 +7,7 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
+import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
@@ -113,6 +114,9 @@ public class IntakeService {
                 observer.duplicate();
                 yield result(IntakeOutcome.DUPLICATE, messageId, duplicate.existingShareId(), identity);
             }
+            // Not yet reachable: the request is never enriched until the enrichment step lands.
+            case EnrichedCopyRefused _ ->
+                    throw new IllegalStateException("an un-enriched request was refused as enriched");
         };
     }
 
