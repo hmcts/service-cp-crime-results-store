@@ -19,7 +19,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  * {@code /error} carry none and are never refused. The media type classified is the {@code Content-Type} as
  * the caller sent it ({@link ActionHeaderFilter#SENT_CONTENT_TYPE_ATTRIBUTE}), not the wrapped request's: the
  * wrapper answers {@code application/json} for any value carrying a vendor token, a multipart parameter
- * included. The refusal is counted and its body names the reason only.
+ * included. The refusal is counted once its body has been written, and the body names the reason only.
  */
 public class UnsupportedContentTypeFilter extends OncePerRequestFilter {
 
@@ -42,8 +42,8 @@ public class UnsupportedContentTypeFilter extends OncePerRequestFilter {
                                     final FilterChain filterChain) throws ServletException, IOException {
         if (request.getAttribute(ApiRoute.REQUEST_ATTRIBUTE) != null
                 && isMultipart(request.getAttribute(ActionHeaderFilter.SENT_CONTENT_TYPE_ATTRIBUTE))) {
-            refusals.refused(RouteRefusal.UNSUPPORTED_CONTENT_TYPE);
             RefusalWriter.write(response, ProblemReason.UNSUPPORTED_CONTENT_TYPE);
+            refusals.refused(RouteRefusal.UNSUPPORTED_CONTENT_TYPE);
         } else {
             filterChain.doFilter(request, response);
         }

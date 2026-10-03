@@ -24,7 +24,8 @@ public final class RefusalWriter {
     }
 
     /**
-     * Sets the reason's status and writes its body.
+     * Sets the reason's status, writes its body and flushes it, so a client that has gone shows here as an
+     * {@link IOException} rather than after the caller has counted the refusal.
      *
      * @param response the response, not yet committed
      * @param reason the bounded reason
@@ -37,5 +38,6 @@ public final class RefusalWriter {
         response.setContentType(PROBLEM_JSON);
         response.setContentLength(body.length);
         response.getOutputStream().write(body);
+        response.flushBuffer();
     }
 }

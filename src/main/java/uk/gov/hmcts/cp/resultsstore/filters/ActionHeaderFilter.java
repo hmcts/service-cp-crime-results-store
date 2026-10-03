@@ -31,7 +31,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  *       untouched.</li>
  * </ul>
  *
- * <p>Every refusal is counted once through the {@link RefusalObserver}; refused requests never reach the
+ * <p>Every refusal is counted once through the {@link RefusalObserver}, after its body has been written and
+ * flushed, so a refusal the client never received is not counted; refused requests never reach the
  * audit filter. The body names the reason only, never the path.
  */
 public class ActionHeaderFilter extends OncePerRequestFilter {
@@ -86,8 +87,8 @@ public class ActionHeaderFilter extends OncePerRequestFilter {
 
     private void refuse(final HttpServletResponse response, final RouteRefusal refusal, final ProblemReason reason)
             throws IOException {
-        refusals.refused(refusal);
         RefusalWriter.write(response, reason);
+        refusals.refused(refusal);
     }
 
     private static boolean passesThrough(final String path) {

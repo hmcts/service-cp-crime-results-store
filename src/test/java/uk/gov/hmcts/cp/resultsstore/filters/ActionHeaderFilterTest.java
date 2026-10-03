@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.filters;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -28,6 +29,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
+import uk.gov.hmcts.cp.resultsstore.support.BrokenPipeResponse;
 import uk.gov.hmcts.cp.resultsstore.support.RecordingRefusalObserver;
 import uk.gov.moj.cpp.authz.http.RequestActionResolver;
 
@@ -90,6 +92,19 @@ class ActionHeaderFilterTest {
 
     private static JsonNode body(final MockHttpServletResponse response) throws IOException {
         return MAPPER.readTree(response.getContentAsString());
+    }
+
+    /** A refusal is counted only once its body has been written: a client that has gone is not counted. */
+    @ParameterizedTest
+    @ValueSource(strings = {"POST", "/results-store/v1/anything"})
+    void a_refusal_whose_body_cannot_be_written_should_not_be_counted(final String methodOrPath) {
+        final MockHttpServletRequest request = methodOrPath.startsWith("/")
+                ? new MockHttpServletRequest("GET", methodOrPath)
+                : new MockHttpServletRequest(methodOrPath, samplePath(ApiRoute.GET_SHARE));
+
+        assertThatThrownBy(() -> actionFilter.doFilter(request, new BrokenPipeResponse(), new MockFilterChain()))
+                .isInstanceOf(IOException.class).hasMessage(BrokenPipeResponse.BROKEN_PIPE);
+        assertThat(observer.refusals()).isEmpty();
     }
 
     @ParameterizedTest

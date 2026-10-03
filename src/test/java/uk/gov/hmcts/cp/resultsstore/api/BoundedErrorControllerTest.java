@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import jakarta.servlet.RequestDispatcher;
 import java.io.IOException;
@@ -13,6 +14,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
+import uk.gov.hmcts.cp.resultsstore.support.BrokenPipeResponse;
 import uk.gov.hmcts.cp.resultsstore.support.RecordingRefusalObserver;
 
 /** The service's own {@code /error} page (FR-043): one JSON answer for every {@code Accept}. */
@@ -65,6 +67,17 @@ class BoundedErrorControllerTest {
 
         assertThat(response.getStatus()).isEqualTo(403);
         assertThat(observer.refusals()).containsExactly(RouteRefusal.FORBIDDEN);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {401, 403})
+    void a_refusal_whose_body_cannot_be_written_should_not_be_counted(final int status) {
+        final MockHttpServletRequest request = new MockHttpServletRequest("GET", "/error");
+        request.setAttribute(RequestDispatcher.ERROR_STATUS_CODE, status);
+
+        assertThatThrownBy(() -> controller.handleRequest(request, new BrokenPipeResponse()))
+                .isInstanceOf(IOException.class).hasMessage(BrokenPipeResponse.BROKEN_PIPE);
+        assertThat(observer.refusals()).isEmpty();
     }
 
     @ParameterizedTest

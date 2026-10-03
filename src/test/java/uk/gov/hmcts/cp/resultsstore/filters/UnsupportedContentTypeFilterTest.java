@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.filters;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static uk.gov.hmcts.cp.resultsstore.support.ApiRouteSamples.samplePath;
 
 import jakarta.servlet.ServletException;
@@ -18,6 +19,7 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
+import uk.gov.hmcts.cp.resultsstore.support.BrokenPipeResponse;
 import uk.gov.hmcts.cp.resultsstore.support.RecordingRefusalObserver;
 
 /** The {@code 415} guard (FR-048 (d)): no request to the read API has a body, so multipart is refused. */
@@ -120,6 +122,15 @@ class UnsupportedContentTypeFilterTest {
         protected void service(final HttpServletRequest request, final HttpServletResponse response) {
             called = true;
         }
+    }
+
+    @Test
+    void a_415_whose_body_cannot_be_written_should_not_be_counted() {
+        final MockHttpServletRequest request = onRoute("multipart/form-data; boundary=x");
+
+        assertThatThrownBy(() -> guard.doFilter(request, new BrokenPipeResponse(), new MockFilterChain()))
+                .isInstanceOf(IOException.class).hasMessage(BrokenPipeResponse.BROKEN_PIPE);
+        assertThat(observer.refusals()).isEmpty();
     }
 
     @Test

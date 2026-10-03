@@ -23,8 +23,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.RouteRefusal;
  * no {@code Accept} can turn it into a {@code 406} or an HTML page.
  *
  * <p>The authorisation library's {@code sendError(401)} and {@code sendError(403)} land here, so this is
- * where they are counted in {@code resultsstore.read.refused} ({@code unauthenticated}, {@code forbidden});
- * no other status is counted. Registered by {@code ApiWebConfig}, not component-scanned, behind a URL
+ * where they are counted in {@code resultsstore.read.refused} ({@code unauthenticated}, {@code forbidden}),
+ * once the body has been written and flushed; no other status is counted. Registered by {@code ApiWebConfig}, not component-scanned, behind a URL
  * mapping of its own.
  */
 public class BoundedErrorController implements ErrorController, Controller {
@@ -60,12 +60,13 @@ public class BoundedErrorController implements ErrorController, Controller {
         final Map<String, Object> body = errorAttributes.getErrorAttributes(new ServletWebRequest(request),
                 ErrorAttributeOptions.defaults());
         final int status = ((Number) body.get("status")).intValue();
-        count(ProblemReason.forErrorStatus(status));
         final byte[] bytes = MAPPER.writeValueAsBytes(body);
         response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setContentLength(bytes.length);
         response.getOutputStream().write(bytes);
+        response.flushBuffer();
+        count(ProblemReason.forErrorStatus(status));
         return null;
     }
 
