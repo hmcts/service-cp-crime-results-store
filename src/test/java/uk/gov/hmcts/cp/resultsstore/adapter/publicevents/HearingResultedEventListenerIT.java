@@ -30,10 +30,13 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.util.TestSocketUtils;
+import org.springframework.transaction.support.TransactionTemplate;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
@@ -45,7 +48,7 @@ import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
  * {@code ShareStore} in T008, {@code IntakeObserver} in T013), so a share's receipt stays
  * {@code RECEIVED} here.
  */
-@SpringBootTest(properties = "resultsstore.publicevents.enabled=true")
+@SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.receipt-timeout=7s"})
 @ActiveProfiles("test")
 class HearingResultedEventListenerIT {
 
@@ -73,6 +76,9 @@ class HearingResultedEventListenerIT {
 
     @Autowired
     private JdbcClient jdbc;
+
+    @Autowired
+    private JdbcReceiptStore receiptStore;
 
     @DynamicPropertySource
     static void pointAtTheEmbeddedBrokerAndTheStore(final DynamicPropertyRegistry registry) throws Exception {
@@ -128,6 +134,13 @@ class HearingResultedEventListenerIT {
                 && subscription.getDeliveringCount() == 0);
         // A rolled-back delivery would come straight back (no pause in tests) and raise the attempts.
         await().during(SETTLE).atMost(SETTLE.plus(WITHIN)).until(() -> attempts(hearingId) == 1);
+    }
+
+    @Test
+    void receipt_transaction_should_time_out_at_the_configured_receipt_timeout() {
+        assertThat(ReflectionTestUtils.getField(receiptStore, "receiptTransaction"))
+                .isInstanceOfSatisfying(TransactionTemplate.class,
+                        template -> assertThat(template.getTimeout()).isEqualTo(7));
     }
 
     @Test
