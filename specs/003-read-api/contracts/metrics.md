@@ -39,7 +39,7 @@ line points here, and this file stays as the record of the change.
 | Name | Tags (allowed values) | Moves when | FR |
 |---|---|---|---|
 | `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (phase D); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above) | FR-055 |
-| `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter) or by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`). These requests are not audited, so this counter is their only record in this service | FR-051, FR-055 |
+| `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` \| `connector_rejected` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter), by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`), or by the HTTP connector before the service sees it (`400 bad_request` from the host's error report, `api/ProblemErrorReportValve`: an encoded slash or backslash, a NUL, a malformed escape, a character outside the standard set; counted as `connector_rejected` once the report's body has been written). These requests are not audited, so this counter is their only record in this service. Every refusal is counted after its body is written; a body that cannot be written (the client has gone) is not counted | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN = yes, E4). The threshold is the effective lag, 90 s by default | FR-020 |
 
 ## Timers
@@ -58,11 +58,10 @@ line points here, and this file stays as the record of the change.
 ## Not counted by 003
 
 - Reconciliation findings, dead letters and subscription health: spec 004 and Azure Monitor.
-- A request the HTTP connector rejects before it reaches the service (`400 bad_request` from the host's
-  error report, `api/ProblemErrorReportValve`): it carries no route and no reason of the service's own, so
-  `read.refused` does not move. If that report's body cannot be written (the client has gone), the valve
-  logs the status and the exception class only, and nothing is counted. A `TRACE` is not one of these: the
-  connector lets it through and the action filter counts it as `method_not_allowed`.
+- A connector-level report whose body cannot be written (the client has gone): the valve logs the status
+  and the exception class only. A `5xx` the host's error report writes is the server's failure, not a
+  refusal, and is not counted either. (A `TRACE` is not a connector rejection: the connector lets it
+  through and the action filter counts it as `method_not_allowed`.)
 
 ## Alert input
 
@@ -70,7 +69,8 @@ line points here, and this file stays as the record of the change.
   share; run consumer reconciliation (contracts/read-api.md §5.6).
 - `resultsstore.read.requests{outcome=unavailable}` rising: the database is failing reads.
 - `resultsstore.read.refused` rising: a consumer is calling a wrong path or method, or without an
-  admitted identity (`unauthenticated`, `forbidden`).
+  admitted identity (`unauthenticated`, `forbidden`), or sending a malformed request target
+  (`connector_rejected`).
 
 The alert rules themselves are an Azure Monitor task outside this repository.
 

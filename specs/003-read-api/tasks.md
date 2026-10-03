@@ -352,9 +352,8 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     `allowBackslash=false`, `allowTrace=false`, which Boot has no property for; every `ErrorReportValve`
     removed from the host, ours added, and `StandardHost.errorReportValveClass` set to it so the host adds no
     default at start), registered in `ApiWebConfig`; `application.yaml` `server.tomcat.uri-encoding: UTF-8`,
-    `relaxed-path-chars: []`, `relaxed-query-chars: []` with a comment. Not counted: no `RouteRefusal` fits a
-    connector `400`, and adding a tag would change the metrics contract (contracts/metrics.md *Not counted by
-    003* now says so; contracts/read-api.md §6 names the connector case). RED (seams: the valve's `report`
+    `relaxed-path-chars: []`, `relaxed-query-chars: []` with a comment. Not counted at first (no `RouteRefusal`
+    fitted a connector `400`); superseded by the counting close-out below. RED (seams: the valve's `report`
     writing nothing; the customiser doing nothing): `ConnectorRejectionIT.a_uri_the_connector_rejects_should_
     get_a_400_with_the_four_field_problem_body(String) > [1] target = "/results-store/v1/shares/zq%2Fsecret"
     FAILED` `expected: "application/problem+json" but was: "text/html;charset=utf-8"` (and `%00`);
@@ -365,6 +364,47 @@ the order and the bounded `401`/`403`/`404` bodies in a running context.
     `%zz`, `%5C`, bare `%`, `|`, `{`, `|` in the query; each `400`, `application/problem+json`, the four
     fields, `read.refused` unmoved), `ProblemErrorReportValveTest` 12, `TomcatEdgeCustomizerTest` 3,
     `BoundedErrorAttributesTest` 10, `BoundedErrorControllerTest` 20, `AuthzIT` 23, 0 failures.
+  - Close-out (orchestrator rulings, constitution VIII and XI; they withdraw the earlier "not counted"
+    ruling):
+    - Connector-level refusals counted: `RouteRefusal.CONNECTOR_REJECTED` (tag `connector_rejected`),
+      registered at start by `MicrometerRefusalObserver` with every other reason. `ProblemErrorReportValve`
+      takes a `RefusalObserver` and counts a `4xx` report only after `finishResponse()` has returned, outside
+      the write's `try`, as `RefusalWriter` and `BoundedErrorController` do: a body that cannot be written is
+      not counted, and a `5xx` it writes is a server failure, not a refusal. `TomcatEdgeCustomizer` hands the
+      valve the observer; `ApiWebConfig` passes one that looks the bean up through an `ObjectProvider` when a
+      refusal is counted, so building the web server does not create the meter registry early.
+      contracts/metrics.md lists the tag on `read.refused` and drops the connector line from *Not counted by
+      003*; contracts/read-api.md §6 says such a request is counted as `connector_rejected`. RED (seam: the
+      constant and the constructors, the valve counting nothing): `ConnectorRejectionIT.a_uri_the_connector_
+      rejects_should_get_a_400_with_the_four_field_problem_body_and_be_counted_once(String) > [1] target =
+      "/results-store/v1/shares/zq%2Fsecret" FAILED` `expected: 1.0 but was: 0.0` (and `%00`);
+      `ProblemErrorReportValveTest.a_4xx_report_written_in_full_should_be_counted_once_as_connector_
+      rejected(int) > [1] status = "400" FAILED` `Expecting actual: [] to contain exactly (and in same order):
+      [CONNECTOR_REJECTED]` (and `404`, `414`, `499`). GREEN: `ConnectorRejectionIT` 12 (each of the eight
+      targets moves `connector_rejected` by exactly one and `read.refused` in all by exactly one),
+      `ProblemErrorReportValveTest` 19 (adds the `4xx` count, no count for a `5xx`, none when
+      `finishResponse()` throws, none when the body cannot be written, none when nothing is reported),
+      `TomcatEdgeCustomizerTest` 4, `RouteRefusalTest` 1, `MicrometerRefusalObserverTest` 8, `AuthzIT` 29,
+      0 failures.
+    - Rejected request targets kept out of the logs: Tomcat's `Http11Processor` logs each request
+      processor's first parse failure at `INFO` with the `IllegalArgumentException`, whose message quotes the
+      target. `logback.xml` pins to `WARN`, with the constitution XI reason: `org.apache.coyote.http11.
+      Http11Processor`, `org.apache.coyote.http11.Http11InputBuffer` (the raw request at `TRACE`),
+      `org.apache.coyote.AbstractProcessor` (an invalid host at `INFO`), `org.apache.catalina.connector.
+      CoyoteAdapter` (the URI at `DEBUG`) and `org.apache.tomcat.util.http.parser` (the cookie header). New
+      `ConnectorRejectionLogIT` (real port, capture on the real logback root at the configured levels,
+      `server.tomcat.processor-cache=0` so every connection gets a new processor and each rejection is that
+      processor's first, whatever ran before in the JVM): `a_rejected_target_should_reach_no_log_line` sends
+      the eight targets with the marker `marker-9f3c` and asserts each is `400` and no captured logger name,
+      message, exception class or exception message holds the marker or `IllegalArgumentException`. RED
+      (before the `logback.xml` change): `ConnectorRejectionLogIT.a_rejected_target_should_reach_no_log_
+      line() FAILED` `Expecting no elements of: ["org.apache.coyote.http11.Http11Processor", "Error parsing
+      HTTP request header … ", "java.lang.IllegalArgumentException", "Invalid character found in the request
+      target [/results-store/v1/shares/zq|marker-9f3c ]. …" …` (the `|`, `{` and query `|` targets; the
+      percent-escape rejections are not logged). GREEN: `ConnectorRejectionLogIT` 1, `ConnectorRejectionIT`
+      12, 0 failures.
+    - Gate: `./gradlew build pmdMain pmdTest jacocoTestReport` exit 0 (1302 tests passed, 0 skipped;
+      JaCoCo report line 0.9963, branch 0.9898).
   - Close-out, confirmed by the orchestrator (no code change): the allow rules' path regex has one segment
     (`[^/]+`) per template variable, so a malformed id reaches the endpoint as `400`, never a `403` (T001); a
     raw `;` in a path is refused `404 route_not_found` by `ApiRoute`, now said in contracts/read-api.md §2.2;

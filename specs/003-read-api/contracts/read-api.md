@@ -418,7 +418,8 @@ payload content. `Content-Type` is `application/problem+json`, except `401` and 
 `application/json`. A `401` or `403` has this same JSON body whatever `Accept` you send, `text/html`
 included: there is no HTML error page. Branch on `status` and `reason`. A request the HTTP connector
 rejects before it reaches the service (an encoded slash or backslash, a NUL, a malformed escape, a character
-outside the standard set) gets the same body, `400` with `bad_request`.
+outside the standard set) gets the same body, `400` with `bad_request`. It is not audited; it is counted in
+`resultsstore.read.refused` as `connector_rejected`, and its request target reaches no log line.
 
 | Status | `reason` | When | Retry? |
 |---|---|---|---|
