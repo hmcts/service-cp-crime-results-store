@@ -89,6 +89,11 @@ dependencies {
   // usersgroups stub for the authorisation IT. The standalone, shaded artefact: the plain one drags
   // Jetty and Jackson 2 onto the test classpath beside the Jackson 3 stack this service runs on.
   testImplementation 'org.wiremock:wiremock-standalone:3.13.2'
+
+  // Parses results-store-openapi.yaml in OpenApiDocumentTest as the audit library parses it at
+  // runtime. The audit starter already brings this version onto the runtime classpath; declared here
+  // so the test can compile against it.
+  testImplementation 'io.swagger.parser.v3:swagger-parser:2.1.20'
 }
 
 // Keep legacy javax.jms off the classpath beside Spring Boot 4's jakarta.jms. artemis-jms-client is
