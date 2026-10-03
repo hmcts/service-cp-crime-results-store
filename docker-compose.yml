@@ -22,6 +22,7 @@ services:
       ARTEMIS_PASSWORD: admin
       # usersgroups is the WireMock stub below, so cp-auth-rules-filter runs as deployed.
       CP_BASE_URL: http://wiremock:8080
+      RESULTS_STORE_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
     depends_on:
       # Flyway migrates on startup, so the database has to be there first. The broker does not
       # gate startup; the listener container reconnects on its own.

@@ -346,6 +346,17 @@ contracts/progression-lookup.md against an in-process WireMock.
     commits. After the gate round 1 fixes the full build (`build pmdMain pmdTest jacocoTestReport`)
     passes: 819 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.9 %. From here a task is
     ticked only on a green full-suite run, quoted under its GREEN line.
+  - Ruling 4 (orchestrator, phase A close-out; one line of T009 brought forward): enrichment is on by
+    default and the compose app had no system user id, so the bean refused to start and the compose app
+    and scripts/container-smoke.sh no longer came up. docker-compose.yml gives the app service
+    `RESULTS_STORE_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000` (`CP_BASE_URL` already points at
+    the WireMock container). T009 still adds the progression stub mapping; the smoke's messages carry no
+    court application, so enrichment makes no call for them.
+    Smoke (`flock … ./scripts/container-smoke.sh`): `PASS: readiness reported UP within the 60s budget`,
+    `PASS: intake stored the share, dropped its duplicate and recorded the unreadable message`, no WARN or
+    ERROR line, exit 0.
+  - Phase A close-out full gate (`build pmdMain pmdTest jacocoTestReport jacocoTestCoverageVerification`,
+    after rulings 1 to 3): 830 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.7 %; exit 0.
 
 ---
 
