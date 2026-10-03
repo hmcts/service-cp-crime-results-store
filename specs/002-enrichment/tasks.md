@@ -241,6 +241,13 @@ contracts/progression-lookup.md against an in-process WireMock.
     `expected: 3 SECONDS but was: 7 SECONDS`.
     GREEN: `ProgressionConfigTest` 9, `IntakeConfigTest` 7, `ConfigurationValidationTest` 60,
     `SweepSchedulingConfigTest` 4, 0 failures; `pmdMain pmdTest` clean.
+  - Follow-up from gate round 1 (FR-024 "on by default" unpinned at the bean): every test that expected
+    the client set `resultsstore.enrichment.enabled=true`. `IntakeConfigTest` now starts with the
+    subscription on and no enrichment property and expects the factory and the client.
+    RED (mutation: `matchIfMissing` removed from both beans):
+    `enrichment_should_be_on_when_its_switch_is_not_set() FAILED`
+    `Expecting: <Started application …> to have a single bean of type: <…NoRedirectRequestFactory>`.
+    GREEN (restored): `IntakeConfigTest` 8, 0 failures; `pmdTest` clean.
 
 ---
 

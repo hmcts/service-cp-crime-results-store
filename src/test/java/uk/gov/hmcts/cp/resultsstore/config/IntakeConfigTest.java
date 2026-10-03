@@ -87,6 +87,14 @@ class IntakeConfigTest {
     }
 
     @Test
+    void enrichment_should_be_on_when_its_switch_is_not_set() {
+        runner.withPropertyValues("resultsstore.publicevents.enabled=true", BASE_URL, SYSTEM_USER_ID)
+                .run(context -> assertThat(context).hasNotFailed()
+                        .hasSingleBean(NoRedirectRequestFactory.class)
+                        .hasSingleBean(ProgressionApplications.class));
+    }
+
+    @Test
     void disabled_enrichment_should_build_no_progression_client_and_allow_blank_settings() {
         runner.withPropertyValues("resultsstore.publicevents.enabled=true", "resultsstore.enrichment.enabled=false",
                         "resultsstore.progression.base-url=", "resultsstore.progression.system-user-id=")
