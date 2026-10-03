@@ -19,7 +19,17 @@ public final class PayloadChecksum {
      * @return 64 lower-case hex characters
      */
     public static String sha256Hex(final String text) {
-        return HexFormat.of().formatHex(sha256().digest(text.getBytes(StandardCharsets.UTF_8)));
+        return sha256Hex(text.getBytes(StandardCharsets.UTF_8));
+    }
+
+    /**
+     * Computes the checksum of bytes, such as a served body (FR-034).
+     *
+     * @param bytes the bytes exactly as served
+     * @return 64 lower-case hex characters
+     */
+    public static String sha256Hex(final byte[] bytes) {
+        return HexFormat.of().formatHex(sha256().digest(bytes));
     }
 
     private static MessageDigest sha256() {
