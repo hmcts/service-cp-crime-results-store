@@ -25,9 +25,10 @@ the database cannot hold falls back once to the arrived copy. No schema change. 
 
 **Language/Version**: Java 25  
 **Primary Dependencies**: Spring Boot 4.1.1 (web, jdbc, flyway, artemis, actuator, opentelemetry);
-Spring `RestClient` over `SimpleClientHttpRequestFactory` (spring-web 7.0.9) for the outbound call;
+Spring `RestClient` over `HttpComponentsClientHttpRequestFactory` (spring-web 7.0.9) and Apache
+HttpClient 5 for the outbound call (research R11, amended after gate round 1);
 Jackson 3.1.7 (`tools.jackson`) tree API with derived readers and writers (research R9); Micrometer;
-no new dependency  
+one new dependency, `httpclient5`, version from the Boot BOM  
 **Storage**: PostgreSQL 16 (local and tests); no migration; existing columns
 `hearing_share.enrichment_applied` and `hearing_share_payload.payload_json` take on their 002 meaning
 (data-model.md)  
@@ -140,7 +141,7 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │                                       #   javadoc: thrown by the persistence and progression adapters
 ├── adapter/progression/
 │   ├── + ProgressionApplicationClient.java # RestClient exchange(); headers; status and body classifier
-│   ├── + NoRedirectRequestFactory.java # SimpleClientHttpRequestFactory with redirects off
+│   ├── + NoRedirectRequestFactory.java # Apache HttpClient 5 factory: no redirects, no retries, deadline (research R11 amendment)
 │   └── + DeadlineInputStream.java      # whole-response deadline for the slow drip (R15)
 ├── persistence/
 │   └── ~ JdbcShareStore.java           # INSERT_SHARE binds :enrichmentApplied; payload insert takes the

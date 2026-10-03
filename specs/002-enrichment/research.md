@@ -338,6 +338,16 @@ the exception message. `JdkClientHttpRequestFactory`: its read timeout bounds on
 headers, not the body, so it would still need the guard in R15; the YOT pattern is kept.
 `RestTemplate`: older API, no gain.
 
+**Amended after gate round 1 of the implementation (T002).** `HttpURLConnection` resends a `GET` once
+when the connection fails before the status line (a reset gave two requests in
+`ProgressionApplicationClientTest`), and no setting turns that off, which breaks FR-009 and R12. Its
+per-read timeout also cannot bound a status line and headers sent a byte at a time. The transport is
+therefore `HttpComponentsClientHttpRequestFactory` over Apache HttpClient 5 (`httpclient5`, version
+from the Boot BOM), subclassed as `NoRedirectRequestFactory`: automatic retries, redirects, content
+compression, cookies and protocol upgrades off; no connection reuse; connect and socket timeouts
+from the properties; and each request cancelled once the response deadline (R15) has passed. The
+rest of this decision (headers, `exchange()`, the deadline guard on the body, the reader) stands.
+
 ---
 
 ## R12. No in-process retries
@@ -429,6 +439,13 @@ socket timeout stays as well.
 seconds never trips it. The spec treats a slow drip past the read timeout as a timeout. The guard
 bounds one lookup to about connect + read timeout + one socket read (about 15 to 25 s at the
 defaults), with no extra thread. WireMock's chunked dribble delay pins it.
+
+**Amended after gate round 1 (T002).** The guard on the body cannot see a slow status line or slow
+headers. The request factory now also cancels each request once the deadline has passed since it was
+created, which closes the connection and ends a blocked read at once; the client reads any I/O
+failure after its deadline as `progression_timeout`. This needs one daemon thread per factory, which
+only ever cancels requests. One lookup is then bounded by about the connect timeout plus the read
+timeout.
 
 **Worst case per share.** N lookups × that bound. Shares with applications usually carry one or two;
 the broker has no processing timeout on a consumer, and the store transaction opens only after the

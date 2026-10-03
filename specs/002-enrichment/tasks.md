@@ -131,11 +131,28 @@ contracts/progression-lookup.md against an in-process WireMock.
     `IntakeStageTest` and the extended `IntakeFailureCauseTest` were green at the seam: their tag is the
     existing `name().toLowerCase` shared by every constant, so adding the constant is the whole change
     (and `fromSqlState` was already free of `progression_*` causes; the rows pin both).
+    Red evidence re-established after gate round 1 (Principle X): the two classes as committed in
+    28fa716 were run against the pre-T001 code (4a5575f, extracted outside the tree; in
+    `IntakeFailureCauseTest` the one method that names the new constants in code,
+    `from_sql_state_should_never_name_a_progression_cause`, was left out so the class compiles):
+    `IntakeStageTest` → `every_tag_should_come_from_the_fixed_list() FAILED`
+    `Expecting actual: ["receipt", "store"] to contain exactly (and in same order): ["receipt", "store", "enrich"]`;
+    `IntakeFailureCauseTest` → `every_tag_should_come_from_the_fixed_list() FAILED`
+    `Expecting actual: ["lock_timeout", "statement_timeout", "database", "other"] to contain exactly … but could
+    not find the following elements: ["progression_rejected", "progression_refused", …]`. Both fail on the
+    assertion, so the fixed-list tests would have caught a missing constant. For later enum extensions the
+    fixed-list test is run before the constant is added and that failure quoted as the RED line.
   - GREEN: the five classes, 97 tests, 0 failures (`IntakeStageTest` 4, `IntakeFailureCauseTest` 23,
     `ApplicationLookupOutcomeTest` 6, `EnrichmentSkipTest` 4, `ConfigurationValidationTest` 60);
     `pmdMain pmdTest` clean.
   - Note: `ProgressionProperties.toString()` leaves out the system user id and, since gate round 1, the
     base URL (never logged).
+    Full suite (gate round 1): the GREEN lines above count the task's own classes only. The full
+    `./gradlew test` was red at 28fa716, 91dc7dc and 52104c2 (the 001 `MicrometerIntakeObserverTest`,
+    `Expected size: 15 but was: 30`, fixed in f9571ad below T001), so the tick was early for those
+    commits. After the gate round 1 fixes the full build (`build pmdMain pmdTest jacocoTestReport`)
+    passes: 819 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.9 %. From here a task is
+    ticked only on a green full-suite run, quoted under its GREEN line.
   - Follow-up found by the phase gate: `MicrometerIntakeObserver` pre-registers `intake.failed` for every
     stage × cause, so T001's new stage and causes added 22 pairs the contract never lists (for example
     `stage=receipt,cause=progression_timeout`), and the 001 `MicrometerIntakeObserverTest` failed. Fixed
@@ -219,6 +236,12 @@ contracts/progression-lookup.md against an in-process WireMock.
     a connect timeout reaches the same `ResourceAccessException` catch and `timedOut` check as the read
     timeout row, which is pinned; the connect timeout's value is pinned on the factory's
     `ConnectionConfig` (`NoRedirectRequestFactoryTest`, `ProgressionConfigTest`).
+    Full suite (gate round 1): the GREEN lines above count the task's own classes only. The full
+    `./gradlew test` was red at 28fa716, 91dc7dc and 52104c2 (the 001 `MicrometerIntakeObserverTest`,
+    `Expected size: 15 but was: 30`, fixed in f9571ad below T001), so the tick was early for those
+    commits. After the gate round 1 fixes the full build (`build pmdMain pmdTest jacocoTestReport`)
+    passes: 819 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.9 %. From here a task is
+    ticked only on a green full-suite run, quoted under its GREEN line.
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.
@@ -262,6 +285,12 @@ contracts/progression-lookup.md against an in-process WireMock.
     `enrichment_should_be_on_when_its_switch_is_not_set() FAILED`
     `Expecting: <Started application …> to have a single bean of type: <…NoRedirectRequestFactory>`.
     GREEN (restored): `IntakeConfigTest` 8, 0 failures; `pmdTest` clean.
+    Full suite (gate round 1): the GREEN lines above count the task's own classes only. The full
+    `./gradlew test` was red at 28fa716, 91dc7dc and 52104c2 (the 001 `MicrometerIntakeObserverTest`,
+    `Expected size: 15 but was: 30`, fixed in f9571ad below T001), so the tick was early for those
+    commits. After the gate round 1 fixes the full build (`build pmdMain pmdTest jacocoTestReport`)
+    passes: 819 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.9 %. From here a task is
+    ticked only on a green full-suite run, quoted under its GREEN line.
 
 ---
 
