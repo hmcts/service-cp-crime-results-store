@@ -31,6 +31,9 @@ class NulSafetyTest {
         // A trailing backslash or a short escape cannot be a NUL escape.
         "\\",
         "\\u00",
+        // A unicode escape with a non-hex digit is malformed, so passed over.
+        "{\"a\":\"\\uZZZZ\"}",
+        "{\"a\":\"\\u00G0\"}",
     })
     void text_that_jsonb_can_hold_should_keep_its_parsed_copy(final String text) {
         assertThat(NulSafety.isJsonbSafe(text)).isTrue();
@@ -46,6 +49,7 @@ class NulSafetyTest {
         "{\"a\":\"\\uD800\\uD800\\uDC00\"}",
         "{\"a\":\"\\uD800\\n\"}",
         "{\"a\":\"\\uD800\\u0041\"}",
+        "{\"a\":\"\\uD800abcdefgh\"}",
         // A lone low surrogate.
         "{\"a\":\"\\uDC00\"}",
         "{\"a\":\"\\udfff\"}",
