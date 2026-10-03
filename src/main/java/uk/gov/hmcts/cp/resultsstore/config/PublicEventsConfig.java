@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.config;
 
 import jakarta.jms.ConnectionFactory;
+import java.util.StringJoiner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -38,6 +39,9 @@ public class PublicEventsConfig {
     /** One consumer per pod: the deployment scales on replicas. */
     private static final String ONE_PER_POD = "1";
 
+    /** How far down the cause chain the log names classes; a chain is never this long unless it loops. */
+    private static final int MAX_CAUSE_DEPTH = 16;
+
     @Bean(LISTENER_CONTAINER_FACTORY)
     public DefaultJmsListenerContainerFactory publicEventListenerContainerFactory(
             @Qualifier(BOOT_CONNECTION_FACTORY) final ConnectionFactory connectionFactory,
@@ -58,9 +62,24 @@ public class PublicEventsConfig {
         return factory;
     }
 
-    /** Logs at ERROR; without a handler the container logs listener failures at WARN. */
+    /**
+     * Logs at ERROR; without a handler the container logs listener failures at WARN. The cause chain is
+     * named by class only, and the throwable is not passed to the logger: a database error's message can
+     * quote the failing row, so a stack trace could carry message text into the log (FR-041, Principle XI).
+     */
     private static void notApplied(final Throwable failure) {
         LOG.error("A public event was not applied; the session is rolled back and the broker will "
-                + "redeliver it. cause={}", failure.getClass().getName(), failure);
+                + "redeliver it. causes={}", causeClasses(failure));
+    }
+
+    /** The class names down the cause chain, outermost first; a looping chain is cut short. */
+    static String causeClasses(final Throwable failure) {
+        final StringJoiner names = new StringJoiner(" <- ");
+        Throwable current = failure;
+        for (int depth = 0; current != null && depth < MAX_CAUSE_DEPTH; depth++) {
+            names.add(current.getClass().getName());
+            current = current.getCause() == current ? null : current.getCause();
+        }
+        return names.toString();
     }
 }

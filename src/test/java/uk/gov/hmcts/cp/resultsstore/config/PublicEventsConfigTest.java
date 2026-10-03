@@ -3,15 +3,26 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
+import ch.qos.logback.classic.spi.ILoggingEvent;
 import jakarta.jms.ConnectionFactory;
+import java.sql.SQLException;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.boot.jms.autoconfigure.JmsProperties;
 import org.springframework.jms.config.SimpleJmsListenerEndpoint;
 import org.springframework.jms.listener.DefaultMessageListenerContainer;
+import org.springframework.jms.listener.adapter.ListenerExecutionFailedException;
 import org.springframework.test.util.ReflectionTestUtils;
+import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
+import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
 
 /** The container behind the shared durable subscription (FR-001, FR-006; contracts/inbound-event.md). */
 class PublicEventsConfigTest {
+
+    /** Stands for message text a database error can quote back, such as a failing row's detail. */
+    private static final String PAYLOAD_MARKER = "PAYLOAD-MARKER-Smith";
 
     private final ConnectionFactory connectionFactory = mock(ConnectionFactory.class);
 
@@ -35,6 +46,54 @@ class PublicEventsConfigTest {
     @Test
     void container_when_disabled_should_not_start_on_its_own() {
         assertThat(container(false).isAutoStartup()).isFalse();
+    }
+
+    @Test
+    void error_handler_should_log_the_cause_chain_by_class_name_only_never_its_text() {
+        final SQLException driver = new SQLException(
+                "ERROR: new row violates check constraint. Detail: Failing row contains (" + PAYLOAD_MARKER + ")",
+                "23514");
+        final Throwable failure = new ListenerExecutionFailedException("Listener method threw " + PAYLOAD_MARKER,
+                new RetryableIntakeException(IntakeStage.RECEIPT, IntakeFailureCause.DATABASE,
+                        new DataIntegrityViolationException("could not execute " + PAYLOAD_MARKER, driver)));
+
+        try (CapturedLog log = CapturedLog.forClass(PublicEventsConfig.class)) {
+            container(true).getErrorHandler().handleError(failure);
+
+            assertThat(log.events()).hasSize(1);
+            final ILoggingEvent event = log.events().getFirst();
+            assertThat(event.getThrowableProxy()).as("no throwable, so no stack trace or cause messages").isNull();
+            assertThat(event.getFormattedMessage())
+                    .doesNotContain(PAYLOAD_MARKER)
+                    .contains(ListenerExecutionFailedException.class.getName(),
+                            RetryableIntakeException.class.getName(),
+                            DataIntegrityViolationException.class.getName(),
+                            SQLException.class.getName());
+        }
+    }
+
+    @Test
+    void cause_classes_should_stop_at_a_cause_that_points_at_itself() {
+        final IllegalStateException loop = new IllegalStateException() {
+            private static final long serialVersionUID = 1L;
+
+            @Override
+            public synchronized Throwable getCause() {
+                return this;
+            }
+        };
+
+        assertThat(PublicEventsConfig.causeClasses(loop)).isEqualTo(loop.getClass().getName());
+    }
+
+    @Test
+    void cause_classes_should_name_at_most_sixteen_links_of_a_long_chain() {
+        Throwable chain = new IllegalStateException();
+        for (int link = 0; link < 40; link++) {
+            chain = new IllegalArgumentException(chain);
+        }
+
+        assertThat(PublicEventsConfig.causeClasses(chain).split(" <- ")).hasSize(16);
     }
 
     private DefaultMessageListenerContainer container(final boolean enabled) {

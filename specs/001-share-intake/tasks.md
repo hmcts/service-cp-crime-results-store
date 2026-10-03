@@ -459,6 +459,16 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     all removed in `finally`. The environment-variable names of contracts/configuration.md are given as
     `${…:default}` placeholders in `application.yaml` (relaxed binding would also take them).
 
+  - Gate round 1 (T007 exposure): the container error handler in `config/PublicEventsConfig.java` (outside
+    the T007 file list, last touched by the skeleton) passed the throwable to the logger, so T007's rethrow of a
+    cause-bearing `RetryableIntakeException` could put a PostgreSQL message quoting the failing row into the
+    log. It now logs the cause chain by class name only (`causes=a <- b <- c`, at most 16 links, a
+    self-referencing cause ends the walk) and no throwable. RED: `./gradlew test --tests
+    '*PublicEventsConfigTest'`: `error_handler_should_log_the_cause_chain_by_class_name_only_never_its_text`:
+    `AssertionFailedError: [no throwable, so no stack trace or cause messages] but was: ThrowableProxy`.
+    GREEN: `PublicEventsConfigTest` 5 tests, 0 failures. `RetryableFailures` still attaches the driver
+    exception as the cause, so it stays available to a debugger; only the log is sanitised.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---
@@ -520,7 +530,7 @@ and `NoPayloadInLogsIT` prove the metric and log rules; the container smoke prov
   - GREEN: _to be recorded_
 
 - [ ] T013 [US7] Test first: `MicrometerIntakeObserverTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `NoPayloadInLogsIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/integration/NoPayloadInLogsIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (registered in src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java; `@MockitoBean IntakeObserver` stand-ins removed), `io.micrometer:micrometer-registry-prometheus` in build.gradle
-  - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths.
+  - Cases: every counter and the lag timer in contracts/metrics.md registered with exactly its tag sets against a `SimpleMeterRegistry`; lag `stored_at − shared_at` clamped at zero; a registry-wide check fails on any tag value outside the lists or matching a UUID or date pattern; `/actuator/prometheus` exposes `resultsstore_*`; a marker string inside a payload never appears in any captured log line across the store, duplicate, non-share and failure paths. The failure paths include one whose database error quotes row detail (a constraint violation, `Detail: Failing row contains (…)`), not only a timeout, and capture the container's error-handler logger (gate round 1).
   - Covers: FR-038–FR-041; SC-010.
   - Done when: both test classes green; the gate green.
   - RED: _to be recorded_
