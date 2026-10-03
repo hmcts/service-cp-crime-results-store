@@ -2,7 +2,9 @@
 
 Adds to [../../001-share-intake/contracts/schema.md](../../001-share-intake/contracts/schema.md) and
 [../../002-enrichment/contracts/schema.md](../../002-enrichment/contracts/schema.md). Every rule there
-still binds. The DDL is in full in [../data-model.md](../data-model.md).
+still binds. The DDL is in full in [../data-model.md](../data-model.md). This file is the database only: the
+API's response schemas are in the contract jar from `hmcts/api-cp-crime-results-store` (research R23),
+and no column is named after them.
 
 ## Migration
 

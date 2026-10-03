@@ -280,9 +280,13 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 
 **Audit**
 
-- **FR-051**: Every request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`. A request refused by this service's filters (`404` and `405` before authorisation, `415` after it) or by the authorisation library (`401`, `403`) never reaches the audit filter, so it is not audited; every such refusal MUST be counted in `resultsstore.read.refused` with its reason (D-REFUSALS-UNAUDITED and D-VII-AUDIT-WORDING accepted, E13).
+- **FR-051**: Every request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`. A request refused by this service's filters (`404` and `405` before authorisation, `415` after it), by the authorisation library (`401`, `403`) or by the HTTP connector before the service sees it (a malformed request target answered `400 bad_request` by the host's error report) never reaches the audit filter, so it is not audited; every such refusal MUST be counted in `resultsstore.read.refused` with its reason, a connector refusal as `connector_rejected`, once its body has been written (D-REFUSALS-UNAUDITED and D-VII-AUDIT-WORDING accepted, E13).
 - **FR-052**: The payload endpoints' audit response event MUST carry the fixed marker `{"payloadOmitted":true}` in place of the body (D-AUDIT option 4, E1): the service replaces the library's `AuditPayloadGenerationService` bean. In parallel the library owners are asked for a body-exclusion switch (option 2); the DPIA records both. List pages keep their bodies. A test MUST pin the behaviour.
 - **FR-053**: Every path template MUST be in `results-store-openapi.yaml` with its path parameters declared, and every described route MUST be served (checked both ways by a test).
+
+**Published contract**
+
+- **FR-063**: The read API's contract MUST be published from `hmcts/api-cp-crime-results-store` as `uk.gov.hmcts.cp:api-cp-crime-results-store` (generated `SharesApi` and models, the spec at `openapi/openapi-spec.yml`), and the service MUST take it as its `apiSpec` dependency and implement the generated `SharesApi`. The service's own `results-store-openapi.yaml` (kept for the audit filter) MUST NOT drift from the jar's spec: a build-time test MUST compare paths, parameters, responses, headers, schemas and tags, ignoring only `info` and `servers`. Every contract change MUST be made in the api repository first; a release of the service MUST NOT depend on a draft contract version (`validateApiSpecVersions`). Research R23.
 
 **Schema**
 

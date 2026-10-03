@@ -5,8 +5,12 @@ distribution, court register, support staff). This is the document to review for
 **Owner**: the Results Store (`service-cp-crime-results-store`).
 **Status**: Draft with spec 003. Every decision in it is taken (spec.md *Decisions taken with Sachin
 (2026-10-03)*); nothing is pending.
-**Machine-readable form**: `src/main/resources/results-store-openapi.yaml` in the store's repository
-(written by spec 003, task T001). Where the two disagree, this document is corrected.
+**Machine-readable form**: the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
+[hmcts/api-cp-crime-results-store](https://github.com/hmcts/api-cp-crime-results-store) (Azure Artifacts
+`hmcts-lib`, anonymous read): the spec at `openapi/openapi-spec.yml`, a generated Spring interface
+(`SharesApi`) and models. Release `0.2.0` holds endpoints 1 to 5; `0.3.0` adds the arrived text. The
+store's own `src/main/resources/results-store-openapi.yaml` is kept identical to it by a build-time test.
+Where this document and the spec disagree, this document is corrected.
 
 The words MUST, MUST NOT, SHOULD and MAY are used in their usual sense. "The store" means the service;
 "you" means the consumer.
@@ -51,7 +55,8 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 ### 2.2 Requests
 
 - `Accept`: `application/json`, `*/*`, or absent. A vendor media type is treated as `application/json`.
-  Anything else the store cannot produce → `406 not_acceptable`.
+  `application/problem+json` is also accepted (the spec lists it for error bodies); a success is still
+  sent as `Content-Type: application/json`. Anything else the store cannot produce → `406 not_acceptable`.
 - No request has a body. `multipart/*` → `415 unsupported_content_type`.
 - Query parameter names are **case-sensitive**. An unknown name → `400 unknown_parameter` (so a typo
   such as `storedAfterseq` never quietly turns a pull into a search). A name given twice →

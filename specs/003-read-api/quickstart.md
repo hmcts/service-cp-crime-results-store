@@ -28,6 +28,9 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lo
 ```
 
 - The rule and OpenAPI tests prove every route has its action, its allow rule and its OpenAPI entry.
+- `OpenApiContractDriftTest` proves the store's `results-store-openapi.yaml` says the same as the contract
+  jar's `openapi/openapi-spec.yml` (everything but `info` and `servers`). When it fails, the contract was
+  changed in one place only: make the change in hmcts/api-cp-crime-results-store first (§6).
 - `JdbcShareQueriesIT.a_slow_lower_number_should_never_be_overtaken` is the pull-safety race: two
   connections, an open insert at number *n* and a committed *n + 1*. With lag 0 the race shows; with the
   lag above the open transaction's age *n + 1* is withheld until *n* ends.
@@ -108,3 +111,27 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lo
 
 As 001 quickstart §7, with `specDir` `…/specs/003-read-api` and the phase ranges of tasks.md
 (*Phase-gate invocations*): A = T001–T003, B = T004–T008, C = T009–T012, D = T013 (D-RAW accepted).
+
+## 6. Changing the contract
+
+The contract lives in hmcts/api-cp-crime-results-store (research R23). The order is always the same:
+
+1. A pull request there (spec, CHANGELOG, `OpenApiObjectsTest`). Merge it, then fast-forward `team/rs`:
+
+   ```bash
+   cd /home/sachin/moj/api-cp-crime-results-store
+   git checkout team/rs && git merge --ff-only main && git push
+   gh run list -R hmcts/api-cp-crime-results-store   # the draft run publishes rs-<sha7>
+   ```
+
+2. Pin the draft in this repository's `gradle/libs.versions.toml` (`api-cp-crime-results-store = "rs-<sha7>"`),
+   make the same change to `src/main/resources/results-store-openapi.yaml`, and build: the drift test and the
+   controller tests tell you what is left.
+3. When the service change is in, publish a GitHub Release `vX.Y.Z` of the api repository and bump the
+   pin to `X.Y.Z`. Check it:
+
+   ```bash
+   JAVA_HOME=/usr/lib/jvm/java-25-openjdk ./gradlew validateApiSpecVersions
+   ```
+
+   It refuses a draft. `ci-released.yml` runs it before every release of the store.

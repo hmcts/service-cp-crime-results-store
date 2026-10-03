@@ -34,7 +34,19 @@ fixed marker instead of the payload (D-AUDIT option 4, E1). Detail: [research.md
 **Primary Dependencies**: Spring Boot 4.1.1 (webmvc, jdbc, flyway, actuator); Spring MVC `PathPattern`
 matching (`PathPatternParser.defaultInstance`, `RequestPath`); `cp-auth-rules-filter` 1.0.7 and
 `cp-audit-filter-springboot` 1.0.5 (already dependencies); Jackson 3 (`tools.jackson`) for responses;
-Micrometer. No new dependency.
+Micrometer. One new dependency, the contract jar (research R23): `apiSpec`
+`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-2c5bc08`** (api commit `2c5bc08`)
+until the release `0.2.0` (T012), in an `apiSpec` configuration that `implementation` extends, with
+`gradle/apispec-validation.gradle` applied. It resolves from the Azure Artifacts `hmcts-lib` repository
+already in `gradle/repositories.gradle`, read anonymously (no credentials):
+
+```groovy
+maven {
+  url = 'https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/maven/v1'
+}
+```
+
+swagger-parser 2.1.20 (already a test dependency) for the OpenAPI tests and the drift test.
 **Storage**: PostgreSQL 16 (local and tests); migration `V5__read_api.sql` (one trigger, three partial
 indexes; data-model.md). No table or column change. Intake store timeouts (spec 001 settings, changed by
 T008): transaction 60 s, statement 10 s (was 20 s), lock 5 s (was 10 s), idle-in-transaction 10 s;
@@ -56,7 +68,7 @@ audit filter buffers it (8 MB for a 2.4 MB payload)
 line; JaCoCo 0.88 line / 0.85 branch; PMD 7.22.0 clean on main and test (`OnlyOneReturn`: single exit or
 a site suppression with a reason); no wildcard imports; V1 to V4 never edited
 **Scale/Scope**: about 4,800 shares a day; consumers: YOT (nightly), probation (bridge, `limit=200`
-every 30 s), court register. About 42 new production classes, 14 changed; 13 tasks in four phases
+every 30 s), court register. About 38 new production classes, 14 changed; 13 tasks in four phases
 
 Every point above is settled in [research.md](research.md) or is a decision in spec.md *Decisions taken
 with Sachin (2026-10-03)*. The production PostgreSQL version stays a risk (D-PG-VERSION, *Risks*).
@@ -80,7 +92,7 @@ Constitution 2.1.0. T012 amends it to 2.2.0 (MINOR; research R20); the check bel
 | IX. Artemis only for legacy integration | Nothing published by the store. The audit library publishes to the estate's audit topic, as it already would | PASS |
 | X. Test-driven development | Every task names its tests first; red run quoted before green (phase gate) | PASS |
 | XI. Privacy in telemetry | Logs hold ids and exception class names only; problem bodies hold bounded codes; no tag holds an id or date; `NoPayloadInLogsIT` gains a read case. Audit bodies: the payload body is replaced by a marker (E1); no response carries `_metadata` (E8) | PASS |
-| XII. Estate conventions | Gradle, Java 25, Boot 4; constructor injection; records for responses; explicit imports; typed validated properties; Conventional Commits; no attribution | PASS |
+| XII. Estate conventions | Gradle, Java 25, Boot 4; constructor injection; the generated models of the contract jar for responses (research R23); explicit imports; typed validated properties; Conventional Commits; no attribution | PASS |
 | Quality gates | `build pmdMain pmdTest jacocoTestReport` green per phase; OpenAPI and allow rules before the code that serves them (T001 before T010); reviewers code-reviewer, qa, spec-validator, and Codex | PASS |
 
 **Initial gate: PASS**, with two recorded deviations (VII audit wording; II served form without `_metadata`), justified below.
@@ -107,7 +119,7 @@ Constitution 2.1.0. T012 amends it to 2.2.0 (MINOR; research R20); the check bel
 specs/003-read-api/
 ├── spec.md              # specification (Draft)
 ├── plan.md              # this file
-├── research.md          # Phase 0: decisions R1–R22
+├── research.md          # Phase 0: decisions R1–R23
 ├── data-model.md        # Phase 1: V5 DDL in full; item fields; query shapes; invariants
 ├── quickstart.md        # Phase 1: gate, calling the API locally, checking the lag and the ETag
 ├── contracts/
@@ -132,7 +144,7 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + ReadEndpoint.java        # pull, search, share, payload, day_versions (+ arrived_payload, phase D)
 │   ├── ~ SharedDays.java          # + London day range → [from, to) instants
 │   ├── + RouteRefusal.java        # route_not_found, method_not_allowed, unsupported_content_type,
-│   │                              #   unauthenticated, forbidden
+│   │                              #   unauthenticated, forbidden, connector_rejected
 │   ├── + ReadOutcome.java         # ok, not_modified, bad_request, not_found, unavailable, failed
 │   ├── + ShareView.java           # the item's values; keyDetails null when FAILED
 │   ├── + DayYouthFilter.java      # ANY, NOT_FALSE, TRUE, FALSE; fromValue
@@ -167,10 +179,12 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + BoundedErrorAttributes.java
 │   ├── + BoundedErrorController.java   # /error for every media type; counts 401 and 403
 │   ├── + InstantFormat.java       # six fraction digits, UTC
-│   ├── + SharesController.java, SharePayloadController.java, HearingDaySharesController.java
-│   ├── + ShareSummaryResponse.java, KeyDetailsResponse.java, PullPageResponse.java,
-│   │     SearchPageResponse.java, DayVersionsResponse.java
+│   ├── + SharesController.java    # the one `implements SharesApi` (generated, contract jar; R23)
+│   ├── + ShareResponseMapper.java # read types → generated ShareSummary, KeyDetails, PullPage,
+│   │                              #   SearchPage, DayVersions
+│   ├── + PayloadResponses.java    # ServedPayload → ResponseEntity<byte[]>, ETag and headers
 │   ├── + ShareParameters.java     # strict query-parameter parsing (unknown, repeated, conflicting)
+│   ├── + ShareParametersInterceptor.java  # runs ShareParameters on the raw request before binding
 │   ├── + ReadMetricsInterceptor.java    # requests and duration, by route and status
 │   └── + ReadApiExceptionHandler.java   # extends ResponseEntityExceptionHandler
 └── config/
@@ -185,7 +199,8 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
     └── ~ MicrometerIntakeObserver.java  # + resultsstore.intake.visibility.overrun
 
 src/main/resources/
-├── ~ results-store-openapi.yaml   # paths, parameters, headers, schemas (T001)
+├── ~ results-store-openapi.yaml   # paths, parameters, headers, schemas (T001); kept identical to the
+│                                  #   contract jar's openapi/openapi-spec.yml (drift test, T009)
 ├── ~ acl/results-store-rules.drl  # one allow rule per action (T001)
 ├── + db/migration/V5__read_api.sql
 └── ~ application.yaml             # intake statement 10s / lock 5s (T008); resultsstore.read.*,
@@ -196,12 +211,17 @@ docker-compose.yml                          # ~ short intake timeouts for the sm
 docker/wiremock/mappings/identity-stub.json # ~ lower priority default (T012)
 docker/wiremock/mappings/identity-no-group.json  # + header-matched caller in neither group (T012)
 scripts/container-smoke.sh                  # ~ HTTP checks (T012)
+build.gradle                                # ~ apiSpec configuration and dependency; apispec-validation applied (T009)
+gradle/libs.versions.toml                   # ~ api-cp-crime-results-store: rs-<sha7> draft, then 0.2.0 (T012), 0.3.0 (T013)
+.github/workflows/ci-released.yml           # ~ validate-api-spec-version job (T009)
 
 src/test/java/uk/gov/hmcts/cp/resultsstore/
 ├── acl/          ~ ResultsStoreRulesTest
-├── api/          + OpenApiDocumentTest, OpenApiContractTest, ProblemReasonTest, BoundedErrorAttributesTest,
-│                   BoundedErrorControllerTest, InstantFormatTest, ShareParametersTest, SharesControllerTest, SharePayloadControllerTest,
-│                   HearingDaySharesControllerTest, ReadApiExceptionHandlerTest, ReadMetricsInterceptorTest
+├── api/          + OpenApiDocumentTest, OpenApiContractTest, OpenApiContractDriftTest, ProblemReasonTest,
+│                   BoundedErrorAttributesTest, BoundedErrorControllerTest, InstantFormatTest, ShareParametersTest,
+│                   ShareParametersInterceptorTest, ShareResponseMapperTest, SharesControllerTest,
+│                   SharePayloadControllerTest, HearingDaySharesControllerTest, ContentNegotiationTest,
+│                   ReadApiExceptionHandlerTest, ReadMetricsInterceptorTest
 ├── filters/      + ApiRouteTest, ActionRequestWrapperTest, UnsupportedContentTypeFilterTest,
 │                   PayloadBodyFreeAuditPayloadGenerationServiceTest; ~ ActionHeaderFilterTest
 ├── domain/       + ReadEndpointTest, ReadOutcomeTest, RouteRefusalTest, ShareViewTest, DayYouthFilterTest,
@@ -219,7 +239,8 @@ src/test/java/uk/gov/hmcts/cp/resultsstore/
 **Structure Decision**: one Spring Boot service, packages as in the design rules. Branching logic (route
 matching, parameter parsing, cursors, limits, the `ETag`) lives outside `config/` so the coverage gate
 measures it. `ApiRoute` is the single source for the filter, `OpenApiContractTest` and
-`ResultsStoreRulesTest`; spec 004 adds its operations routes to it.
+`ResultsStoreRulesTest`; spec 004 adds its operations routes to it. The HTTP surface is the generated
+`SharesApi` from the contract jar; `SharesController` is its only implementation (research R23).
 
 ## Phase plan
 
@@ -250,16 +271,16 @@ schema, ports and service of phase B; phase D needs everything (D-RAW accepted, 
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source) | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default) | FR-017, FR-018, FR-045, FR-056; SC-008 |
-| T010 | `ShareParametersTest`, `InstantFormatTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | controllers, responses, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053 |
+| T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source), `OpenApiContractDriftTest` | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default); the `apiSpec` dependency on `rs-2c5bc08`, `apispec-validation.gradle` applied, the `validate-api-spec-version` job in `ci-released.yml` | FR-017, FR-018, FR-045, FR-056, FR-063; SC-008 |
+| T010 | api repo first: the payload body as `byte[]` (pull request, `rs-<sha7>` draft, pin); then `ShareParametersTest`, `ShareParametersInterceptorTest`, `InstantFormatTest`, `ShareResponseMapperTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ContentNegotiationTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | `SharesController implements SharesApi`, the mapper to the generated models, `PayloadResponses`, the parameter interceptor, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053, FR-063 |
 | T011 | `ReadApiIT`, `AuditIT`, `NoPayloadInLogsIT`, `PayloadBodyFreeAuditPayloadGenerationServiceTest` | fixes found; D-AUDIT option 4 (E1) | US1–US7; FR-012, FR-022–FR-030, FR-039, FR-051, FR-052; SC-003–SC-006, SC-011 |
-| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred | FR-057–FR-060; SC-012, SC-013 |
+| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred; Release `v0.2.0` of the api repo and the bump from the draft | FR-057–FR-060, FR-063; SC-012, SC-013 |
 
 ### Phase D: arrived text (D-RAW accepted, E2)
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T013 | rules, OpenAPI and route tests gain the route (red); `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT` arrived cases | the route end to end, served without `_metadata`, `ETag` over the served bytes | FR-001 (arrived route), FR-041, FR-046 (arrived action); US8; SC-014 |
+| T013 | api repo first: the arrived operation (pull request, `rs-<sha7>` draft, pin); then rules, OpenAPI, drift and route tests gain the route (red); `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT` arrived cases | the route end to end, served without `_metadata`, `ETag` over the served bytes; Release `v0.3.0` and the bump | FR-001 (arrived route), FR-041, FR-046 (arrived action), FR-063; US8; SC-014 |
 
 Rules for every task: a unit test per class; an IT on Testcontainers Postgres, embedded Artemis or
 WireMock for every persistence, messaging and HTTP path; latches or Awaitility, never sleeps; no payload
@@ -296,12 +317,17 @@ text in assertion or log output; one commit per task, red run quoted before gree
     table; the `404`-before-`401` order on unknown paths is intentional.
 12. V5's plain `CREATE INDEX` blocks intake inserts while it builds if it deploys after live capture
     starts; then use `CONCURRENTLY` with Flyway's `executeInTransaction=false`.
-13. Spec 004 edits the same route table, filter, rule file and OpenAPI document; 003 lands first.
+13. Spec 004 edits the same route table, filter, rule file and OpenAPI document; 003 lands first. Its
+    operations API is expected to be published from the same contract repository, api repo first
+    (research R23 C4).
 14. Not verified: PostgreSQL internals behind the `pg_stat_activity` verdict; that `statement_timeout`
     applies to `COMMIT` and to a synchronous-replication wait; the `AuditFilter`'s effective order in
     Boot 4 (`FilterOrderIT` checks it); the `ResponseInfo.contextPath` form (`AuditIT` pins it); the
     production PostgreSQL version and whether it uses synchronous replication (D-PG-VERSION / HA, E11:
     a recorded risk, not a decision; PostgreSQL 17's `transaction_timeout` is a later tightening).
+15. Phase C builds on a draft contract (`rs-<sha7>`); each later `team/rs` commit publishes a new draft
+    while phase C runs. The service pins one exact draft, and T012 moves it to the release `0.2.0`
+    before anything is released; `validateApiSpecVersions` refuses a release that still names a draft.
 
 ## Complexity Tracking
 

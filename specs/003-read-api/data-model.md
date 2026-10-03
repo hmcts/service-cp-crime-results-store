@@ -82,7 +82,8 @@ deploys before go-live; the `CONCURRENTLY` fallback is in plan.md *Risks*.
 
 ## The share item: columns to JSON
 
-The item is a read view of `hearing_share`. No payload.
+The item is a read view of `hearing_share`. No payload. On the wire it is the generated `ShareSummary`
+(with `KeyDetails`) of the contract jar (research R23); `api/ShareResponseMapper` fills it from `ShareView`.
 
 | JSON field | Column / derivation | Null when |
 |---|---|---|
@@ -202,6 +203,7 @@ SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applie
 | `SharedDays` | `domain/` | + the London day range as a [from, to) `shared_at` range (`Europe/London`) |
 | `PullQuery`, `SearchQuery` | `application/` | the validated parameters; `SearchQuery` always holds the instant range |
 | `PullPage`, `SearchPage`, `ServedPayload` | `application/` | what the service answers: items and cursor values; bytes, `ETag`, identity, flag, form |
+| `ShareSummary`, `KeyDetails`, `PullPage`, `SearchPage`, `DayVersions` (generated) | contract jar, `uk.gov.hmcts.cp.resultsstore.openapi.model` | the response bodies. Filled by `api/ShareResponseMapper`; never used below `api/`. The payload has no model: it is `byte[]` (research R23 C3) |
 
 ## Invariants the tests hold
 

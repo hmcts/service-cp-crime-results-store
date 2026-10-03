@@ -111,7 +111,9 @@ and a pool backstop (D-LAG-VALUE); the overrun counter (D-OVERRUN); court-filter
 (D-COURT-FAILED = no); search by `sharedTime` range as well as by day; byte stability within a PostgreSQL
 major version (D-JSONB-PROMISE); no envelope metadata in any response; every pod runs the same settings
 (D-READONLY-PODS = no); authorisation required outside tests (D-AUTHZ-REQUIRED); the audit wording
-(D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED).
+(D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED), with requests the HTTP connector rejects counted as
+`connector_rejected`. The API contract is published from its own repository,
+hmcts/api-cp-crime-results-store, and every change to it is made there first (research R23).
 
 Still open, as a risk: the production PostgreSQL version and whether it uses synchronous replication
 (D-PG-VERSION / HA).
@@ -149,7 +151,11 @@ Still open, as a risk: the production PostgreSQL version and whether it uses syn
 
 ## 7. For the probation team (asks S6 to S12, gate G2)
 
-- **G2.** Review `specs/003-read-api/contracts/read-api.md`; the OpenAPI document follows it.
+- **G2.** Review `specs/003-read-api/contracts/read-api.md`; the OpenAPI document follows it. The
+  document is published as the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
+  hmcts/api-cp-crime-results-store (Azure Artifacts `hmcts-lib`, anonymous read), with a generated Spring
+  interface and models; a client can be generated from `openapi/openapi-spec.yml` in it. Build against a
+  release (`0.2.0`; `0.3.0` adds the arrived text), not a draft.
 - **S7.** The groups are "System Users" and "Second Line Support"; probation's system user needs "System
   Users".
 - **S8.** `ETag` = `"<SHA-256 hex over the exact bytes served>"`, strong and quoted: DV-19 can compare

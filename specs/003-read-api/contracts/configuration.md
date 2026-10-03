@@ -6,6 +6,18 @@ Same conventions: a typed `@ConfigurationProperties` record in `config/`, Spring
 checked at start; a bad value stops the service, proved by `ConfigurationValidationTest` and
 `ReadApiConfigTest`. The read beans are built whatever `resultsstore.publicevents.enabled` says.
 
+## The contract dependency (`apiSpec`; research R23)
+
+Build settings, not runtime properties. Set in `gradle/libs.versions.toml` and `build.gradle` (T009).
+
+| Item | Value | Where | Rule |
+|---|---|---|---|
+| Coordinates | `uk.gov.hmcts.cp:api-cp-crime-results-store` | `gradle/libs.versions.toml` `[libraries]`, alias `api-cp-crime-results-store`; `apiSpec libs.api.cp.crime.results.store` in `build.gradle` | the `apiSpec` configuration; `implementation.extendsFrom apiSpec` |
+| Version while phase C is built | `rs-2c5bc08` (draft from the api repo's `team/rs`, commit `2c5bc08`); a later `rs-<sha7>` when T010 changes the payload body | `gradle/libs.versions.toml` `[versions]` | an exact draft, never a range |
+| Version released | `0.2.0` (T012); `0.3.0` with the arrived route (T013) | the same | strict `X.Y.Z`: `./gradlew validateApiSpecVersions` (`gradle/apispec-validation.gradle`) fails on anything else, and the `validate-api-spec-version` job runs it before `ci-release` in `.github/workflows/ci-released.yml` |
+| Repository | Azure Artifacts `hmcts-lib`, `https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/maven/v1` | `gradle/repositories.gradle` (already there) | read anonymously; no credentials. Also published to GitHub Packages, not used for reading |
+| Audit filter's document | `audit.http.openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}` | `application.yaml` | **unchanged**. The service's own `src/main/resources/results-store-openapi.yaml` stays the one document the glob finds; the jar carries its spec only at `openapi/openapi-spec.yml`. `OpenApiContractDriftTest` keeps the two equal (paths, components, tags; not `info` or `servers`) |
+
 ## `resultsstore.intake.store.*`: new defaults (spec 001 settings, changed by 003; E3)
 
 003 lowers two intake defaults so the 90-second lag is provable (research R4). Changed in

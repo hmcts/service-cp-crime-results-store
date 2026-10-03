@@ -5,7 +5,8 @@
 Each entry gives the decision, why, and what else was looked at. R1 to R3 settle the web edge (layering,
 routes, rules); R4 to R8 the pull and what a consumer may rely on; R9 to R12 search, the payload and its
 headers; R13 and R14 errors and audit; R15 to R18 the schema, times, metrics and settings; R19 the
-arrived text; R20 the constitution; R21 and R22 the day's versions and the build traps. Every open point
+arrived text; R20 the constitution; R21 and R22 the day's versions and the build traps; R23 the contract
+repository the service takes its OpenAPI contract from. Every open point
 is settled here, or is a decision in spec.md *Decisions taken with Sachin (2026-10-03)*; the production
 PostgreSQL version stays a risk (R4).
 
@@ -24,9 +25,10 @@ and 002; and this repository's code as read for this document (`V3__create_share
 
 **Decision.** As `.claude/rules/design_rules.md` sets out:
 
-- `api/` holds hand-written controllers that parse parameters, call `ShareReadService` once and map the
-  answer to `*Response` records or a bounded problem body; the exception advice; the bounded `/error`
-  attributes; the instant format.
+- `api/` holds the one controller, which implements the generated `SharesApi` of the contract jar
+  (R23), the strict parameter checks that run before binding, and the mapping of each answer to the
+  generated models or a bounded problem body (`ShareReadService` is called once per request); the exception
+  advice; the bounded `/error` attributes; the instant format.
 - `application/` holds `ShareReadService` and the ports `ShareQueries`, `ReadObserver` and
   `RefusalObserver`. Nothing there imports JDBC or HTTP types. One accepted exception to the direction
   of dependencies: `BadParameterException` and `NotFoundException` carry an `api/ProblemReason`, so
@@ -377,7 +379,9 @@ shape).
 - **Working copy.** The query returns `(payload_json - '_metadata')::text`: the jsonb `-` operator removes
   the top-level key in the database, and the result is written as text exactly as for the whole copy.
   The body is `String.getBytes(UTF_8)` of that text, written unchanged as `ResponseEntity<byte[]>`
-  through `ByteArrayHttpMessageConverter`.
+  through `ByteArrayHttpMessageConverter`. The generated `SharesApi.getSharePayload` declares that
+  return type once the contract change of R23 (C3) is released; never a `String`, a `Map` or a
+  `Resource`.
 - **Text fallback** (`payload_json` is NULL, for example a `\u0000` escape jsonb cannot hold). The query
   returns `payload_text`; `domain/EnvelopeMetadata` parses it with Jackson 3 (which can hold `\u0000`),
   removes the top-level `_metadata` member and writes the tree back as compact JSON text. Numbers are
@@ -412,7 +416,7 @@ operator does it in the query).
 
 ## R11. `304 Not Modified`
 
-**Decision.** The controller returns `ResponseEntity.ok().eTag(etag).body(bytes)` and lets Spring's
+**Decision.** The controller returns `ResponseEntity.ok().eTag(etag).body(bytes)` (a `byte[]`, R23 C3) and lets Spring's
 `HttpEntityMethodProcessor` answer `If-None-Match` (weak comparison, a list or `*` accepted): `304` with
 the `ETag` and no body. No manual `checkNotModified` call: with it the `ETag` header would be written
 twice (once by `checkNotModified`, once from the entity). `SharePayloadControllerTest` asserts exactly
@@ -675,3 +679,113 @@ day's chain is small; the largest in production is not measured (risks).
   `ReadApiIT` and `AuditIT` switch them on for themselves.
 - **Spec 004** is authored from this branch's tip and edits `ApiRoute`, `ActionHeaderFilter`, the DRL
   and the OpenAPI document. 003 lands first.
+
+---
+
+## R23. The contract repository (`api-cp-crime-results-store`)
+
+**Decision.** The read API's OpenAPI contract is published from its own repository,
+`hmcts/api-cp-crime-results-store`, as the jar `uk.gov.hmcts.cp:api-cp-crime-results-store:<version>`.
+The service takes it the way `service-cp-crime-hearing-results-validator` takes
+`api-cp-crime-hearing-results-validator`: an `apiSpec` configuration that `implementation` extends,
+`gradle/apispec-validation.gradle` applied, and a `validateApiSpecVersions` job in `ci-released.yml`.
+
+- **What the jar holds.** The generated Spring interface `uk.gov.hmcts.cp.resultsstore.openapi.api.SharesApi`
+  (interface only, `useBeanValidation` off); the models `uk.gov.hmcts.cp.resultsstore.openapi.model`
+  `ShareSummary`, `KeyDetails`, `PullPage`, `SearchPage`, `DayVersions`, `ProblemDetail` and
+  `PullOrSearchShares200Response` (an interface `PullPage` and `SearchPage` implement; `date-time` is
+  `java.time.Instant`; no `@JsonInclude(NON_NULL)`); the spec once, at `openapi/openapi-spec.yml`;
+  `META-INF/CHANGELOG.md` and the SBOM.
+- **Where it is published.** Azure Artifacts `hmcts-lib`
+  (`https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/maven/v1`, anonymous read; already in
+  this service's `gradle/repositories.gradle`, no credentials) and GitHub Packages.
+- **Versions.** A push to the api repo's `main` publishes the draft `0.2.0-<sha7>`; a push to `team/rs`
+  publishes `rs-<sha7>`; a GitHub Release `vX.Y.Z` publishes `X.Y.Z`. The first drafts, from api commit
+  `2c5bc08` (2026-10-04): `0.2.0-2c5bc08` (main) and `rs-2c5bc08` (`team/rs`). This service pins
+  `rs-2c5bc08` until the release `0.2.0` (T012).
+
+The rulings (C1 to C5; lettered so they do not clash with the research numbers):
+
+- **C1. The service keeps its own `src/main/resources/results-store-openapi.yaml`.** It sits in
+  `BOOT-INF/classes` under a name no other jar uses, so the audit filter's suffix glob
+  (`audit.http.openapi-rest-spec`, unchanged) finds exactly one document, and no resource has to be read
+  from the root of a nested jar. A build-time drift test, `api/OpenApiContractDriftTest`, proves it says
+  the same as the jar's `openapi/openapi-spec.yml`: both parsed with swagger-parser (already a test
+  dependency), then `paths` (operations, parameters, request bodies, responses and their headers and
+  content), `components` (schemas, parameters, responses, headers) and `tags` compared as parsed objects.
+  `info` and `servers` are not compared: CI rewrites `info.version`, the api repo sets `servers` and adds
+  `info.contact` and `info.license`. On 2026-10-04 the two documents were equal in everything but `info`
+  and `servers` (checked against api commit `2c5bc08`).
+- **C2. The jar ships the spec once.** Until `2c5bc08` it also carried a copy at its root named
+  `results-store-openapi.yaml`; two documents with that name would break the "exactly one document" check
+  of `OpenApiDocumentTest`, so the root copy was removed (api commit `2c5bc08`, "build: ship the spec
+  once, under openapi/").
+- **C3. The controller implements `SharesApi`.** The service maps its read types to the generated
+  models. The generated operations (from `rs-2c5bc08`):
+
+  | Operation | Generated signature |
+  |---|---|
+  | pull and search | `ResponseEntity<PullOrSearchShares200Response> pullOrSearchShares(Long storedAfterSeq, Integer limit, String dayYouthSeen, UUID courtCentreId, LocalDate sharedDayFrom, LocalDate sharedDayTo, Instant sharedFrom, Instant sharedTo, Boolean latestOnly, String cursor)`; `limit` has `defaultValue = "100"`, `latestOnly` `defaultValue = "false"`; the dates `@DateTimeFormat(iso = DATE)`, the instants `@DateTimeFormat(iso = DATE_TIME)`; all optional |
+  | one share | `ResponseEntity<ShareSummary> getShare(UUID shareId)` |
+  | payload | `ResponseEntity<Map<String, Object>> getSharePayload(UUID shareId, String ifNoneMatch)` (`If-None-Match` optional) |
+  | day versions | `ResponseEntity<DayVersions> listHearingDayShares(UUID hearingId, LocalDate hearingDay)` (`@DateTimeFormat(iso = DATE)`) |
+
+  Every mapping is `@RequestMapping(method = GET, value = SharesApi.PATH_…, produces = { "application/json", "application/problem+json" })`.
+
+  What follows from reading it:
+
+  - **The payload signature changes first, in the api repo.** `ResponseEntity<Map<String, Object>>`
+    cannot serve the stored bytes: a `Map` would be parsed and written again by Jackson (spacing, key
+    order and number forms change, so the `ETag` would no longer be the SHA-256 of the body), and
+    returning `byte[]` under that signature needs an unchecked cast whose converter choice depends on the
+    converter order. The 200 response's `application/json` schema becomes `type: string`,
+    `format: binary` (the description kept), and the api repo's generator maps `file` to `byte[]`
+    (`typeMappings` gains `"file": "byte[]"`). Tried locally on 2026-10-04: the generator then gives
+    `ResponseEntity<byte[]> getSharePayload(UUID shareId, String ifNoneMatch)`, written by
+    `ByteArrayHttpMessageConverter`. `format: binary` without the mapping gives
+    `ResponseEntity<org.springframework.core.io.Resource>`, rejected: for a `Resource` body Spring sets
+    `Accept-Ranges: bytes` and answers a `Range` header with `206` and part of the body, so the SHA-256 of
+    a body would no longer equal the `ETag`. `format: byte` is rejected too: it means base64 text. The
+    service's own document follows the same change in the same task (C1).
+  - **One controller, not three.** `@RequestMapping` on an interface's default methods is inherited by
+    every class that implements it, so three controllers that each implemented `SharesApi` would each
+    register all four mappings and the context would fail with ambiguous mappings. One
+    `api/SharesController implements SharesApi` overrides every operation and stays thin; the per-endpoint
+    work sits in plain classes it calls (`api/ShareResponseMapper`, `api/PayloadResponses`). The test
+    classes stay per endpoint.
+  - **The generated parameters are typed, the contract's checks are on the text.** Spring binds `UUID`
+    with `UUID.fromString` (which takes non-canonical forms such as `1-1-1-1-1`), `Instant` with ISO
+    date-time (which takes offsets other than `Z` and nine fraction digits), `Boolean` from `yes`, `on`
+    or `1`, and it never sees an unknown or repeated parameter. So the strict checks of
+    contracts/read-api.md §2.2 run on the raw request before binding, in
+    `api/ShareParametersInterceptor` (a `HandlerInterceptor`: its `preHandle` runs after the handler is
+    chosen and before the arguments are resolved; it reads the query string and the URI template
+    variables). It refuses with the bounded `ProblemReason` body and never echoes a value. A value that
+    passes it always binds; as a backstop, `ReadApiExceptionHandler` maps a
+    `MethodArgumentTypeMismatchException` to the parameter's own reason (`invalid_share_id`, …), not to
+    `bad_request`.
+  - **Times.** The models hold `Instant`; the contract writes six fraction digits and `Z`. A Jackson
+    serializer for `Instant` backed by `api/InstantFormat` is registered on the MVC JSON mapper.
+- **C4. Every API change is api-repo-first.** A pull request to the api repo; on merge a `team/rs` draft
+  (`rs-<sha7>`); the service pins that draft and builds against it; the service change merges; a GitHub
+  Release `vX.Y.Z` of the api repo; the service bumps to `X.Y.Z`. `validateApiSpecVersions` (strict
+  `X.Y.Z`) runs in `ci-released.yml` and refuses a draft, so a release of the service can never carry one.
+  The arrived-text endpoint (phase D) and the payload change of C3 follow this path.
+- **C5. Validation stays in the service.** Generated bean validation is off, so the bounded `ProblemReason`
+  bodies stay the only error bodies. The generated `produces` lists `application/problem+json` beside
+  `application/json`; together with `ActionRequestWrapper`'s `Accept` rewrite (a vendor media type is
+  read as `application/json`) a test pins what each `Accept` gives: `application/json`, `*/*`, absent and a
+  vendor type get `200` with `Content-Type: application/json`; `application/problem+json` gets `200` with
+  `Content-Type: application/json` too, because every `200` sets its content type explicitly; `text/html`
+  gets `406 not_acceptable`.
+
+**Rationale.** Consumers (YOT, probation, court register) get a versioned artefact to build clients
+from, the same way the estate's other APIs are consumed, and the service cannot drift from what it
+publishes. Keeping the service's own copy of the document avoids a change to the audit library's glob
+or to the deploy values.
+
+**Alternatives considered.** Keeping the document only in the service (consumers hand-write clients
+from a file in another repository); reading the document out of the jar for the audit filter (either
+two documents of the same name or a resource at the root of a nested jar); generated bean validation
+on (its `400` bodies are not the bounded ones, and it cannot express an unknown or repeated parameter);
+one controller per endpoint each implementing `SharesApi` (ambiguous mappings, above).
