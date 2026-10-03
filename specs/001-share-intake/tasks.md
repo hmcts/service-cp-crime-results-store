@@ -565,6 +565,17 @@ US1–US4 and US6 on Testcontainers Postgres.
     copy is written under a savepoint; a data exception (SQLSTATE class 22) rolls back to the savepoint and
     the row is written with `payload_json` NULL, reported as `parsedCopySkipped`; any other failure still
     fails the transaction. `JdbcShareStoreIT` 13 tests, 0 failures.
+  - QA round (savepoint rethrow): the branch that rethrows a payload-insert failure outside SQLSTATE class 22
+    was untested, so a change swallowing every payload-insert failure would pass. Test:
+    `parsed_copy_failure_that_is_not_a_data_exception_should_leave_nothing_and_the_receipt_received`, which
+    adds a test-only `BEFORE INSERT` trigger on `hearing_share_payload` (dropped in `finally`) raising SQLSTATE
+    57014 when `payload_json` is not NULL; it expects `RetryableIntakeException` at `STORE` /
+    `STATEMENT_TIMEOUT`, no share, payload, defendant or day row, and the receipt still `RECEIVED`. The
+    class-22 side is already pinned by `payload_whose_number_jsonb_refuses_…` (SQLSTATE 22003), so no second
+    case was added. Mutation check (RED): with the `if (!isDataException(failure)) { throw failure; }` guard
+    removed, `./gradlew test --tests '*JdbcShareStoreIT'`: 5 completed, 1 failed, 1 skipped (failFast),
+    `parsed_copy_failure_that_is_not_a_data_exception_…`: `Expecting code to raise a throwable.` GREEN
+    (guard restored): `JdbcShareStoreIT` 14 tests, 0 failures.
 
 - [X] T009 [US4] [US1] Test first: `ShareChainIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChainIT.java, `YouthSeenIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthSeenIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/ShareChain.java, src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/YouthFlags.java, called from src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java
   - Cases: first share of a day is latest with no predecessor; a newer share clears the old latest before it is set and points at it; T1, T3 then T2 → chain T1 ← T2 ← T3, T3 still latest, T2 `arrived_out_of_order`; `share_count` + 1 per stored share; youth three values: TRUE sticky, NULL if any share NULL, else FALSE; `day_youth_seen` set on every share of the day when the day flag changes.

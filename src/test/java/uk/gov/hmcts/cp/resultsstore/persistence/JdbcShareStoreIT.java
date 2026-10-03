@@ -261,6 +261,46 @@ class JdbcShareStoreIT {
         assertThat(receipt("ID:1")).containsEntry("status", "RECEIVED").containsEntry("share_id", null);
     }
 
+    /**
+     * The parsed-copy savepoint swallows only a data exception (SQLSTATE class 22). A test-only trigger
+     * refuses the payload row with its parsed copy as a statement timeout, which must fail the whole
+     * transaction rather than be stored as text with no parsed copy.
+     */
+    @Test
+    void parsed_copy_failure_that_is_not_a_data_exception_should_leave_nothing_and_the_receipt_received() {
+        final StoreRequest request = received("ID:1", SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME));
+        jdbc.sql("""
+                CREATE FUNCTION test_refuse_parsed_copy() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    IF NEW.payload_json IS NOT NULL THEN
+                        RAISE EXCEPTION 'test timeout' USING ERRCODE = '57014';
+                    END IF;
+                    RETURN NEW;
+                END $$
+                """).update();
+        try {
+            jdbc.sql("""
+                    CREATE TRIGGER test_refuse_parsed_copy_tg BEFORE INSERT ON hearing_share_payload
+                        FOR EACH ROW EXECUTE FUNCTION test_refuse_parsed_copy()
+                    """).update();
+
+            assertThatThrownBy(() -> store.store(request))
+                    .isInstanceOfSatisfying(RetryableIntakeException.class, failure -> {
+                        assertThat(failure.getStage()).isEqualTo(IntakeStage.STORE);
+                        assertThat(failure.getFailureCause()).isEqualTo(IntakeFailureCause.STATEMENT_TIMEOUT);
+                    });
+        } finally {
+            jdbc.sql("DROP TRIGGER IF EXISTS test_refuse_parsed_copy_tg ON hearing_share_payload").update();
+            jdbc.sql("DROP FUNCTION test_refuse_parsed_copy()").update();
+        }
+
+        assertThat(count("hearing_share")).isZero();
+        assertThat(count("hearing_share_payload")).isZero();
+        assertThat(count("share_defendant")).isZero();
+        assertThat(count("hearing_day_head")).isZero();
+        assertThat(receipt("ID:1")).containsEntry("status", "RECEIVED").containsEntry("share_id", null);
+    }
+
     @Test
     void share_whose_receipt_is_not_received_should_fail_and_leave_nothing() {
         final StoreRequest request = SampleShares.request("ID:none",
