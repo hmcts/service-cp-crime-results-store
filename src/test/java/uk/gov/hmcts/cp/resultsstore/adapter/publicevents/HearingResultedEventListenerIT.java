@@ -182,6 +182,7 @@ class HearingResultedEventListenerIT {
     private static List<Queue> subscriptionsOnTheTopic() {
         return broker.subscriptions();
     }
+
     private static synchronized void startTheBroker() throws Exception {
         if (broker == null) {
             // Artemis's own default of 10 deliveries; this suite never fails a delivery on purpose.

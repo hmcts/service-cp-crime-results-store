@@ -84,7 +84,8 @@ public final class FailingFirstCommitConnectionFactory implements ConnectionFact
     }
 
     private static <T> T proxy(final Class<T> type, final InvocationHandler handler) {
-        return type.cast(Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(), new Class<?>[] {type}, handler));
+        return type.cast(Proxy.newProxyInstance(Thread.currentThread().getContextClassLoader(),
+                new Class<?>[] {type}, handler));
     }
 
     private static Object invoke(final Method method, final Object target, final Object... arguments)

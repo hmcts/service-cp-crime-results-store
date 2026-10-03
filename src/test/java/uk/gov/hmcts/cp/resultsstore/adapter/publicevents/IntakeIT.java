@@ -394,6 +394,7 @@ class IntakeIT {
     private int count(final String sql, final UUID hearing) {
         return jdbc.sql(sql).param("hearingId", hearing).query(Integer.class).single();
     }
+
     private static synchronized void startTheBroker() throws Exception {
         if (broker == null) {
             broker = EmbeddedBrokerSupport.start("intake-test-broker", MAX_DELIVERY_ATTEMPTS);
