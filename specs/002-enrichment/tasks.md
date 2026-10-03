@@ -134,7 +134,8 @@ contracts/progression-lookup.md against an in-process WireMock.
   - GREEN: the five classes, 97 tests, 0 failures (`IntakeStageTest` 4, `IntakeFailureCauseTest` 23,
     `ApplicationLookupOutcomeTest` 6, `EnrichmentSkipTest` 4, `ConfigurationValidationTest` 60);
     `pmdMain pmdTest` clean.
-  - Note: `ProgressionProperties.toString()` leaves out the system user id (never logged).
+  - Note: `ProgressionProperties.toString()` leaves out the system user id and, since gate round 1, the
+    base URL (never logged).
   - Follow-up found by the phase gate: `MicrometerIntakeObserver` pre-registers `intake.failed` for every
     stage × cause, so T001's new stage and causes added 22 pairs the contract never lists (for example
     `stage=receipt,cause=progression_timeout`), and the 001 `MicrometerIntakeObserverTest` failed. Fixed
@@ -147,6 +148,19 @@ contracts/progression-lookup.md against an in-process WireMock.
     `Expected size: 15 but was: 30`. GREEN: `IntakeFailureCauseTest` 33, `MicrometerIntakeObserverTest` 20,
     0 failures. The enrichment meters themselves (`applications`, `lookup`, `skipped`, `applied`) stay
     with T006.
+  - Follow-up from gate round 1 (settings in logs): `toString()` was unpinned and still printed the
+    base URL, an internal connection detail, and a base URL could carry user info
+    (`http://user:secret@host`). `toString()` now prints only the two timeouts, and the base URL rule
+    refuses user info (contracts/configuration.md updated). `ConfigurationValidationTest` gains the
+    `toString` case and two base-URL rows: user info, and `http://[::1`, not a URI at all (the
+    `URISyntaxException` branch, refused already, so green at once).
+    RED: `bad_progression_value_should_stop_the_service_starting_without_naming_the_value … [6] setting =
+    "resultsstore.progression.base-url=http://user:secret@x" … FAILED` `to have failed but context started
+    successfully`; then `settings_should_print_their_timeouts_but_neither_the_base_url_nor_the_system_user_id()
+    FAILED` `Expecting actual: "ProgressionProperties[baseUrl=http://progression.example, …]" not to contain:
+    "progression.example"`.
+    GREEN: `ConfigurationValidationTest` 63, `ProgressionConfigTest` 9, `IntakeConfigTest` 8, 0 failures;
+    `pmdMain pmdTest` clean.
 
 - [X] T002 [US1] [US3] [US4] [US5] [US8] Test first: `ProgressionApplicationClientTest` (in-process `WireMockServer`, dynamic port) in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/ProgressionApplicationClientTest.java, `DeadlineInputStreamTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/DeadlineInputStreamTest.java, `NoRedirectRequestFactoryTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/NoRedirectRequestFactoryTest.java, the new constructor's case in a `RetryableIntakeExceptionTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/application/RetryableIntakeExceptionTest.java; with support src/test/java/uk/gov/hmcts/cp/resultsstore/support/ProgressionStub.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ProgressionApplications.java (port: `ApplicationAnswer find(UUID)`, throws `RetryableIntakeException(ENRICH, cause)`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ApplicationAnswer.java (sealed: `Found(JsonNode courtApplication)` | `NotFound`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/RetryableIntakeException.java (+ constructor with the failed class name and no chained cause; javadoc names both adapters), src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/ProgressionApplicationClient.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/NoRedirectRequestFactory.java, src/main/java/uk/gov/hmcts/cp/resultsstore/adapter/progression/DeadlineInputStream.java
   - Cases (one test per row of contracts/progression-lookup.md): GET on `/progression-query-api/query/api/rest/progression/applications/{id}` with `Accept: application/vnd.progression.query.application-only+json` and `CJSCPPUID`, the id sent as a path variable, no other store-set header, no body; `FINALISED` with results → `Found`; `200 {}` and `{"courtApplication": null}` → `NotFound`; `courtApplication` with any status or no results → `Found` (classification of the application is the enricher's, T004); 404 → `progression_rejected`; 302 with a `Location` → `progression_rejected` and WireMock sees no request at the target; 201, 204 → `progression_rejected`; 400, 405, 406, 410, 415 and an unlisted status (e.g. 418) → `progression_rejected`; 401, 403 → `progression_refused`; 408, 429, 500, 502, 503, 504 → `progression_unavailable`; closed port and unknown host → `progression_unreachable`; `Fault.CONNECTION_RESET_BY_PEER` → `progression_unreachable`; fixed delay past the read timeout → `progression_timeout`; chunked dribble past the deadline with each read under the socket timeout → `progression_timeout`; `Fault.MALFORMED_RESPONSE_CHUNK` on a 200, an HTML 200, an empty 200, an array body, trailing tokens, `courtApplication` a string, `judicialResults` an object → `progression_malformed`; exactly one request on a 503 (no retry); decimals `1.10` and `12345678901234567890.123` in a result read with value and written precision kept; captured log (`support/CapturedLog`) holds no body marker and no user id; every thrown `RetryableIntakeException` has stage `ENRICH`, the stated cause, the failed class name and `getCause() == null`, and its message holds no body or Jackson text. `DeadlineInputStreamTest`: reads pass before the deadline; a read after it throws `SocketTimeoutException`; `close` delegates. `NoRedirectRequestFactoryTest`: the prepared connection has `getInstanceFollowRedirects() == false` and the configured timeouts.

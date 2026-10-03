@@ -49,14 +49,14 @@ final class Rules {
     }
 
     /**
-     * Checks that the value is an absolute {@code http} or {@code https} URL with a host and no path
+     * Checks that the value is an absolute {@code http} or {@code https} URL with a host and no user info, path
      * (other than empty or {@code /}), query or fragment. The failure names the property, never the
      * value.
      */
     /* default */ static void absoluteHttpUrl(final String name, final String value) {
         if (!isBareHttpUrl(value)) {
             throw new IllegalArgumentException(name
-                    + " must be an absolute http or https URL with a host and no path, query or fragment");
+                    + " must be an absolute http or https URL with a host and no user info, path, query or fragment");
         }
     }
 
@@ -73,7 +73,7 @@ final class Rules {
             final URI uri = new URI(value);
             final String path = uri.getRawPath();
             bare = uri.getScheme() != null && HTTP_SCHEMES.contains(uri.getScheme().toLowerCase(Locale.ROOT))
-                    && uri.getHost() != null
+                    && uri.getHost() != null && uri.getRawUserInfo() == null
                     && (path == null || path.isEmpty() || "/".equals(path))
                     && uri.getRawQuery() == null && uri.getRawFragment() == null;
         } catch (URISyntaxException e) {

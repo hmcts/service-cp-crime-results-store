@@ -15,7 +15,7 @@ checked at start (a bad value stops the service, proved by `ConfigurationValidat
 
 | Property | Default | Environment variable | Rule (when enrichment is on) |
 |---|---|---|---|
-| `resultsstore.progression.base-url` | none: `${CP_BASE_URL:}` | `CP_BASE_URL` | not blank; an absolute `http` or `https` URL with a host and no path (other than empty or `/`), query or fragment |
+| `resultsstore.progression.base-url` | none: `${CP_BASE_URL:}` | `CP_BASE_URL` | not blank; an absolute `http` or `https` URL with a host and no user info, path (other than empty or `/`), query or fragment |
 | `resultsstore.progression.system-user-id` | none: `${RESULTS_STORE_SYSTEM_USER_ID:}` | `RESULTS_STORE_SYSTEM_USER_ID` (Key Vault secret `RESULTS-STORE-SYSTEM-USER-ID`) | not blank; a canonical UUID |
 | `resultsstore.progression.connect-timeout` | `5s` | `RESULTSSTORE_PROGRESSION_CONNECTTIMEOUT` | 1 s to 30 s |
 | `resultsstore.progression.read-timeout` | `10s` | `RESULTSSTORE_PROGRESSION_READTIMEOUT` | 1 s to 60 s; also the whole-response deadline (contracts/progression-lookup.md) |

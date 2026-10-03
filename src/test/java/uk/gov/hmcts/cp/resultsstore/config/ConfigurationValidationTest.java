@@ -174,6 +174,8 @@ class ConfigurationValidationTest {
         resultsstore.progression.base-url=http://x/path | resultsstore.progression.base-url must be
         resultsstore.progression.base-url=http://x?q=1 | resultsstore.progression.base-url must be
         resultsstore.progression.base-url=http://x#f | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=http://user:secret@x | resultsstore.progression.base-url must be
+        resultsstore.progression.base-url=http://[::1 | resultsstore.progression.base-url must be
         resultsstore.progression.connect-timeout=0s | resultsstore.progression.connect-timeout must be from
         resultsstore.progression.connect-timeout=31s | resultsstore.progression.connect-timeout must be from
         resultsstore.progression.read-timeout=0s | resultsstore.progression.read-timeout must be from
@@ -203,6 +205,17 @@ class ConfigurationValidationTest {
     void progression_value_at_a_boundary_should_be_accepted(final String setting) {
         runner.withPropertyValues(BASE_URL, SYSTEM_USER_ID).withPropertyValues(setting)
                 .run(context -> assertThat(context).hasNotFailed().hasSingleBean(ProgressionProperties.class));
+    }
+
+    @Test
+    void settings_should_print_their_timeouts_but_neither_the_base_url_nor_the_system_user_id() {
+        final ProgressionProperties settings = new ProgressionProperties("http://progression.example",
+                "6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f", Duration.ofSeconds(5), Duration.ofSeconds(10));
+
+        assertThat(settings.toString())
+                .contains("connectTimeout=PT5S", "readTimeout=PT10S")
+                .doesNotContain("progression.example")
+                .doesNotContain("6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f");
     }
 
     @Test

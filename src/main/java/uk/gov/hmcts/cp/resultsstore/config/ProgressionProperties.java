@@ -9,9 +9,10 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
  *
  * <p>The base URL and the system user id have no default. Their shape is checked here when they are
  * set; whether they may be blank depends on {@code resultsstore.enrichment.enabled}, so that check runs
- * where the client is built. The system user id is never logged, so {@link #toString()} leaves it out.
+ * where the client is built. Neither is logged, so {@link #toString()} leaves both out.
  *
- * @param baseUrl        progression's host: an absolute http(s) URL with no path, query or fragment
+ * @param baseUrl        progression's host: an absolute http(s) URL with no user info, path, query or
+ *                       fragment
  * @param systemUserId   the store's own system user, a canonical UUID, sent as {@code CJSCPPUID}
  * @param connectTimeout the connect timeout, 1 s to 30 s
  * @param readTimeout    the read timeout, 1 s to 60 s; also the whole-response deadline
@@ -40,11 +41,10 @@ public record ProgressionProperties(String baseUrl, String systemUserId,
         }
     }
 
-    /** Leaves the system user id out. */
+    /** Leaves out the system user id and the base URL, an internal connection detail. */
     @Override
     public String toString() {
-        return "ProgressionProperties[baseUrl=" + baseUrl + ", connectTimeout=" + connectTimeout
-                + ", readTimeout=" + readTimeout + "]";
+        return "ProgressionProperties[connectTimeout=" + connectTimeout + ", readTimeout=" + readTimeout + "]";
     }
 
     private static boolean isBlank(final String value) {
