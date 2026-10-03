@@ -11,6 +11,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -23,6 +24,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
+import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
@@ -62,19 +65,30 @@ class MicrometerIntakeObserverTest {
 
     private static final String LAG = "resultsstore.intake.lag";
 
+    private static final String APPLICATIONS = "resultsstore.enrichment.applications";
+
+    private static final String LOOKUP = "resultsstore.enrichment.lookup";
+
+    private static final String SKIPPED = "resultsstore.enrichment.skipped";
+
+    private static final String APPLIED = "resultsstore.enrichment.applied";
+
+    private static final String OUTCOME = "outcome";
+
     /** Every tag key the contract uses, with its allowed values. */
     private static final Map<String, Set<String>> ALLOWED = Map.of(
             "order", Set.of("in_order", "out_of_order"),
             "status", Set.of("unreadable", "no_identity"),
             "reason", Set.of("not_text_message", "nul_character", "not_json", "not_object", "missing_hearing_id",
                     "invalid_hearing_id", "missing_hearing_day", "invalid_hearing_day", "missing_shared_time",
-                    "invalid_shared_time"),
+                    "invalid_shared_time", "disabled", "already_stored", "unstorable_results"),
             "stage", Set.of("receipt", "store", "enrich", "intake", "sweep"),
             "cause", Set.of("lock_timeout", "statement_timeout", "database", "other", "progression_rejected",
                     "progression_refused", "progression_unavailable", "progression_unreachable",
                     "progression_timeout", "progression_malformed"),
             "kind", Set.of("missing", "wrong_type", "invalid_uuid", "unstorable_text", "unexpected"),
-            "outcome", Set.of("fixed", "failed_again", "skipped", "error", "cancelled"));
+            "outcome", Set.of("fixed", "failed_again", "skipped", "error", "cancelled", "enriched", "not_found",
+                    "not_finalised", "no_results", "invalid_id", "failed"));
 
     private static final Pattern UUID_SHAPE =
             Pattern.compile("[0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12}");
@@ -92,9 +106,10 @@ class MicrometerIntakeObserverTest {
                         Collectors.mapping(MicrometerIntakeObserverTest::tags, Collectors.toSet())));
 
         assertThat(registered).containsOnlyKeys(RECEIVED, STORED, NOT_SHARE, DUPLICATE, ALREADY_SETTLED, FAILED,
-                MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG);
+                MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG,
+                APPLICATIONS, LOOKUP, SKIPPED, APPLIED);
         for (final String untagged : List.of(RECEIVED, DUPLICATE, ALREADY_SETTLED, MESSAGE_ID_MISSING,
-                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED)) {
+                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED, APPLIED)) {
             assertThat(registered.get(untagged)).as(untagged).containsExactly(Map.of());
         }
         final Set<Map<String, String>> orders = Set.of(Map.of("order", "in_order"), Map.of("order", "out_of_order"));
@@ -118,6 +133,15 @@ class MicrometerIntakeObserverTest {
         assertThat(registered.get(SWEEP_ROWS)).containsExactlyInAnyOrder(Map.of("outcome", "fixed"),
                 Map.of("outcome", "failed_again"), Map.of("outcome", "skipped"), Map.of("outcome", "error"),
                 Map.of("outcome", "cancelled"));
+        assertThat(registered.get(APPLICATIONS)).containsExactlyInAnyOrder(Map.of(OUTCOME, "enriched"),
+                Map.of(OUTCOME, "not_found"), Map.of(OUTCOME, "not_finalised"), Map.of(OUTCOME, "no_results"),
+                Map.of(OUTCOME, "invalid_id"));
+        assertThat(registered.get(LOOKUP)).containsExactlyInAnyOrder(Map.of(OUTCOME, "enriched"),
+                Map.of(OUTCOME, "not_found"), Map.of(OUTCOME, "not_finalised"), Map.of(OUTCOME, "no_results"),
+                Map.of(OUTCOME, "failed"));
+        assertThat(registered.get(SKIPPED)).containsExactlyInAnyOrder(Map.of("reason", "disabled"),
+                Map.of("reason", "already_stored"), Map.of("reason", "unstorable_results"));
+        assertThat(registry.find(LOOKUP).timers()).hasSize(5);
         assertThat(registry.find(LAG).timers()).hasSize(2);
         assertThat(registry.find(STORED).counters()).hasSize(2);
     }
@@ -148,7 +172,16 @@ class MicrometerIntakeObserverTest {
                         FAILED, "stage", "receipt", "cause", "database"),
                 event("sweep row", o -> o.sweepRow(SweepRowOutcome.FAILED_AGAIN), SWEEP_ROWS,
                         "outcome", "failed_again"),
-                event("sweep round failed", IntakeObserver::sweepRoundFailed, SWEEP_ROUNDS_FAILED));
+                event("sweep round failed", IntakeObserver::sweepRoundFailed, SWEEP_ROUNDS_FAILED),
+                event("enrich failed", o -> o.intakeFailed(IntakeStage.ENRICH, IntakeFailureCause.PROGRESSION_TIMEOUT),
+                        FAILED, "stage", "enrich", "cause", "progression_timeout"),
+                event("application enriched", o -> o.applicationLookedUp(ApplicationLookupOutcome.ENRICHED),
+                        APPLICATIONS, OUTCOME, "enriched"),
+                event("application with an invalid id", o -> o.applicationLookedUp(ApplicationLookupOutcome.INVALID_ID),
+                        APPLICATIONS, OUTCOME, "invalid_id"),
+                event("enrichment skipped", o -> o.enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS), SKIPPED,
+                        "reason", "unstorable_results"),
+                event("enrichment applied", IntakeObserver::enrichmentApplied, APPLIED));
     }
 
     private static Arguments event(final String name, final Consumer<IntakeObserver> event, final String meter,
@@ -182,6 +215,20 @@ class MicrometerIntakeObserverTest {
         assertThat(outOfOrder.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(1500.0);
         assertThat(inOrder.count()).isEqualTo(1);
         assertThat(inOrder.totalTime(TimeUnit.MILLISECONDS)).isZero();
+    }
+
+    @Test
+    void lookup_should_record_its_duration_under_its_outcome_or_failed() {
+        observer.lookupTimed(Optional.of(ApplicationLookupOutcome.NOT_FINALISED), Duration.ofMillis(40));
+        observer.lookupTimed(Optional.empty(), Duration.ofMillis(250));
+
+        final Timer answered = registry.get(LOOKUP).tag(OUTCOME, "not_finalised").timer();
+        final Timer failed = registry.get(LOOKUP).tag(OUTCOME, "failed").timer();
+        assertThat(answered.count()).isEqualTo(1);
+        assertThat(answered.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(40.0);
+        assertThat(failed.count()).isEqualTo(1);
+        assertThat(failed.totalTime(TimeUnit.MILLISECONDS)).isEqualTo(250.0);
+        assertThat(registry.get(LOOKUP).tag(OUTCOME, "enriched").timer().count()).isZero();
     }
 
     @Test
@@ -238,6 +285,12 @@ class MicrometerIntakeObserverTest {
         for (final ExtractionStage stage : ExtractionStage.values()) {
             Arrays.stream(ExtractionFailureKind.values()).forEach(kind -> observer.extractionFailed(stage, kind));
         }
+        Arrays.stream(ApplicationLookupOutcome.values()).forEach(observer::applicationLookedUp);
+        Arrays.stream(ApplicationLookupOutcome.values()).filter(o -> o != ApplicationLookupOutcome.INVALID_ID)
+                .forEach(o -> observer.lookupTimed(Optional.of(o), Duration.ofMillis(3)));
+        observer.lookupTimed(Optional.empty(), Duration.ofMillis(3));
+        Arrays.stream(EnrichmentSkip.values()).forEach(observer::enrichmentSkipped);
+        observer.enrichmentApplied();
     }
 
     private static Map<String, String> tags(final Meter meter) {

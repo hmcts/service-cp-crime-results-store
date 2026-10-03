@@ -19,6 +19,7 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.adapter.progression.NoRedirectRequestFactory;
 import uk.gov.hmcts.cp.resultsstore.adapter.progression.ProgressionApplicationClient;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.HearingResultedEventListener;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationResultsEnricher;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.ProgressionApplications;
@@ -76,7 +77,9 @@ class IntakeConfigTest {
                 BASE_URL, SYSTEM_USER_ID, "resultsstore.progression.connect-timeout=3s",
                 "resultsstore.progression.read-timeout=7s").run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(ProgressionApplications.class)
-                            .hasSingleBean(NoRedirectRequestFactory.class);
+                            .hasSingleBean(NoRedirectRequestFactory.class)
+                            .hasSingleBean(ApplicationResultsEnricher.class);
+                    assertThat(context.getBean(IntakeService.class).enrichesFromProgression()).isTrue();
                     assertThat(context.getBean(ProgressionApplications.class))
                             .isInstanceOf(ProgressionApplicationClient.class);
                     final NoRedirectRequestFactory factory = context.getBean(NoRedirectRequestFactory.class);
@@ -98,9 +101,12 @@ class IntakeConfigTest {
     void disabled_enrichment_should_build_no_progression_client_and_allow_blank_settings() {
         runner.withPropertyValues("resultsstore.publicevents.enabled=true", "resultsstore.enrichment.enabled=false",
                         "resultsstore.progression.base-url=", "resultsstore.progression.system-user-id=")
-                .run(context -> assertThat(context).hasNotFailed()
-                        .hasSingleBean(IntakeService.class)
-                        .doesNotHaveBean(ProgressionApplications.class));
+                .run(context -> {
+                    assertThat(context).hasNotFailed()
+                            .hasSingleBean(IntakeService.class)
+                            .doesNotHaveBean(ProgressionApplications.class);
+                    assertThat(context.getBean(IntakeService.class).enrichesFromProgression()).isFalse();
+                });
     }
 
     @Test

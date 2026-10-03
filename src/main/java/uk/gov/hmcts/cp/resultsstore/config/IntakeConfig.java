@@ -2,6 +2,7 @@ package uk.gov.hmcts.cp.resultsstore.config;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import java.time.Duration;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
@@ -15,9 +16,11 @@ import tools.jackson.databind.ObjectMapper;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.HearingResultedEventListener;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.RedeliveryPause;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.Sleeper;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationResultsEnricher;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
+import uk.gov.hmcts.cp.resultsstore.application.ProgressionApplications;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
@@ -100,9 +103,21 @@ public class IntakeConfig {
 
     @Bean
     @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
+    public ApplicationResultsEnricher applicationResultsEnricher(final ObjectMapper mapper) {
+        return new ApplicationResultsEnricher(mapper);
+    }
+
+    /**
+     * The intake. The progression port is present only with enrichment on ({@link ProgressionConfig});
+     * absent, the service makes no lookup and counts {@code skipped{disabled}} (tasks.md, wiring notes).
+     */
+    @Bean
+    @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
     public IntakeService intakeService(final ShareIdentityParser parser, final KeyDetailsExtractor extractor,
-            final JdbcReceiptStore receipts, final ShareStore shareStore, final IntakeObserver observer) {
-        return new IntakeService(parser, extractor, receipts, shareStore, observer);
+            final JdbcReceiptStore receipts, final ShareStore shareStore, final IntakeObserver observer,
+            final ApplicationResultsEnricher enricher, final ObjectProvider<ProgressionApplications> progression) {
+        return new IntakeService(parser, extractor, receipts, shareStore, observer, enricher,
+                progression.getIfAvailable(), System::nanoTime);
     }
 
     @Bean

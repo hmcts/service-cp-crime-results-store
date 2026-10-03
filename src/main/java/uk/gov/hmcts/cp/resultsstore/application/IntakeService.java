@@ -1,14 +1,21 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
 import java.time.Duration;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.function.LongSupplier;
 import java.util.function.Supplier;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationResultsEnricher.Scan;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
@@ -27,6 +34,13 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
  * transaction is counted once and its exception rethrown unchanged, so the listener pauses for the
  * capped delay and rolls the message back to the broker, whatever the failure's class: a
  * {@link RetryableIntakeException} and any other runtime failure alike.
+ *
+ * <p>Enrichment (specs/002-enrichment research R2) runs after the settled check and before the key
+ * details are read, with no transaction open: the applications needing results are found; if there
+ * are any and enrichment is on, a read-only check finds whether the share is already stored, and if not,
+ * progression is asked about each, one at a time, in array order. Any lookup failure fails the attempt,
+ * so a share is never stored half-enriched. The key details are read from the working copy. If the
+ * store refuses the enriched copy, the store transaction runs once more with the arrived copy.
  */
 public class IntakeService {
 
@@ -40,6 +54,12 @@ public class IntakeService {
 
     private final IntakeObserver observer;
 
+    private final ApplicationResultsEnricher enricher;
+
+    private final ProgressionApplications progression;
+
+    private final LongSupplier nanoClock;
+
     /**
      * Creates the service.
      *
@@ -48,14 +68,31 @@ public class IntakeService {
      * @param receipts   the receipt port
      * @param shareStore the share port
      * @param observer   the metrics port
+     * @param enricher    finds the applications needing results and builds the working copy
+     * @param progression progression's application query, or {@code null} when enrichment is off
+     * @param nanoClock   a monotonic clock in nanoseconds, for the lookup timer
      */
     public IntakeService(final ShareIdentityParser parser, final KeyDetailsExtractor extractor,
-            final EventReceipts receipts, final ShareStore shareStore, final IntakeObserver observer) {
+            final EventReceipts receipts, final ShareStore shareStore, final IntakeObserver observer,
+            final ApplicationResultsEnricher enricher, final ProgressionApplications progression,
+            final LongSupplier nanoClock) {
         this.parser = parser;
         this.extractor = extractor;
         this.receipts = receipts;
         this.shareStore = shareStore;
         this.observer = observer;
+        this.enricher = enricher;
+        this.progression = progression;
+        this.nanoClock = nanoClock;
+    }
+
+    /**
+     * Whether this service asks progression for missing application results.
+     *
+     * @return {@code false} when enrichment is off (no progression port)
+     */
+    public boolean enrichesFromProgression() {
+        return progression != null;
     }
 
     /**
@@ -104,20 +141,98 @@ public class IntakeService {
 
     private IntakeResult store(final Share share, final String messageId, final String text) {
         final ShareIdentity identity = share.identity();
+        // Outside any transaction: the receipt has committed and the store transaction is not open (FR-001).
+        final Enrichment enrichment = enrich(share, text);
         // Read before the store transaction opens, so a bad field never holds the lock (FR-021).
-        final Projection projection = extractor.extract(share.body());
-        final StoreRequest request = new StoreRequest(messageId, identity, identity.shareId(),
-                SharedDays.from(identity.sharedAt()), PayloadChecksum.sha256Hex(text), text, projection);
-        return switch (counted(IntakeStage.STORE, () -> shareStore.store(request))) {
-            case Stored stored -> stored(stored, messageId, identity, projection);
+        final Projection projection = extractor.extract(enrichment.tree());
+        StoreResult result = counted(IntakeStage.STORE, () -> shareStore.store(request(messageId, identity, text,
+                enrichment.parsedCopy(), enrichment.applied(), projection)));
+        Projection storedProjection = projection;
+        if (result instanceof EnrichedCopyRefused) {
+            // Once only: the arrived copy, its own key details and the flag false (FR-019).
+            observer.enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS);
+            storedProjection = extractor.extract(share.body());
+            final Projection arrived = storedProjection;
+            result = counted(IntakeStage.STORE,
+                    () -> shareStore.store(request(messageId, identity, text, text, false, arrived)));
+        }
+        return switch (result) {
+            case Stored stored -> stored(stored, messageId, identity, storedProjection);
             case Duplicate duplicate -> {
                 observer.duplicate();
                 yield result(IntakeOutcome.DUPLICATE, messageId, duplicate.existingShareId(), identity);
             }
-            // Not yet reachable: the request is never enriched until the enrichment step lands.
-            case EnrichedCopyRefused _ ->
-                    throw new IllegalStateException("an un-enriched request was refused as enriched");
+            case EnrichedCopyRefused _ -> {
+                // The arrived copy was refused as enriched: a defect, never run a third time.
+                observer.intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
+                throw new IllegalStateException("the arrived copy was refused as an enriched copy");
+            }
         };
+    }
+
+    private static StoreRequest request(final String messageId, final ShareIdentity identity, final String text,
+            final String parsedCopy, final boolean enrichmentApplied, final Projection projection) {
+        return new StoreRequest(messageId, identity, identity.shareId(), SharedDays.from(identity.sharedAt()),
+                PayloadChecksum.sha256Hex(text), text, parsedCopy, enrichmentApplied, projection);
+    }
+
+    /**
+     * The working copy: the arrived body and text unless at least one application received results.
+     * A failed existence check is counted at {@code store}; a failed lookup, or any other failure of
+     * the step, at {@code enrich}.
+     */
+    private Enrichment enrich(final Share share, final String text) {
+        final Scan scan = enricher.scan(share.body());
+        Enrichment enrichment = new Enrichment(share.body(), text, false);
+        if (!scan.lookups().isEmpty() && progression == null) {
+            observer.enrichmentSkipped(EnrichmentSkip.DISABLED);
+        } else if (progression != null) {
+            for (int skipped = 0; skipped < scan.invalidIds(); skipped++) {
+                observer.applicationLookedUp(ApplicationLookupOutcome.INVALID_ID);
+            }
+            if (!scan.lookups().isEmpty()) {
+                enrichment = enrichUnlessStored(share, text, scan);
+            }
+        }
+        return enrichment;
+    }
+
+    private Enrichment enrichUnlessStored(final Share share, final String text, final Scan scan) {
+        final Optional<UUID> stored = counted(IntakeStage.STORE, () -> shareStore.storedShareId(share.identity()));
+        final Enrichment enrichment;
+        if (stored.isPresent()) {
+            // The store transaction finds it too and marks the receipt DUPLICATE (FR-006).
+            observer.enrichmentSkipped(EnrichmentSkip.ALREADY_STORED);
+            enrichment = new Enrichment(share.body(), text, false);
+        } else {
+            enrichment = counted(IntakeStage.ENRICH, () -> lookUpAndEnrich(share, text, scan));
+        }
+        return enrichment;
+    }
+
+    private Enrichment lookUpAndEnrich(final Share share, final String text, final Scan scan) {
+        final Map<UUID, ApplicationAnswer> answers = new LinkedHashMap<>();
+        for (final UUID applicationId : scan.lookups()) {
+            answers.put(applicationId, lookUp(applicationId));
+        }
+        return enricher.enrich(text, share.body(), answers);
+    }
+
+    /** One call, timed and counted when it ends (contracts/metrics.md, the exception to after-commit). */
+    private ApplicationAnswer lookUp(final UUID applicationId) {
+        final long started = nanoClock.getAsLong();
+        final ApplicationAnswer answer;
+        try {
+            answer = progression.find(applicationId);
+        } catch (final RetryableIntakeException failed) {
+            observer.lookupTimed(Optional.empty(), Duration.ofNanos(nanoClock.getAsLong() - started));
+            throw failed;
+        }
+        final Duration took = Duration.ofNanos(nanoClock.getAsLong() - started);
+        final ApplicationLookupOutcome outcome = enricher.outcome(answer);
+        observer.applicationLookedUp(outcome);
+        observer.lookupTimed(Optional.of(outcome), took);
+        return answer;
     }
 
     private IntakeResult stored(final Stored stored, final String messageId, final ShareIdentity identity,
@@ -130,6 +245,10 @@ public class IntakeService {
         }
         if (projection instanceof Projection.Failed failed) {
             observer.extractionFailed(ExtractionStage.INTAKE, failed.kind());
+        }
+        if (stored.enrichmentApplied()) {
+            // From the flag actually stored, so the fallback never counts (FR-030).
+            observer.enrichmentApplied();
         }
         return result(IntakeOutcome.STORED, messageId, stored.shareId(), identity);
     }

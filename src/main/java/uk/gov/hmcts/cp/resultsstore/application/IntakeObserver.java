@@ -1,6 +1,9 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
 import java.time.Duration;
+import java.util.Optional;
+import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
@@ -73,4 +76,33 @@ public interface IntakeObserver {
      * @param cause why
      */
     void intakeFailed(IntakeStage stage, IntakeFailureCause cause);
+
+    /**
+     * One court application was looked at (specs/002-enrichment contracts/metrics.md): reported when its
+     * progression call ends, or, for {@link ApplicationLookupOutcome#INVALID_ID}, when the scan skips it.
+     * Not after a commit: the stated exception to FR-040.
+     *
+     * @param outcome what the lookup came to
+     */
+    void applicationLookedUp(ApplicationLookupOutcome outcome);
+
+    /**
+     * One progression call ended: its duration, on a monotonic clock, when the call ends.
+     *
+     * @param outcome  what the answer came to, or empty when the call failed with a {@code progression_*}
+     *                 cause
+     * @param duration from sending the request to the end of classification
+     */
+    void lookupTimed(Optional<ApplicationLookupOutcome> outcome, Duration duration);
+
+    /**
+     * A share needing lookups made none, or its enriched copy was not stored, for the reason given;
+     * reported when the decision is made.
+     *
+     * @param reason why
+     */
+    void enrichmentSkipped(EnrichmentSkip reason);
+
+    /** A share was stored with {@code enrichment_applied = true}; reported after the commit. */
+    void enrichmentApplied();
 }

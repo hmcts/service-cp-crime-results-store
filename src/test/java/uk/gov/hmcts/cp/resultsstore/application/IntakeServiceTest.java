@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -15,7 +16,11 @@ import java.sql.SQLException;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.List;
+import java.util.Locale;
+import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -24,14 +29,19 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
+import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
+import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
+import uk.gov.hmcts.cp.resultsstore.domain.KeyDetails;
 import uk.gov.hmcts.cp.resultsstore.domain.NonShareReason;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
@@ -63,6 +73,15 @@ class IntakeServiceTest {
             {"hearing": {"id": "%s", "courtCentre": {"id": "not-a-uuid"}},
              "hearingDay": "%s", "sharedTime": "%s"}""".formatted(HEARING_ID, HEARING_DAY, SHARED_TIME);
 
+    private static final String APP_A = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+    private static final String APP_B = "1b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e";
+
+    /** Each read of the fake monotonic clock is 7 ms after the one before. */
+    private static final long TICK_NANOS = 7_000_000L;
+
+    private static final ShareIdentityParser PARSER = new ShareIdentityParser(JsonMapper.builder().build());
+
     @Mock
     private EventReceipts receipts;
 
@@ -75,15 +94,52 @@ class IntakeServiceTest {
     @Mock
     private KeyDetailsExtractor mockedExtractor;
 
+    @Mock
+    private ProgressionApplications progression;
+
+    private final AtomicLong now = new AtomicLong();
+
     private IntakeService service() {
-        return new IntakeService(new ShareIdentityParser(JsonMapper.builder().build()), new KeyDetailsExtractor(),
-                receipts, shareStore, observer);
+        return new IntakeService(PARSER, new KeyDetailsExtractor(), receipts, shareStore, observer, enricher(),
+                progression, () -> now.getAndAdd(TICK_NANOS));
     }
 
     /** The service with a mocked extractor, to show where extraction is not run. */
     private IntakeService serviceWithAMockedExtractor() {
-        return new IntakeService(new ShareIdentityParser(JsonMapper.builder().build()), mockedExtractor,
-                receipts, shareStore, observer);
+        return new IntakeService(PARSER, mockedExtractor, receipts, shareStore, observer, enricher(), progression,
+                () -> now.getAndAdd(TICK_NANOS));
+    }
+
+    /** The service as wired with enrichment off: no progression port. */
+    private IntakeService serviceWithoutProgression() {
+        return new IntakeService(PARSER, new KeyDetailsExtractor(), receipts, shareStore, observer, enricher(),
+                null, () -> now.getAndAdd(TICK_NANOS));
+    }
+
+    private static ApplicationResultsEnricher enricher() {
+        return new ApplicationResultsEnricher(JsonMapper.builder().build());
+    }
+
+    /** A share whose {@code hearing.courtApplications} is the given raw JSON elements. */
+    private static String shareWith(final String applications) {
+        return """
+                {"hearing": {"id": "%s", "courtCentre": {"id": "9d2e4f6a-1b3c-4d5e-8f70-a1b2c3d4e5f6"},
+                 "courtApplications": [%s]}, "hearingDay": "%s", "sharedTime": "%s"}"""
+                .formatted(HEARING_ID, applications, HEARING_DAY, SHARED_TIME);
+    }
+
+    private static String application(final String id) {
+        return "{\"id\": \"" + id + "\"}";
+    }
+
+    private static ApplicationAnswer finalised() {
+        return new ApplicationAnswer.Found(PARSER.readTree("""
+                {"applicationStatus": "FINALISED", "judicialResults": [{"label": "Granted", "amendmentDate": "d"}]}"""));
+    }
+
+    private static ApplicationAnswer listed() {
+        return new ApplicationAnswer.Found(PARSER.readTree("""
+                {"applicationStatus": "LISTED", "judicialResults": [{"label": "Adjourned"}]}"""));
     }
 
     private static ReceiptState received(final boolean inserted) {
@@ -318,6 +374,272 @@ class IntakeServiceTest {
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
             verify(observer, never()).messageIdMissing();
+        }
+    }
+
+    @Nested
+    @DisplayName("enrichment")
+    class Enriching {
+
+        @Test
+        void share_with_no_application_needing_results_should_make_no_check_no_call_and_count_nothing() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+            final String text = shareWith("{\"id\": \"" + APP_A + "\", \"judicialResults\": [{\"label\": \"own\"}]}");
+
+            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+
+            verify(shareStore, never()).storedShareId(any());
+            verifyNoInteractions(progression);
+            verify(observer, never()).applicationLookedUp(any());
+            verify(observer, never()).lookupTimed(any(), any());
+            verify(observer, never()).enrichmentSkipped(any());
+            verify(observer, never()).enrichmentApplied();
+            final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
+            verify(shareStore).store(request.capture());
+            assertThat(request.getValue().parsedCopy()).isSameAs(text);
+            assertThat(request.getValue().enrichmentApplied()).isFalse();
+        }
+
+        @Test
+        void settled_receipt_should_make_no_scan_and_no_call() {
+            when(receipts.recordArrival(any())).thenReturn(
+                    new ReceiptState(MESSAGE_ID, ReceiptStatus.STORED, SHARE_ID, 2, false));
+
+            serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 2, shareWith(application(APP_A))));
+
+            verifyNoInteractions(progression, shareStore, mockedExtractor);
+            verify(observer).alreadySettled();
+            verifyNoMoreInteractions(observer);
+        }
+
+        @Test
+        void share_already_stored_should_make_no_call_and_be_a_duplicate_counted_already_stored() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.of(SHARE_ID));
+            when(shareStore.store(any())).thenReturn(new Duplicate(SHARE_ID));
+            final String text = shareWith(application(APP_A));
+
+            final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+
+            assertThat(result.outcome()).isEqualTo(IntakeOutcome.DUPLICATE);
+            verifyNoInteractions(progression);
+            final InOrder order = inOrder(shareStore, observer);
+            order.verify(shareStore).storedShareId(any());
+            order.verify(observer).enrichmentSkipped(EnrichmentSkip.ALREADY_STORED);
+            order.verify(shareStore).store(any());
+            order.verify(observer).duplicate();
+            final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
+            verify(shareStore).store(request.capture());
+            assertThat(request.getValue().parsedCopy()).isSameAs(text);
+            assertThat(request.getValue().enrichmentApplied()).isFalse();
+        }
+
+        @Test
+        void enrichment_off_should_make_no_check_no_call_and_count_disabled() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+
+            final IntakeService service = serviceWithoutProgression();
+            service.receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A))));
+
+            assertThat(service.enrichesFromProgression()).isFalse();
+            verify(shareStore, never()).storedShareId(any());
+            verify(observer).enrichmentSkipped(EnrichmentSkip.DISABLED);
+            verify(observer, never()).applicationLookedUp(any());
+        }
+
+        @Test
+        void lookups_should_run_after_the_receipt_one_at_a_time_in_array_order_then_extract_then_store() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_B))).thenReturn(new ApplicationAnswer.NotFound());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
+            when(mockedExtractor.extract(any())).thenReturn(new Projection.Extracted(KeyDetails.NONE, List.of(), false));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, true));
+            final String text = shareWith(application(APP_B) + ", " + application(APP_A) + ", "
+                    + application(APP_B.toUpperCase(Locale.ROOT)));
+
+            serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+
+            final InOrder order = inOrder(receipts, shareStore, progression, mockedExtractor, observer);
+            order.verify(receipts).recordArrival(any());
+            order.verify(shareStore).storedShareId(any());
+            order.verify(progression).find(UUID.fromString(APP_B));
+            order.verify(progression).find(UUID.fromString(APP_A));
+            order.verify(mockedExtractor).extract(any());
+            order.verify(shareStore).store(any());
+            order.verify(observer).enrichmentApplied();
+            verify(progression, times(2)).find(any());
+            final ArgumentCaptor<JsonNode> extracted = ArgumentCaptor.forClass(JsonNode.class);
+            verify(mockedExtractor).extract(extracted.capture());
+            final JsonNode applications = extracted.getValue().path("hearing").path("courtApplications");
+            assertThat(applications.get(1).path("judicialResults").get(0).path("label").stringValue())
+                    .isEqualTo("Granted");
+            assertThat(applications.get(0).has("judicialResults")).isFalse();
+        }
+
+        @Test
+        void store_request_should_carry_the_arrived_text_and_checksum_with_the_enriched_copy_and_flag() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, true));
+            final String text = shareWith(application(APP_A));
+
+            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+
+            final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
+            verify(shareStore).store(request.capture());
+            assertThat(request.getValue().text()).isSameAs(text);
+            assertThat(request.getValue().checksum()).isEqualTo(PayloadChecksum.sha256Hex(text));
+            assertThat(request.getValue().enrichmentApplied()).isTrue();
+            final JsonNode copy = PARSER.readTree(request.getValue().parsedCopy());
+            final JsonNode result = copy.path("hearing").path("courtApplications").get(0).path("judicialResults").get(0);
+            assertThat(result.path("label").stringValue()).isEqualTo("Granted");
+            assertThat(result.has("amendmentDate")).isFalse();
+        }
+
+        @Test
+        void each_answered_lookup_should_report_its_outcome_and_duration_when_the_call_ends() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(listed());
+            when(progression.find(UUID.fromString(APP_B))).thenReturn(new ApplicationAnswer.NotFound());
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+
+            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A) + ", "
+                    + application(APP_B))));
+
+            final InOrder order = inOrder(progression, observer, shareStore);
+            order.verify(progression).find(UUID.fromString(APP_A));
+            order.verify(observer).applicationLookedUp(ApplicationLookupOutcome.NOT_FINALISED);
+            order.verify(observer).lookupTimed(Optional.of(ApplicationLookupOutcome.NOT_FINALISED),
+                    Duration.ofMillis(7));
+            order.verify(progression).find(UUID.fromString(APP_B));
+            order.verify(observer).applicationLookedUp(ApplicationLookupOutcome.NOT_FOUND);
+            order.verify(observer).lookupTimed(Optional.of(ApplicationLookupOutcome.NOT_FOUND), Duration.ofMillis(7));
+            order.verify(shareStore).store(any());
+            verify(observer, never()).enrichmentApplied();
+        }
+
+        @Test
+        void application_with_an_invalid_id_should_be_counted_with_no_call_and_no_timer() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+
+            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith("{\"id\": \"not-a-uuid\"}, {}")));
+
+            verify(observer, times(2)).applicationLookedUp(ApplicationLookupOutcome.INVALID_ID);
+            verify(observer, never()).lookupTimed(any(), any());
+            verify(shareStore, never()).storedShareId(any());
+            verifyNoInteractions(progression);
+        }
+
+        @Test
+        void enriched_counter_should_move_only_after_a_store_whose_stored_flag_is_true() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false));
+
+            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A))));
+
+            verify(observer).applicationLookedUp(ApplicationLookupOutcome.ENRICHED);
+            verify(observer, never()).enrichmentApplied();
+        }
+
+        @Test
+        void enriched_copy_refused_should_be_stored_once_more_with_the_arrived_copy_and_counted() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
+            when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused(),
+                    new Stored(SHARE_ID, SHARED_AT, false, false, false));
+            final String text = shareWith(application(APP_A));
+
+            final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
+
+            assertThat(result.outcome()).isEqualTo(IntakeOutcome.STORED);
+            final ArgumentCaptor<StoreRequest> requests = ArgumentCaptor.forClass(StoreRequest.class);
+            final InOrder order = inOrder(shareStore, observer);
+            order.verify(shareStore).store(any());
+            order.verify(observer).enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS);
+            order.verify(shareStore).store(any());
+            verify(shareStore, times(2)).store(requests.capture());
+            assertThat(requests.getAllValues().get(0).enrichmentApplied()).isTrue();
+            assertThat(requests.getAllValues().get(1).parsedCopy()).isSameAs(text);
+            assertThat(requests.getAllValues().get(1).enrichmentApplied()).isFalse();
+            assertThat(requests.getAllValues().get(1).text()).isSameAs(text);
+            verify(progression, times(1)).find(any());
+            verify(observer, never()).enrichmentApplied();
+        }
+
+        @Test
+        void enriched_copy_refused_again_should_not_be_run_a_third_time_but_counted_and_thrown() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
+            when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused());
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    shareWith(application(APP_A))))).isInstanceOf(IllegalStateException.class);
+
+            verify(shareStore, times(2)).store(any());
+            verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
+        }
+
+        @Test
+        void failed_lookup_should_be_counted_once_at_enrich_timed_failed_and_rethrown_with_no_store() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            final RetryableIntakeException failure = new RetryableIntakeException(IntakeStage.ENRICH,
+                    IntakeFailureCause.PROGRESSION_UNAVAILABLE, "status 503");
+            when(progression.find(UUID.fromString(APP_A))).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    shareWith(application(APP_A) + ", " + application(APP_B))))).isSameAs(failure);
+
+            verify(observer).intakeFailed(IntakeStage.ENRICH, IntakeFailureCause.PROGRESSION_UNAVAILABLE);
+            verify(observer).lookupTimed(Optional.empty(), Duration.ofMillis(7));
+            verify(observer, never()).applicationLookedUp(any());
+            verify(progression, never()).find(UUID.fromString(APP_B));
+            verify(shareStore, never()).store(any());
+        }
+
+        @Test
+        void unexpected_failure_in_the_step_should_be_counted_at_enrich_as_other_and_rethrown() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
+            final IllegalStateException failure = new IllegalStateException("a bug");
+            when(progression.find(UUID.fromString(APP_A))).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    shareWith(application(APP_A))))).isSameAs(failure);
+
+            verify(observer).intakeFailed(IntakeStage.ENRICH, IntakeFailureCause.OTHER);
+            verify(observer, never()).lookupTimed(any(), any());
+            verify(shareStore, never()).store(any());
+        }
+
+        @Test
+        void failed_existence_check_should_be_counted_at_store_with_its_cause_and_make_no_call() {
+            when(receipts.recordArrival(any())).thenReturn(received(true));
+            final RetryableIntakeException failure = new RetryableIntakeException(IntakeStage.STORE,
+                    IntakeFailureCause.LOCK_TIMEOUT, new SQLException("refused"));
+            when(shareStore.storedShareId(any())).thenThrow(failure);
+
+            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
+                    shareWith(application(APP_A))))).isSameAs(failure);
+
+            verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.LOCK_TIMEOUT);
+            verifyNoInteractions(progression);
+            verify(shareStore, never()).store(any());
+        }
+
+        @Test
+        void service_wired_with_the_port_should_enrich_from_progression() {
+            assertThat(service().enrichesFromProgression()).isTrue();
         }
     }
 

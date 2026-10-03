@@ -5,8 +5,11 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
+import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
+import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
@@ -52,6 +55,19 @@ public class MicrometerIntakeObserver implements IntakeObserver {
 
     private static final String LAG_METER = PREFIX + "intake.lag";
 
+    private static final String APPLICATIONS_METER = PREFIX + "enrichment.applications";
+
+    private static final String LOOKUP_METER = PREFIX + "enrichment.lookup";
+
+    private static final String SKIPPED_METER = PREFIX + "enrichment.skipped";
+
+    private static final String APPLIED_METER = PREFIX + "enrichment.applied";
+
+    /** The lookup timer's outcome for a call that ended in a {@code progression_*} cause. */
+    private static final String LOOKUP_FAILED = "failed";
+
+    private static final String OUTCOME = "outcome";
+
     private static final String ORDER = "order";
 
     private static final String STAGE = "stage";
@@ -66,7 +82,7 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     public MicrometerIntakeObserver(final MeterRegistry registry) {
         this.registry = registry;
         Arrays.stream(new String[] {RECEIVED_METER, DUPLICATE_METER, ALREADY_SETTLED_METER, MESSAGE_ID_MISSING_METER,
-                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER})
+                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER, APPLIED_METER})
                 .forEach(name -> Counter.builder(name).register(registry));
         Arrays.stream(ShareOrder.values()).forEach(order -> {
             stored(order);
@@ -79,6 +95,12 @@ public class MicrometerIntakeObserver implements IntakeObserver {
         Arrays.stream(ExtractionStage.values()).forEach(stage -> Arrays.stream(ExtractionFailureKind.values())
                 .forEach(kind -> extractionFailedCounter(stage, kind)));
         Arrays.stream(SweepRowOutcome.values()).forEach(this::sweepRows);
+        Arrays.stream(ApplicationLookupOutcome.values()).forEach(this::applications);
+        // No call is made for an invalid id, so it is no timer outcome.
+        Arrays.stream(ApplicationLookupOutcome.values()).filter(outcome -> outcome != ApplicationLookupOutcome.INVALID_ID)
+                .forEach(outcome -> lookup(outcome.tag()));
+        lookup(LOOKUP_FAILED);
+        Arrays.stream(EnrichmentSkip.values()).forEach(this::skipped);
     }
 
     @Override
@@ -141,6 +163,26 @@ public class MicrometerIntakeObserver implements IntakeObserver {
         registry.counter(SWEEP_ROUNDS_FAILED_METER).increment();
     }
 
+    @Override
+    public void applicationLookedUp(final ApplicationLookupOutcome outcome) {
+        applications(outcome).increment();
+    }
+
+    @Override
+    public void lookupTimed(final Optional<ApplicationLookupOutcome> outcome, final Duration duration) {
+        lookup(outcome.map(ApplicationLookupOutcome::tag).orElse(LOOKUP_FAILED)).record(duration);
+    }
+
+    @Override
+    public void enrichmentSkipped(final EnrichmentSkip reason) {
+        skipped(reason).increment();
+    }
+
+    @Override
+    public void enrichmentApplied() {
+        registry.counter(APPLIED_METER).increment();
+    }
+
     private Counter stored(final ShareOrder order) {
         return registry.counter(STORED_METER, ORDER, order.tag());
     }
@@ -162,6 +204,18 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     }
 
     private Counter sweepRows(final SweepRowOutcome outcome) {
-        return registry.counter(SWEEP_ROWS_METER, "outcome", outcome.tag());
+        return registry.counter(SWEEP_ROWS_METER, OUTCOME, outcome.tag());
+    }
+
+    private Counter applications(final ApplicationLookupOutcome outcome) {
+        return registry.counter(APPLICATIONS_METER, OUTCOME, outcome.tag());
+    }
+
+    private Timer lookup(final String outcome) {
+        return registry.timer(LOOKUP_METER, OUTCOME, outcome);
+    }
+
+    private Counter skipped(final EnrichmentSkip reason) {
+        return registry.counter(SKIPPED_METER, "reason", reason.tag());
     }
 }
