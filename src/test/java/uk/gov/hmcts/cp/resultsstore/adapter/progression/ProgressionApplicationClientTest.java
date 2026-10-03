@@ -36,6 +36,7 @@ import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 import uk.gov.hmcts.cp.resultsstore.domain.IntakeStage;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
+import uk.gov.hmcts.cp.resultsstore.support.DribblingServer;
 import uk.gov.hmcts.cp.resultsstore.support.ProgressionStub;
 
 /**
@@ -74,9 +75,15 @@ class ProgressionApplicationClientTest {
     }
 
     private ProgressionApplicationClient clientAt(final String baseUrl) {
+        return clientAt(baseUrl, READ_TIMEOUT);
+    }
+
+    /** The production wiring gives the deadline the read timeout; a longer one isolates the socket timeout. */
+    private ProgressionApplicationClient clientAt(final String baseUrl, final Duration responseDeadline) {
         final RestClient rest = RestClient.builder().baseUrl(baseUrl)
-                .requestFactory(new NoRedirectRequestFactory(CONNECT_TIMEOUT, READ_TIMEOUT)).build();
-        return new ProgressionApplicationClient(rest, SYSTEM_USER_ID, READ_TIMEOUT, mapper);
+                .requestFactory(new NoRedirectRequestFactory(CONNECT_TIMEOUT, READ_TIMEOUT, responseDeadline))
+                .build();
+        return new ProgressionApplicationClient(rest, SYSTEM_USER_ID, responseDeadline, mapper);
     }
 
     private static UUID answered(final ResponseDefinitionBuilder response) {
@@ -281,10 +288,11 @@ class ProgressionApplicationClientTest {
         }
 
         @Test
-        void answer_slower_than_the_read_timeout_should_time_out() {
+        void answer_slower_than_the_read_timeout_should_time_out_at_the_socket() {
             final UUID applicationId = answered(okJson("{}").withFixedDelay(2_000));
+            final ProgressionApplicationClient patient = clientAt(PROGRESSION.baseUrl(), Duration.ofSeconds(5));
 
-            assertThatThrownBy(() -> client.find(applicationId)).satisfies(thrown -> assertThat(
+            assertThatThrownBy(() -> patient.find(applicationId)).satisfies(thrown -> assertThat(
                     failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT).getFailedClassName())
                     .contains("SocketTimeoutException"));
         }
@@ -296,9 +304,29 @@ class ProgressionApplicationClientTest {
             final UUID applicationId = answered(okJson("{\"courtApplication\": {\"applicationStatus\": \"LISTED\","
                     + " \"padding\": \"" + "x".repeat(64) + "\"}}").withChunkedDribbleDelay(8, 2_400));
 
-            assertThatThrownBy(() -> client.find(applicationId)).satisfies(thrown -> assertThat(
-                    failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT).getFailedClassName())
-                    .contains("SocketTimeoutException"));
+            // The deadline guard on the body or the factory's cancellation, whichever comes first.
+            assertThatThrownBy(() -> client.find(applicationId))
+                    .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT));
+        }
+
+        /** Status line and headers one byte every 60 ms: each read is quick, the whole head takes 3 s or more. */
+        @ParameterizedTest
+        @ValueSource(strings = {
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+            "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n"
+        })
+        void status_and_headers_dribbled_past_the_deadline_should_time_out(final String response)
+                throws IOException {
+            try (DribblingServer slow = DribblingServer.start(response, Duration.ofMillis(60))) {
+                final ProgressionApplicationClient dribbled = clientAt(slow.baseUrl());
+                final long start = System.nanoTime();
+
+                assertThatThrownBy(() -> dribbled.find(UUID.randomUUID()))
+                        .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_TIMEOUT));
+
+                assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(Duration.ofMillis(2_500));
+                assertThat(slow.requests()).isEqualTo(1);
+            }
         }
     }
 

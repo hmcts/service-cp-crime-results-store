@@ -16,14 +16,15 @@ import org.junit.jupiter.api.Test;
 class NoRedirectRequestFactoryTest {
 
     @Test
-    void connections_should_carry_the_connect_and_read_timeouts_given() throws Exception {
+    void connections_should_carry_the_connect_and_read_timeouts_and_the_deadline_given() throws Exception {
         final NoRedirectRequestFactory factory =
-                new NoRedirectRequestFactory(Duration.ofSeconds(3), Duration.ofSeconds(7));
+                new NoRedirectRequestFactory(Duration.ofSeconds(3), Duration.ofSeconds(7), Duration.ofSeconds(11));
         try {
             final ConnectionConfig connection = factory.getConnectionConfig();
 
             assertThat(connection.getConnectTimeout()).isEqualTo(Timeout.ofSeconds(3));
             assertThat(connection.getSocketTimeout()).isEqualTo(Timeout.ofSeconds(7));
+            assertThat(factory.getResponseDeadline()).isEqualTo(Duration.ofSeconds(11));
         } finally {
             factory.destroy();
         }

@@ -7,7 +7,7 @@ import java.net.SocketTimeoutException;
 import java.util.function.LongSupplier;
 
 /**
- * A deadline for a whole response body (research R15). {@code HttpURLConnection}'s read timeout is
+ * A deadline for a whole response body (research R15). The socket read timeout is
  * per read, so a server sending a byte at a time never trips it; this stream fails before and after
  * each read once the deadline has passed, as the socket would on a stuck read.
  */

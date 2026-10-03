@@ -94,9 +94,10 @@ public class ProgressionApplicationClient implements ProgressionApplications {
                     .header(USER_HEADER, systemUserId)
                     .exchangeForRequiredValue((request, response) -> classify(applicationId, response, deadline));
         } catch (ResourceAccessException e) {
-            // An I/O failure before the status line was read: Spring wraps it, with the URL in the message.
+            // An I/O failure before the status line and headers were read: Spring wraps it, with the URL
+            // in the message. Past the deadline it is the request factory's cancellation, or a timeout.
             final Throwable io = Objects.requireNonNullElse(e.getCause(), e);
-            final IntakeFailureCause cause = io instanceof SocketTimeoutException
+            final IntakeFailureCause cause = timedOut(io, deadline)
                     ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_UNREACHABLE;
             throw failure(applicationId, cause, io.getClass().getSimpleName());
         }
@@ -131,13 +132,18 @@ public class ProgressionApplicationClient implements ProgressionApplications {
         final byte[] body;
         try (InputStream stream = new DeadlineInputStream(response.getBody(), deadline, System::nanoTime)) {
             body = stream.readAllBytes();
-        } catch (SocketTimeoutException e) {
-            throw failure(applicationId, IntakeFailureCause.PROGRESSION_TIMEOUT, e.getClass().getSimpleName());
         } catch (IOException e) {
-            // The status line was read, so the body was cut short.
-            throw failure(applicationId, IntakeFailureCause.PROGRESSION_MALFORMED, e.getClass().getSimpleName());
+            // The status line was read, so short of a timeout or the deadline the body was cut short.
+            final IntakeFailureCause cause = timedOut(e, deadline)
+                    ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_MALFORMED;
+            throw failure(applicationId, cause, e.getClass().getSimpleName());
         }
         return body;
+    }
+
+    /** A socket timeout, or any I/O failure once the deadline has passed (the factory cancelled it). */
+    private static boolean timedOut(final Throwable io, final long deadline) {
+        return io instanceof SocketTimeoutException || System.nanoTime() - deadline >= 0;
     }
 
     private JsonNode parse(final UUID applicationId, final byte[] body) {

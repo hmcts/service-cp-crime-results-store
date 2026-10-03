@@ -40,7 +40,8 @@ public class ProgressionConfig {
         required(ProgressionProperties.SYSTEM_USER_ID, progression.systemUserId());
         final RestClient restClient = RestClient.builder()
                 .baseUrl(progression.baseUrl())
-                .requestFactory(new NoRedirectRequestFactory(progression.connectTimeout(), progression.readTimeout()))
+                .requestFactory(new NoRedirectRequestFactory(progression.connectTimeout(), progression.readTimeout(),
+                        progression.readTimeout()))
                 .build();
         return new ProgressionApplicationClient(restClient, progression.systemUserId(), progression.readTimeout(),
                 mapper);

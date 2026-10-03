@@ -185,6 +185,26 @@ contracts/progression-lookup.md against an in-process WireMock.
     GREEN: `ProgressionApplicationClientTest` 54, `NoRedirectRequestFactoryTest` 1, `ProgressionConfigTest` 8,
     0 failures (the closed-port row now reads `HttpHostConnectException`, a `ConnectException`);
     `pmdMain pmdTest` clean.
+  - Follow-up from gate round 1 (whole-exchange deadline): the deadline guarded only the body, so a
+    status line and headers sent a byte at a time ran past it, and a late non-200 was classified by its
+    status instead of as `progression_timeout`. The factory now takes the deadline as a third argument
+    (`ProgressionConfig` passes the read timeout) and cancels each request, closing its connection,
+    once the deadline has passed since it was created; the client reads any I/O failure after its own
+    deadline (set a moment earlier, at the start of `find`) as `progression_timeout`, whatever the
+    exception (`SocketException` from a cancelled read). Test support: `support/DribblingServer`, which
+    sends the whole response, head included, one byte every 60 ms. The fixed-delay row now uses a 5 s
+    deadline so it proves the socket read timeout on its own (`SocketTimeoutException`).
+    RED: `ProgressionApplicationClientTest` →
+    `status_and_headers_dribbled_past_the_deadline_should_time_out(String) > [1] response = "HTTP/1.1 200 OK…" FAILED`
+    `Expecting actual: 4.433635056S to be less than: 2.5S`; run alone, the 503 row →
+    `expected: PROGRESSION_TIMEOUT but was: PROGRESSION_UNAVAILABLE`.
+    GREEN: `ProgressionApplicationClientTest` 56 (not answered 7), `NoRedirectRequestFactoryTest` 1,
+    `DeadlineInputStreamTest` 5, `ProgressionConfigTest` 8, 0 failures; `pmdMain pmdTest` clean.
+  - The contract's "connect `SocketTimeoutException` → `progression_timeout`" row has no wire test (a
+    connect that times out cannot be produced deterministically on CI). It is covered by construction:
+    a connect timeout reaches the same `ResourceAccessException` catch and `timedOut` check as the read
+    timeout row, which is pinned; the connect timeout's value is pinned on the factory's
+    `ConnectionConfig` (`NoRedirectRequestFactoryTest`, `ProgressionConfigTest`).
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.
