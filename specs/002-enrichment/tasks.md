@@ -242,6 +242,20 @@ contracts/progression-lookup.md against an in-process WireMock.
     commits. After the gate round 1 fixes the full build (`build pmdMain pmdTest jacocoTestReport`)
     passes: 819 tests, 0 failures, 0 skipped; JaCoCo line 99.5 %, branch 98.9 %. From here a task is
     ticked only on a green full-suite run, quoted under its GREEN line.
+  - Ruling 1 (orchestrator, phase A close-out: no drain on a non-200): closing an HttpClient 5 response
+    drains its body (`EntityUtils.consume`), so a 503 whose body dribbled in was held until the deadline
+    cancelled it. On any non-200 the client now aborts the exchange (`ProgressionExchange.abort()`,
+    cancelling the transport request and closing its connection) before it throws, so nothing of the
+    body is read or drained, and the status alone gives the cause. The factory puts each request's
+    `ProgressionExchange` in the Spring request's attributes. The WARN line is written in `find` once the
+    exchange has settled (the response closed), no longer while building the exception.
+    RED: `ProgressionApplicationClientTest` →
+    `answered with another status > unavailable_status_should_not_wait_for_a_dribbled_body() FAILED`
+    `Expecting actual: 1.001059866S to be less than: 0.5S` (503, body dribbled in chunks over 3 s, read
+    timeout and deadline 1 s).
+    GREEN: `ProgressionApplicationClientTest` 57 (statuses 23; the new row ends in about 0.1 s with
+    `progression_unavailable` and one WARN line naming no timeout), `ProgressionExchangeTest` 3,
+    `NoRedirectRequestFactoryTest` 1, `ProgressionConfigTest` 9, 0 failures; `pmdMain pmdTest` clean.
 
 - [X] T003 [US1] [US2] Test first: `IntakeConfigTest` (extended, `ApplicationContextRunner`) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ProgressionConfigTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfigTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/config/ProgressionConfig.java (imported from src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java); confirm specs/002-enrichment/contracts/configuration.md matches what was built
   - Cases: `ProgressionApplications` bean present with publicevents and enrichment on; absent with either off; the built client carries the base URL (a WireMock stub at that host answers) and both timeouts (a WireMock fixed delay past a 1 s read timeout gives `progression_timeout`); with enrichment on, start fails with an `IllegalArgumentException` naming `resultsstore.progression.base-url` when it is blank and `resultsstore.progression.system-user-id` when it is blank, never the value; with enrichment off both may be blank and start succeeds; `ActuatorIntegrationTest` still green with the test profile.

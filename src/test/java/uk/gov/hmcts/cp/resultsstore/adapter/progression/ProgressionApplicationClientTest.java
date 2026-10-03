@@ -236,6 +236,29 @@ class ProgressionApplicationClientTest {
                     assertThat(failed(thrown, cause).getFailedClassName()).contains("status " + status));
         }
 
+        /**
+         * The body of a non-200 is never read or drained: the request is aborted on the status, so a
+         * body dribbled for longer than the read timeout neither delays the answer nor turns it into a
+         * timeout.
+         */
+        @Test
+        void unavailable_status_should_not_wait_for_a_dribbled_body() {
+            final UUID applicationId = answered(aResponse().withStatus(503)
+                    .withBody("{\"marker\": \"" + MARKER + "\", \"padding\": \"" + "x".repeat(64) + "\"}")
+                    .withChunkedDribbleDelay(30, 3_000));
+
+            try (CapturedLog log = CapturedLog.forClass(ProgressionApplicationClient.class)) {
+                final long start = System.nanoTime();
+
+                assertThatThrownBy(() -> client.find(applicationId))
+                        .satisfies(thrown -> failed(thrown, IntakeFailureCause.PROGRESSION_UNAVAILABLE));
+
+                assertThat(Duration.ofNanos(System.nanoTime() - start)).isLessThan(READ_TIMEOUT.dividedBy(2));
+                assertThat(log.messages()).singleElement().satisfies(line -> assertThat(line)
+                        .contains("progression_unavailable").doesNotContain("progression_timeout"));
+            }
+        }
+
         @ParameterizedTest
         @ValueSource(ints = {301, 302, 303, 307, 308})
         void redirect_should_fail_closed_and_should_not_be_followed(final int status) {

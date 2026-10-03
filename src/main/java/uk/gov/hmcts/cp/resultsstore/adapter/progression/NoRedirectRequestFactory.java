@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.resultsstore.adapter.progression;
 
+import java.io.IOException;
 import java.net.URI;
 import java.time.Duration;
 import java.util.concurrent.Executors;
@@ -14,6 +15,7 @@ import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuil
 import org.apache.hc.core5.http.ClassicHttpRequest;
 import org.apache.hc.core5.util.Timeout;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.ClientHttpRequest;
 import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 
 /**
@@ -33,8 +35,14 @@ import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
  * cancelled, its connection closed, once the response deadline has passed since it was created; the
  * blocked read fails at once and nothing is retried. Cancelling a request that has already finished
  * does nothing.
+ *
+ * <p>Each request carries its {@link ProgressionExchange} in its attributes, through which the client
+ * aborts an exchange whose status already decides the outcome, so its body is never drained.
  */
 public final class NoRedirectRequestFactory extends HttpComponentsClientHttpRequestFactory {
+
+    /** Hands the exchange made with a transport request to the Spring request built around it. */
+    private static final ThreadLocal<ProgressionExchange> CREATED = new ThreadLocal<>();
 
     private final ConnectionConfig connectionConfig;
 
@@ -84,11 +92,24 @@ public final class NoRedirectRequestFactory extends HttpComponentsClientHttpRequ
         return responseDeadline;
     }
 
-    /** Creates the request and arms its deadline. */
+    /** Creates the request with its exchange in its attributes. */
+    @Override
+    public ClientHttpRequest createRequest(final URI uri, final HttpMethod httpMethod) throws IOException {
+        try {
+            final ClientHttpRequest request = super.createRequest(uri, httpMethod);
+            request.getAttributes().put(ProgressionExchange.ATTRIBUTE, CREATED.get());
+            return request;
+        } finally {
+            CREATED.remove();
+        }
+    }
+
+    /** Creates the transport request and its exchange, and arms its deadline. */
     @Override
     protected ClassicHttpRequest createHttpUriRequest(final HttpMethod httpMethod, final URI uri) {
         // Spring builds an HttpUriRequestBase for every method it knows, and refuses any other.
         final HttpUriRequestBase request = (HttpUriRequestBase) super.createHttpUriRequest(httpMethod, uri);
+        CREATED.set(new ProgressionExchange(request));
         deadlines.schedule(request::cancel, responseDeadline.toNanos(), TimeUnit.NANOSECONDS);
         return request;
     }

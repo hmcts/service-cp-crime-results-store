@@ -85,6 +85,21 @@ public class ProgressionApplicationClient implements ProgressionApplications {
 
     @Override
     public ApplicationAnswer find(final UUID applicationId) {
+        final ApplicationAnswer answer;
+        try {
+            answer = exchange(applicationId);
+        } catch (RetryableIntakeException e) {
+            // Logged once the exchange has settled: the response is closed and its connection gone.
+            LOG.warn("Progression lookup for application {} failed: {} ({})", applicationId,
+                    e.getFailureCause().tag(), e.getFailedClassName().orElse(""));
+            throw e;
+        }
+        LOG.debug("Progression lookup for application {} answered {}", applicationId,
+                answer.getClass().getSimpleName());
+        return answer;
+    }
+
+    private ApplicationAnswer exchange(final UUID applicationId) {
         final long deadline = System.nanoTime() + responseDeadline.toNanos();
         final ApplicationAnswer answer;
         try {
@@ -92,27 +107,29 @@ public class ProgressionApplicationClient implements ProgressionApplications {
                     .uri(PATH, applicationId)
                     .header(HttpHeaders.ACCEPT, MEDIA_TYPE)
                     .header(USER_HEADER, systemUserId)
-                    .exchangeForRequiredValue((request, response) -> classify(applicationId, response, deadline));
+                    .exchangeForRequiredValue((request, response) ->
+                            classify(ProgressionExchange.exchangeOf(request), response, deadline));
         } catch (ResourceAccessException e) {
             // An I/O failure before the status line and headers were read: Spring wraps it, with the URL
             // in the message. Past the deadline it is the request factory's cancellation, or a timeout.
             final Throwable io = Objects.requireNonNullElse(e.getCause(), e);
             final IntakeFailureCause cause = timedOut(io, deadline)
                     ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_UNREACHABLE;
-            throw failure(applicationId, cause, io.getClass().getSimpleName());
+            throw failure(cause, io.getClass().getSimpleName());
         }
-        LOG.debug("Progression lookup for application {} answered {}", applicationId,
-                answer.getClass().getSimpleName());
         return answer;
     }
 
-    private ApplicationAnswer classify(final UUID applicationId, final ClientHttpResponse response,
-            final long deadline) throws IOException {
+    private ApplicationAnswer classify(final ProgressionExchange exchange,
+            final ClientHttpResponse response, final long deadline) throws IOException {
         final HttpStatusCode status = response.getStatusCode();
         if (!status.isSameCodeAs(HttpStatus.OK)) {
-            throw failure(applicationId, causeOf(status), "status " + status.value());
+            // The status decides it: the body is never read, and aborting stops closing the response
+            // from draining it, however slowly it comes.
+            exchange.abort();
+            throw failure(causeOf(status), "status " + status.value());
         }
-        return shapeOf(applicationId, parse(applicationId, body(applicationId, response, deadline)));
+        return shapeOf(parse(body(response, deadline)));
     }
 
     private static IntakeFailureCause causeOf(final HttpStatusCode status) {
@@ -128,7 +145,7 @@ public class ProgressionApplicationClient implements ProgressionApplications {
         return cause;
     }
 
-    private static byte[] body(final UUID applicationId, final ClientHttpResponse response, final long deadline) {
+    private static byte[] body(final ClientHttpResponse response, final long deadline) {
         final byte[] body;
         try (InputStream stream = new DeadlineInputStream(response.getBody(), deadline, System::nanoTime)) {
             body = stream.readAllBytes();
@@ -136,7 +153,7 @@ public class ProgressionApplicationClient implements ProgressionApplications {
             // The status line was read, so short of a timeout or the deadline the body was cut short.
             final IntakeFailureCause cause = timedOut(e, deadline)
                     ? IntakeFailureCause.PROGRESSION_TIMEOUT : IntakeFailureCause.PROGRESSION_MALFORMED;
-            throw failure(applicationId, cause, e.getClass().getSimpleName());
+            throw failure(cause, e.getClass().getSimpleName());
         }
         return body;
     }
@@ -146,20 +163,20 @@ public class ProgressionApplicationClient implements ProgressionApplications {
         return io instanceof SocketTimeoutException || System.nanoTime() - deadline >= 0;
     }
 
-    private JsonNode parse(final UUID applicationId, final byte[] body) {
+    private JsonNode parse(final byte[] body) {
         final JsonNode root;
         try {
             root = reader.readTree(body);
         } catch (JacksonException e) {
-            throw failure(applicationId, IntakeFailureCause.PROGRESSION_MALFORMED, e.getClass().getSimpleName());
+            throw failure(IntakeFailureCause.PROGRESSION_MALFORMED, e.getClass().getSimpleName());
         }
         return root;
     }
 
-    private static ApplicationAnswer shapeOf(final UUID applicationId, final JsonNode root) {
+    private static ApplicationAnswer shapeOf(final JsonNode root) {
         // An empty body reads as a MissingNode, never null.
         if (!root.isObject()) {
-            throw malformed(applicationId, root);
+            throw malformed(root);
         }
         final JsonNode application = root.get(COURT_APPLICATION);
         final ApplicationAnswer answer;
@@ -168,22 +185,20 @@ public class ProgressionApplicationClient implements ProgressionApplications {
         } else if (application.isObject()) {
             final JsonNode results = application.get(JUDICIAL_RESULTS);
             if (results != null && !results.isNull() && !results.isArray()) {
-                throw malformed(applicationId, results);
+                throw malformed(results);
             }
             answer = new ApplicationAnswer.Found(application);
         } else {
-            throw malformed(applicationId, application);
+            throw malformed(application);
         }
         return answer;
     }
 
-    private static RetryableIntakeException malformed(final UUID applicationId, final JsonNode node) {
-        return failure(applicationId, IntakeFailureCause.PROGRESSION_MALFORMED, node.getClass().getSimpleName());
+    private static RetryableIntakeException malformed(final JsonNode node) {
+        return failure(IntakeFailureCause.PROGRESSION_MALFORMED, node.getClass().getSimpleName());
     }
 
-    private static RetryableIntakeException failure(final UUID applicationId, final IntakeFailureCause cause,
-            final String failed) {
-        LOG.warn("Progression lookup for application {} failed: {} ({})", applicationId, cause.tag(), failed);
+    private static RetryableIntakeException failure(final IntakeFailureCause cause, final String failed) {
         return new RetryableIntakeException(IntakeStage.ENRICH, cause, failed);
     }
 }
