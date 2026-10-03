@@ -184,6 +184,19 @@ class MicrometerIntakeObserverTest {
     }
 
     @Test
+    void lag_beyond_the_nanosecond_range_should_be_recorded_not_thrown() {
+        // A sharedTime of year 1600 is accepted (any four-digit year); its lag is past 292 years of nanoseconds.
+        final Duration fourHundredYears = Duration.ofDays(365L * 400);
+
+        observer.stored(false, fourHundredYears);
+
+        final Timer inOrder = registry.get(LAG).tag("order", "in_order").timer();
+        assertThat(inOrder.count()).isEqualTo(1);
+        // The timer keeps nanoseconds and saturates there (about 292 years) rather than throwing.
+        assertThat(inOrder.totalTime(TimeUnit.DAYS)).isGreaterThan(365.0 * 290);
+    }
+
+    @Test
     void no_tag_in_the_registry_should_hold_a_value_off_the_lists_an_id_or_a_date() {
         everyEventWithEveryValue();
 

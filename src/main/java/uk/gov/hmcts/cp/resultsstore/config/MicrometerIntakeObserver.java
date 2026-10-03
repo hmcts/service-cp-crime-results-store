@@ -5,6 +5,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.TimeUnit;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
@@ -100,8 +101,10 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     public void stored(final boolean outOfOrder, final Duration lag) {
         final ShareOrder order = ShareOrder.from(outOfOrder);
         stored(order).increment();
-        // A timer drops a negative duration; a clock ahead of the store's still counts, as zero.
-        lag(order).record(Duration.ofNanos(Math.max(0L, lag.toNanos())));
+        // A timer drops a negative duration; a clock ahead of the store's still counts, as zero. Passed in
+        // milliseconds: Duration.toNanos (inside Timer.record(Duration)) throws past 292 years, and any
+        // four-digit sharedTime year is accepted. The timer saturates such a lag at that bound.
+        lag(order).record(Math.max(0L, lag.toMillis()), TimeUnit.MILLISECONDS);
     }
 
     @Override
