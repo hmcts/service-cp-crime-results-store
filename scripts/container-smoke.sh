@@ -3,8 +3,11 @@
 # Container smoke: build the image, run it against the committed compose dependencies, and require
 # it to report readiness inside the 60-second budget. Then intake end to end (FR-047, SC-012):
 # publish a real-shaped hearing-resulted message to the compose broker, the same message again and
-# an unreadable one, and check the rows they leave. Tears the stack down on every exit path,
-# success or failure.
+# an unreadable one, and check the rows they leave. Then enrichment (spec 002 FR-039, SC-010): the
+# share carries two court applications without results, which the progression stub in
+# docker/wiremock/mappings/progression-application.json answers, and the working copy, the arrived
+# text and the stub's request count are checked. Tears the stack down on every exit path, success or
+# failure.
 #
 # This is the local equivalent of the "Container smoke" step in
 # .github/workflows/ci-build-publish.yml; both run this same script, so the two cannot drift.
@@ -22,6 +25,7 @@ readonly READINESS_BUDGET_SECONDS=60
 readonly DEPENDENCY_BUDGET_SECONDS=120
 readonly READINESS_URL="http://localhost:8082/actuator/health/readiness"
 readonly PROMETHEUS_URL="http://localhost:8082/actuator/prometheus"
+readonly WIREMOCK_COUNT_URL="http://localhost:8089/__admin/requests/count"
 # After readiness: for the listener to join the subscription, and for the three messages to settle.
 readonly SUBSCRIPTION_BUDGET_SECONDS=30
 readonly INTAKE_BUDGET_SECONDS=30
@@ -42,12 +46,22 @@ readonly ADULT_ID="d2d2d2d2-0000-4000-8000-000000000001"
 readonly ADULT_MASTER_ID="e2e2e2e2-0000-4000-8000-000000000001"
 readonly YOUTH_ID="d2d2d2d2-0000-4000-8000-000000000002"
 readonly YOUTH_MASTER_ID="e2e2e2e2-0000-4000-8000-000000000002"
+# Two court applications without results (spec 002). The stub answers the first FINALISED with one
+# result carrying the three amendment fields, and the second 200 {} (not found). The first has no
+# judicialResults key at all; the second has an empty array, which is looked up the same way.
+readonly APP_ENRICHED_ID="a1a1a1a1-0000-4000-8000-000000000001"
+readonly APP_NOT_FOUND_ID="a1a1a1a1-0000-4000-8000-000000000002"
+# The compose app's synthetic system user (docker-compose.yml, RESULTS_STORE_SYSTEM_USER_ID).
+readonly SYSTEM_USER_ID="00000000-0000-0000-0000-000000000000"
+readonly PROGRESSION_PATH="/progression-query-api/query/api/rest/progression/applications"
 readonly SHARE_BODY='{"_metadata":{"id":"7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d","name":"public.events.hearing.hearing-resulted","createdAt":"2026-10-02T14:19:51.012Z","causation":["8b2c3d4e-5f6a-4b7c-9d8e-0f1a2b3c4d5e"],"stream":{"id":"5e0c7a1d-3f2b-4c6d-8e9f-0a1b2c3d4e5f","version":7},"context":{"user":"9c3d4e5f-6a7b-4c8d-ae9f-1a2b3c4d5e6f"}},'\
 '"hearing":{"id":"'"$HEARING_ID"'","jurisdictionType":"MAGISTRATES","isSJPHearing":false,'\
 '"courtCentre":{"id":"9d2e4f6a-1b3c-4d5e-8f70-a1b2c3d4e5f6","roomId":"1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d","lja":{"ljaCode":"2577"}},'\
 '"prosecutionCases":[{"id":"'"$CASE_ID"'","defendants":['\
 '{"id":"'"$ADULT_ID"'","masterDefendantId":"'"$ADULT_MASTER_ID"'","isYouth":false},'\
-'{"id":"'"$YOUTH_ID"'","masterDefendantId":"'"$YOUTH_MASTER_ID"'","isYouth":true}]}]},'\
+'{"id":"'"$YOUTH_ID"'","masterDefendantId":"'"$YOUTH_MASTER_ID"'","isYouth":true}]}],'\
+'"courtApplications":[{"id":"'"$APP_ENRICHED_ID"'","applicationStatus":"LISTED"},'\
+'{"id":"'"$APP_NOT_FOUND_ID"'","applicationStatus":"LISTED","judicialResults":[]}]},'\
 '"hearingDay":"'"$HEARING_DAY"'","sharedTime":"'"$SHARED_TIME"'","isReshare":false,"shadowListedOffences":[]}'
 readonly UNREADABLE_BODY="not json"
 
@@ -190,6 +204,7 @@ done
 
 expected_bytes=$(printf '%s' "$SHARE_BODY" | wc -c | tr -d ' ')
 expected_md5=$(printf '%s' "$SHARE_BODY" | md5sum | cut -d ' ' -f 1)
+expected_sha256=$(printf '%s' "$SHARE_BODY" | sha256sum | cut -d ' ' -f 1)
 
 expect "receipts, one of each" "DUPLICATE,STORED,UNREADABLE" \
   "SELECT string_agg(status, ',' ORDER BY status) FROM event_receipt"
@@ -224,11 +239,56 @@ expect "one day row naming the share as latest, one share, youth seen" "1|1|true
      FROM hearing_day_head h JOIN hearing_share s
        ON s.hearing_id = h.hearing_id AND s.hearing_day = h.hearing_day"
 
+# Enrichment (spec 002). The working copy holds the first application's result without the three
+# amendment fields, every other field kept; the second application, answered 200 {}, keeps its
+# empty array. The arrived text is untouched: its first application still has no judicialResults
+# key, and the share's checksum is the SHA-256 of the published text, computed here on the host.
+expect "enrichment: flag, one result added, no amendment field, other fields kept, not-found left as it arrived" \
+  "true|1|false|b1b1b1b1-0000-4000-8000-000000000001|Synthetic result|0" \
+  "SELECT s.enrichment_applied || '|'
+          || jsonb_array_length(p.payload_json->'hearing'->'courtApplications'->0->'judicialResults') || '|'
+          || (p.payload_json->'hearing'->'courtApplications'->0->'judicialResults'->0
+                ?| array['amendmentDate', 'amendmentReason', 'amendmentReasonId']) || '|'
+          || (p.payload_json->'hearing'->'courtApplications'->0->'judicialResults'->0->>'judicialResultId') || '|'
+          || (p.payload_json->'hearing'->'courtApplications'->0->'judicialResults'->0->>'label') || '|'
+          || jsonb_array_length(p.payload_json->'hearing'->'courtApplications'->1->'judicialResults')
+     FROM hearing_share s JOIN hearing_share_payload p ON p.share_id = s.share_id"
+expect "enrichment: the arrived text unchanged and its checksum the published text's" \
+  "false|${expected_sha256}" \
+  "SELECT (CAST(p.payload_text AS jsonb)->'hearing'->'courtApplications'->0 ? 'judicialResults') || '|'
+          || s.payload_sha256
+     FROM hearing_share s JOIN hearing_share_payload p ON p.share_id = s.share_id"
+
+# The stub's request log, filtered to the progression path and the store's own user rather than
+# counted globally (the usersgroups stub shares this WireMock). One lookup per application: the
+# duplicate share is found stored before any lookup, so it adds none.
+expect_requests() {
+  local what=$1 expected=$2 pattern=$3 actual
+  if ! actual=$(curl --silent --fail --max-time 5 -X POST "$WIREMOCK_COUNT_URL" -d \
+      '{"method":"GET","urlPathPattern":"'"$pattern"'","headers":{"Accept":{"equalTo":"application/vnd.progression.query.application-only+json"},"CJSCPPUID":{"equalTo":"'"$SYSTEM_USER_ID"'"}}}' \
+      | grep -o '"count" *: *[0-9]*' | grep -o '[0-9]*$'); then
+    log "FAIL: ${what}: could not read the stub's request count"
+    failures=$((failures + 1))
+  elif [ "$actual" != "$expected" ]; then
+    log "FAIL: ${what}: expected ${expected} request(s), found ${actual}"
+    failures=$((failures + 1))
+  else
+    log "ok: ${what}"
+  fi
+}
+expect_requests "progression asked once for the enriched application" "1" "${PROGRESSION_PATH}/${APP_ENRICHED_ID}"
+expect_requests "progression asked once for the not-found application" "1" "${PROGRESSION_PATH}/${APP_NOT_FOUND_ID}"
+expect_requests "progression asked twice in all" "2" "${PROGRESSION_PATH}/.*"
+
 scrape=$(curl --silent --fail --max-time 5 "$PROMETHEUS_URL") || scrape=""
 for line in 'resultsstore_intake_received_total 3.0' \
     'resultsstore_intake_stored_total{order="in_order"} 1.0' \
     'resultsstore_intake_duplicate_total 1.0' \
-    'resultsstore_intake_not_share_total{reason="not_json",status="unreadable"} 1.0'; do
+    'resultsstore_intake_not_share_total{reason="not_json",status="unreadable"} 1.0' \
+    'resultsstore_enrichment_applied_total 1.0' \
+    'resultsstore_enrichment_applications_total{outcome="enriched"} 1.0' \
+    'resultsstore_enrichment_applications_total{outcome="not_found"} 1.0' \
+    'resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0'; do
   if printf '%s\n' "$scrape" | grep -qxF "$line"; then
     log "ok: metric ${line}"
   else
@@ -241,4 +301,4 @@ if [ "$failures" -gt 0 ]; then
   log "FAIL: ${failures} intake check(s) failed"
   exit 1
 fi
-log "PASS: intake stored the share, dropped its duplicate and recorded the unreadable message"
+log "PASS: intake stored the share enriched, dropped its duplicate and recorded the unreadable message"

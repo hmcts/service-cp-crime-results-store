@@ -538,6 +538,26 @@ gives `PASS` with the enriched case; `/speckit-analyze` reports no CRITICAL or H
 - [ ] T009 [P] [US1] [US2] Test first: extend scripts/container-smoke.sh so it fails on the pre-002 build: publish a share whose application lacks results (synthetic ids, the application id of quickstart §3); assert with `psql` `t|1|f|t` (`enrichment_applied`, number of results in `payload_json`, any amendment field present, `payload_sha256` equal to the SHA-256 of `payload_text`); `POST /__admin/requests/count` filtered by the progression path gives 1 with the smoke's `CJSCPPUID`; the 001 cases unchanged; then docker/wiremock/mappings/progression-application.json (quickstart §3), docker-compose.yml (app service: synthetic `RESULTS_STORE_SYSTEM_USER_ID`; `CP_BASE_URL` already `http://wiremock:8080`; `RESULTSSTORE_ENRICHMENT_ENABLED` left unset), and any fix the smoke finds
   - Covers: FR-039; SC-010.
   - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the new checks fail on the build without T001–T008's wiring or without the mapping); the gate green.
+  - RED (2026-10-03, branch `002-enrichment-docs` at 30fcf3b + this task's script and mapping, i.e. phase A
+    only; `flock -w 7200 /tmp/resultsstore-gradle.lock ./scripts/container-smoke.sh`, no wait on the lock).
+    The share now carries two court applications: `a1a1a1a1-…-0001` with no `judicialResults` (stub:
+    `FINALISED`, one result with the three amendment fields) and `a1a1a1a1-…-0002` with `[]` (stub:
+    `200 {}`). Every 001 check passed; the new checks failed, exit 1:
+    `ok: receipts, one of each` … `ok: one day row naming the share as latest, one share, youth seen`
+    (all eight 001 rows), `ok: enrichment: the arrived text unchanged and its checksum the published text's`,
+    `ok: metric` for the four 001 lines;
+    `FAIL: enrichment: flag, one result added, no amendment field, other fields kept, not-found left as it arrived: expected 'true|1|false|b1b1b1b1-0000-4000-8000-000000000001|Synthetic result|0', found ''`
+    (no `judicialResults` in the working copy, so the concatenation is NULL);
+    `FAIL: progression asked once for the enriched application: expected 1 request(s), found 0`, the same
+    for the not-found application, and `FAIL: progression asked twice in all: expected 2 request(s), found 0`
+    (counts filtered by `urlPathPattern`, `Accept` and the compose `CJSCPPUID`, not global);
+    `FAIL: metric line missing:` `resultsstore_enrichment_applied_total 1.0`,
+    `resultsstore_enrichment_applications_total{outcome="enriched"} 1.0`, `{outcome="not_found"} 1.0`,
+    `resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0`;
+    `FAIL: 8 intake check(s) failed`; teardown clean.
+    The mapping itself was checked in a throwaway WireMock 3.13.2: the first id answers 200 with the
+    `FINALISED` body, the second `200 {}`, a request without the headers 404.
+    GREEN: to be recorded after phase B (T004–T007) lands.
 
 - [ ] T010 Documents, analysis and Deferred list: test first, the review grep for `exactly as received`, `parsed copy`, `unread in 001`, `never the parsed copy`, `can be dropped`, `same way the validation`, `always false in 001` across specs/, .specify/memory/constitution.md, .claude/agents/code-reviewer.md and specs/002-enrichment/page-notes.md (RED: the hits it lists before the edits); then
   - .specify/memory/constitution.md: Principle II reworded to research R25's text; version 2.0.0 → 2.1.0 (MINOR: the working-copy clause added, the amendment-field removal named, no rule reversed); Sync Impact Report at the top updated (modified principle, templates checked, follow-ups); **Last Amended** date set;
