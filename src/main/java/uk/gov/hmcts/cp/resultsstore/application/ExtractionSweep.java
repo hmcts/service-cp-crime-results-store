@@ -4,9 +4,6 @@ import java.util.Collections;
 import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import tools.jackson.databind.JsonNode;
-import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
-import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionStage;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
@@ -15,12 +12,13 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  * Retries shares whose key details could not be read (FR-033 to FR-037, research R13).
  *
  * <p>A round selects the {@code FAILED} rows due a retry, without locks. For each it reads the stored
- * payload text (never the parsed copy) and extracts, outside any transaction, then hands the result to
+ * payload text (never the parsed copy) as JSON and extracts, outside any transaction, then hands the result to
  * the store, which writes it under the hearing-day lock and the share row's lock only if the row is
  * still {@code FAILED} with the attempts it had when selected. That re-check, not a distributed lock,
  * keeps several pods sweeping at once correct: each row is worked at most once per round. A row whose
- * work throws is counted {@code error} and the round goes on. Every outcome is reported after the
- * row's transaction ends.
+ * work throws is recorded as a failed {@code UNEXPECTED} attempt, or counted {@code error} when even
+ * that cannot be written, and the round goes on. Every outcome is reported after the row's
+ * transaction ends.
  */
 public class ExtractionSweep {
 
@@ -40,7 +38,7 @@ public class ExtractionSweep {
      * Creates the sweep.
      *
      * @param store     the share tables
-     * @param parser    reads the stored text back into its parsed body
+     * @param parser    reads the stored text back as JSON
      * @param extractor reads the key details
      * @param observer  the metrics port
      * @param settings  the version, retry limit and batch size of a round
@@ -75,22 +73,28 @@ public class ExtractionSweep {
     }
 
     /**
-     * One row. Any runtime failure, reading or writing, is counted as the row's {@code error} and
-     * logged by its class alone (its message may quote the row), and the round goes on (FR-037).
+     * One row. A runtime failure, reading or writing, is logged by its class alone (its message may
+     * quote the row) and recorded as a failed attempt, {@code UNEXPECTED:<class>}, in a second
+     * transaction under the same locks and re-check: the attempt count then grows, so a row that fails
+     * the same way every round stops being selected at the retry limit (FR-035) instead of holding the
+     * head of every batch. Only when that write fails too is the row counted {@code error}, with
+     * nothing written, and the round goes on (FR-037).
      */
-    // Catch-to-count: the failure is recorded as an explicit outcome with a bounded tag and logged;
-    // the row stays FAILED for the next round. Errors are not caught.
+    // Catch-to-record: the failure becomes an explicit outcome with a bounded tag and is logged by class.
+    // Errors are not caught.
     @SuppressWarnings("PMD.AvoidCatchingGenericException")
     private SweepRowOutcome sweepRow(final SweepCandidate candidate) {
-        Projection projection = null;
+        Projection projection;
         SweepRowOutcome outcome;
         try {
-            projection = extractor.extract(body(store.payloadText(candidate.shareId())));
+            // JSON alone: the identity was proved when stored, and its rules may have been tightened since.
+            projection = extractor.extract(parser.readTree(store.payloadText(candidate.shareId())));
             outcome = store.recordReextraction(candidate, projection, settings.extractorVersion());
         } catch (final RuntimeException failure) {
-            LOG.warn("Extraction sweep could not finish a row; it stays FAILED for the next round. shareId={} "
+            LOG.warn("Extraction sweep could not finish a row; recording it as a failed attempt. shareId={} "
                     + "exception={}", candidate.shareId(), failure.getClass().getName());
-            outcome = SweepRowOutcome.ERROR;
+            projection = KeyDetailsExtractor.unexpected(failure);
+            outcome = recordFailedAttempt(candidate, projection);
         }
         observer.sweepRow(outcome);
         if (projection instanceof Projection.Failed failed && outcome == SweepRowOutcome.FAILED_AGAIN) {
@@ -99,13 +103,18 @@ public class ExtractionSweep {
         return outcome;
     }
 
-    /** The stored text's parsed body. It was read as a share when stored, so anything else is a fault. */
-    private JsonNode body(final String text) {
-        final Reading reading = parser.read(text);
-        if (!(reading instanceof Share share)) {
-            throw new IllegalStateException("the stored payload is no longer read as a share");
+    // Catch-to-count: the row is left as it was, counted error and logged by class.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
+    private SweepRowOutcome recordFailedAttempt(final SweepCandidate candidate, final Projection failed) {
+        SweepRowOutcome outcome;
+        try {
+            outcome = store.recordReextraction(candidate, failed, settings.extractorVersion());
+        } catch (final RuntimeException failure) {
+            LOG.warn("Extraction sweep could not record a failed attempt; the row stays as it was for the next "
+                    + "round. shareId={} exception={}", candidate.shareId(), failure.getClass().getName());
+            outcome = SweepRowOutcome.ERROR;
         }
-        return share.body();
+        return outcome;
     }
 
     private static int count(final List<SweepRowOutcome> outcomes, final SweepRowOutcome outcome) {

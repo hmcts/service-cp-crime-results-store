@@ -85,6 +85,19 @@ public class ShareIdentityParser {
         return reading;
     }
 
+    /**
+     * Reads stored text back as JSON alone, without checking its identity again: the extraction sweep's
+     * read (FR-036). The identity was proved when the share was stored, and the rules for it may have
+     * been tightened since.
+     *
+     * @param text a stored payload text
+     * @return its JSON tree
+     * @throws JacksonException when the text is not one JSON value
+     */
+    public JsonNode readTree(final String text) {
+        return reader.readTree(text);
+    }
+
     private Reading readJson(final String text) {
         Reading reading;
         try {

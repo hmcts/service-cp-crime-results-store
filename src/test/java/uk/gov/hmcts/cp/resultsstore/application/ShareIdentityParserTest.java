@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import tools.jackson.core.JacksonException;
 import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.ObjectReader;
@@ -183,6 +184,20 @@ class ShareIdentityParserTest {
             assertThat(reading).isInstanceOfSatisfying(Share.class,
                     share -> assertThat(share.body().path("note").stringValue()).isEqualTo("a" + (char) 0 + "b"));
         }
+    }
+
+    @Test
+    void stored_text_should_be_read_back_as_json_without_its_identity_being_checked() {
+        final String noIdentity = "{\"hearingDay\":\"not a date\",\"hearing\":{\"courtCentre\":{}}}";
+
+        assertThat(parser.readTree(noIdentity).path("hearing").path("courtCentre").isObject()).isTrue();
+        assertThat(parser.read(noIdentity)).isInstanceOf(NotShare.class);
+    }
+
+    @Test
+    void stored_text_that_is_not_one_json_value_should_throw_when_read_back() {
+        assertThatThrownBy(() -> parser.readTree("{} {}")).isInstanceOf(JacksonException.class);
+        assertThatThrownBy(() -> parser.readTree("not json")).isInstanceOf(JacksonException.class);
     }
 
     @Nested

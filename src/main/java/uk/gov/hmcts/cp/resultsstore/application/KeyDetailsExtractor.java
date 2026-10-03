@@ -92,11 +92,22 @@ public class KeyDetailsExtractor {
             // Returned as Failed. If the store transaction then commits, the share is stored FAILED
             // and the sweep may re-extract it (FR-033); if that transaction fails, nothing is
             // stored and the broker redelivers the message.
-            projection = new Projection.Failed(
-                    bounded(ExtractionFailureKind.UNEXPECTED.name() + SEPARATOR + className(unexpected)),
-                    ExtractionFailureKind.UNEXPECTED);
+            projection = unexpected(unexpected);
         }
         return projection;
+    }
+
+    /**
+     * The failure recorded for a runtime failure met while reading key details, here or in the sweep:
+     * {@code UNEXPECTED:<class>}, bounded, never the exception's message.
+     *
+     * @param unexpected what was thrown
+     * @return the {@code UNEXPECTED} failure naming its class
+     */
+    public static Projection.Failed unexpected(final RuntimeException unexpected) {
+        return new Projection.Failed(
+                bounded(ExtractionFailureKind.UNEXPECTED.name() + SEPARATOR + className(unexpected)),
+                ExtractionFailureKind.UNEXPECTED);
     }
 
     private static Projection read(final JsonNode body) {

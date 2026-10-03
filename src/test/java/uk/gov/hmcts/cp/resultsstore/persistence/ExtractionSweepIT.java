@@ -40,6 +40,7 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.application.SweepCandidate;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
+import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.Projection;
 import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
 import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
@@ -67,6 +68,9 @@ class ExtractionSweepIT {
     private static final String UNEXPECTED_REASON = "UNEXPECTED:IllegalStateException";
 
     private static final Duration WITHIN = Duration.ofSeconds(20);
+
+    /** A test-only constraint that refuses every defendant row; dropped by the test that adds it. */
+    private static final String REFUSE_DEFENDANTS = "sweep_it_refuse_defendants_ck";
 
     @Autowired
     private JdbcClient jdbc;
@@ -263,6 +267,107 @@ class ExtractionSweepIT {
         assertThat(share(shareId)).containsEntry("projection_attempts", 2);
     }
 
+    @Test
+    void row_whose_stored_identity_the_parser_now_refuses_should_be_read_and_not_reselected() {
+        final String valid = SampleShares.share(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z");
+        // Stored as it arrived; read today, its sharedTime (an offset without minutes) would be refused.
+        final String refusedToday = valid.replace("2026-10-02T10:00:00Z", "2026-10-02T11:00:00+01");
+        final UUID shareId = storedWithText(valid, refusedToday, failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        assertThat(new ShareIdentityParser(JsonMapper.builder().build()).read(refusedToday))
+                .isNotInstanceOf(ShareIdentityParser.Share.class);
+
+        final List<SweepRowOutcome> first = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+        final List<SweepRowOutcome> next = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+
+        assertThat(first).containsExactly(SweepRowOutcome.FIXED);
+        assertThat(next).isEmpty();
+        assertThat(share(shareId)).containsEntry("projection_status", "OK")
+                .containsEntry("court_centre_id", SampleShares.COURT_CENTRE);
+    }
+
+    @Test
+    void row_with_no_parsed_copy_should_be_read_from_its_stored_text() {
+        // A JSON escape for U+0000: valid JSON text, but jsonb cannot hold it, so no parsed copy is kept.
+        final String text = SampleShares.share(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z", "false", "\\u0000");
+        final UUID shareId = stored(text, failed(COURT_CENTRE_REASON, ExtractionFailureKind.INVALID_UUID));
+        assertThat(jdbc.sql("SELECT payload_json IS NULL FROM hearing_share_payload WHERE share_id = :shareId")
+                .param("shareId", shareId).query(Boolean.class).single()).isTrue();
+
+        final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        assertThat(share(shareId)).containsEntry("projection_status", "OK")
+                .containsEntry("court_centre_id", SampleShares.COURT_CENTRE)
+                .containsEntry("lja_code", "2577");
+        assertThat(defendants(shareId)).hasSize(1);
+    }
+
+    @Test
+    void write_that_fails_after_the_key_details_should_leave_nothing_and_record_a_bounded_unexpected_attempt() {
+        final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        // Test only: every defendant insert fails, after the key details were set in the same transaction.
+        jdbc.sql("ALTER TABLE share_defendant ADD CONSTRAINT " + REFUSE_DEFENDANTS
+                + " CHECK (case_id IS NULL) NOT VALID").update();
+        try {
+            final ExtractionSweep sweep = sweep(new KeyDetailsExtractor(), RAISED_VERSION);
+
+            final List<SweepRowOutcome> first = sweep.runRound();
+
+            assertThat(first).containsExactly(SweepRowOutcome.FAILED_AGAIN);
+            assertThat(share(shareId))
+                    .containsEntry("projection_status", "FAILED")
+                    .containsEntry("projection_reason", "UNEXPECTED:DataIntegrityViolationException")
+                    .containsEntry("projection_version", RAISED_VERSION)
+                    .containsEntry("projection_attempts", 2)
+                    .containsEntry("court_centre_id", null)
+                    .containsEntry("lja_code", null)
+                    .containsEntry("any_subject_is_youth", null)
+                    .containsEntry("day_youth_seen", null);
+            assertThat(defendants(shareId)).isEmpty();
+            assertThat(day()).containsEntry("youth_seen", null);
+
+            assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FAILED_AGAIN);
+            assertThat(sweep.runRound()).isEmpty();
+            assertThat(share(shareId)).containsEntry("projection_attempts", MAX_ATTEMPTS);
+        } finally {
+            jdbc.sql("ALTER TABLE share_defendant DROP CONSTRAINT " + REFUSE_DEFENDANTS).update();
+        }
+    }
+
+    @Test
+    void row_whose_write_and_failed_attempt_both_fail_should_be_left_as_it_was_and_selected_again()
+            throws Exception {
+        final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        final JdbcShareStore impatient = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager),
+                receipts, new JdbcShareStore.Timeouts(Duration.ofSeconds(1), Duration.ofSeconds(5),
+                        Duration.ofSeconds(5)));
+        final ExtractionSweep sweep = new ExtractionSweep(impatient,
+                new ShareIdentityParser(JsonMapper.builder().build()), new KeyDetailsExtractor(),
+                mock(IntakeObserver.class), new ExtractionSweep.Settings(RAISED_VERSION, MAX_ATTEMPTS, 100));
+        final Map<String, Object> before = share(shareId);
+
+        final List<SweepRowOutcome> held;
+        try (Connection holder = dataSource.getConnection()) {
+            holdTheDay(holder);
+            held = sweep.runRound();
+            holder.rollback();
+        }
+
+        assertThat(held).containsExactly(SweepRowOutcome.ERROR);
+        assertThat(share(shareId))
+                .containsEntry("projection_status", "FAILED")
+                .containsEntry("projection_reason", COURT_CENTRE_REASON)
+                .containsEntry("projection_version", KeyDetailsExtractor.EXTRACTOR_VERSION)
+                .containsEntry("projection_attempts", 1)
+                .containsEntry("projected_at", before.get("projected_at"));
+        assertThat(defendants(shareId)).isEmpty();
+        assertThat(day()).containsEntry("youth_seen", null);
+        assertThat(sweep.runRound()).containsExactly(SweepRowOutcome.FIXED);
+    }
+
     private ExtractionSweep sweep(final KeyDetailsExtractor extractor, final int version) {
         return new ExtractionSweep(store, new ShareIdentityParser(JsonMapper.builder().build()), extractor,
                 mock(IntakeObserver.class), new ExtractionSweep.Settings(version, MAX_ATTEMPTS, 100));
@@ -293,6 +398,20 @@ class ExtractionSweepIT {
         final StoreRequest request = SampleShares.request(messageId, text);
         store.store(projection == null ? request : new StoreRequest(request.messageId(), request.identity(),
                 request.shareId(), request.sharedDays(), request.checksum(), request.text(), projection));
+        return request.shareId();
+    }
+
+    /**
+     * Stores a share identified by one text whose payload is another, as if the text had been read
+     * under rules since tightened.
+     */
+    private UUID storedWithText(final String identifiedBy, final String payload, final Projection projection) {
+        messages++;
+        final String messageId = "ID:" + messages;
+        receipts.recordArrival(SampleShares.arrival(messageId, identifiedBy));
+        final StoreRequest request = SampleShares.request(messageId, identifiedBy);
+        store.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
+                request.sharedDays(), PayloadChecksum.sha256Hex(payload), payload, projection));
         return request.shareId();
     }
 

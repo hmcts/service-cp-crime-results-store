@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -20,6 +21,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.dao.QueryTimeoutException;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
@@ -142,7 +145,7 @@ class ExtractionSweepTest {
     }
 
     @Test
-    void row_whose_write_throws_should_be_counted_as_an_error_and_the_round_should_go_on() {
+    void row_whose_write_and_failed_attempt_both_throw_should_be_counted_as_an_error_and_the_round_should_go_on() {
         final SweepCandidate failing = candidate(1);
         final SweepCandidate next = candidate(2);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(failing, next));
@@ -156,6 +159,9 @@ class ExtractionSweepTest {
             final List<SweepRowOutcome> outcomes = sweep().runRound();
 
             assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR, SweepRowOutcome.FIXED);
+            // The row's own write and the failed attempt after it both threw: nothing written.
+            verify(store, times(2)).recordReextraction(eq(failing), any(), eq(VERSION));
+            verify(observer, never()).extractionFailed(any(), any());
             final InOrder order = inOrder(observer);
             order.verify(observer).sweepRow(SweepRowOutcome.ERROR);
             order.verify(observer).sweepRow(SweepRowOutcome.FIXED);
@@ -168,16 +174,76 @@ class ExtractionSweepTest {
     }
 
     @Test
-    void row_whose_stored_text_is_no_longer_read_as_a_share_should_be_an_error_with_nothing_written() {
+    void row_whose_stored_identity_the_parser_now_refuses_should_still_be_read_from_its_json() {
         final SweepCandidate row = candidate(1);
         when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
-        when(store.payloadText(row.shareId())).thenReturn("not json " + MARKER);
+        // An offset without minutes: refused by today's identity rules, but the body is still JSON.
+        when(store.payloadText(row.shareId())).thenReturn(readable(row).replace(SHARED_TIME, "2026-10-02T14:19:50+01"));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FIXED);
 
         final List<SweepRowOutcome> outcomes = sweep().runRound();
 
-        assertThat(outcomes).containsExactly(SweepRowOutcome.ERROR);
-        verify(store, never()).recordReextraction(any(), any(), anyInt());
-        verify(observer).sweepRow(SweepRowOutcome.ERROR);
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        verify(store).recordReextraction(eq(row), any(Projection.Extracted.class), eq(VERSION));
+    }
+
+    @Test
+    void row_whose_stored_text_is_not_json_should_record_a_failed_unexpected_attempt() {
+        final SweepCandidate row = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenReturn("not json " + MARKER);
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FAILED_AGAIN);
+
+        final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FAILED_AGAIN);
+        final ArgumentCaptor<Projection> projection = ArgumentCaptor.forClass(Projection.class);
+        verify(store).recordReextraction(eq(row), projection.capture(), eq(VERSION));
+        assertThat(projection.getValue()).isInstanceOfSatisfying(Projection.Failed.class, failed -> {
+            assertThat(failed.kind()).isEqualTo(ExtractionFailureKind.UNEXPECTED);
+            assertThat(failed.reason()).startsWith("UNEXPECTED:").doesNotContain(MARKER);
+        });
+        verify(observer).sweepRow(SweepRowOutcome.FAILED_AGAIN);
+        verify(observer).extractionFailed(ExtractionStage.SWEEP, ExtractionFailureKind.UNEXPECTED);
+    }
+
+    @Test
+    void row_whose_write_throws_should_record_a_failed_unexpected_attempt_in_a_second_transaction() {
+        final SweepCandidate row = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenReturn(readable(row));
+        when(store.recordReextraction(eq(row), any(Projection.Extracted.class), eq(VERSION)))
+                .thenThrow(new DataIntegrityViolationException("row quoted " + MARKER));
+        when(store.recordReextraction(eq(row), any(Projection.Failed.class), eq(VERSION)))
+                .thenReturn(SweepRowOutcome.FAILED_AGAIN);
+
+        try (CapturedLog log = CapturedLog.forClass(ExtractionSweep.class)) {
+            final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+            assertThat(outcomes).containsExactly(SweepRowOutcome.FAILED_AGAIN);
+            final InOrder order = inOrder(store, observer);
+            order.verify(store).recordReextraction(eq(row), any(Projection.Extracted.class), eq(VERSION));
+            order.verify(store).recordReextraction(row, new Projection.Failed(
+                    "UNEXPECTED:DataIntegrityViolationException", ExtractionFailureKind.UNEXPECTED), VERSION);
+            order.verify(observer).sweepRow(SweepRowOutcome.FAILED_AGAIN);
+            order.verify(observer).extractionFailed(ExtractionStage.SWEEP, ExtractionFailureKind.UNEXPECTED);
+            assertThat(String.join("\n", log.messages())).doesNotContain(MARKER)
+                    .contains(DataIntegrityViolationException.class.getName());
+        }
+    }
+
+    @Test
+    void row_whose_payload_read_throws_should_record_a_failed_unexpected_attempt() {
+        final SweepCandidate row = candidate(1);
+        when(store.sweepCandidates(anyInt(), anyInt(), anyInt())).thenReturn(List.of(row));
+        when(store.payloadText(row.shareId())).thenThrow(new EmptyResultDataAccessException(1));
+        when(store.recordReextraction(eq(row), any(), eq(VERSION))).thenReturn(SweepRowOutcome.FAILED_AGAIN);
+
+        final List<SweepRowOutcome> outcomes = sweep().runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FAILED_AGAIN);
+        verify(store).recordReextraction(row, new Projection.Failed(
+                "UNEXPECTED:EmptyResultDataAccessException", ExtractionFailureKind.UNEXPECTED), VERSION);
     }
 
     @Test
