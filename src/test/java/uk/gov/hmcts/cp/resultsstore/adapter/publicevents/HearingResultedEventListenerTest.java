@@ -203,13 +203,21 @@ class HearingResultedEventListenerTest {
     }
 
     @Test
-    void other_failure_should_escape_without_a_pause_and_clear_the_context() throws JMSException {
-        final IllegalStateException failure = new IllegalStateException("bug");
+    void other_failure_should_pause_then_escape_with_its_class_only_in_the_log() throws JMSException {
+        // The broker redelivers it as surely as a retryable one, so it waits the same capped pause.
+        final IllegalStateException failure = new IllegalStateException(MARKER);
         when(intake.receive(any())).thenThrow(failure);
 
         assertThatThrownBy(() -> listener.onHearingResulted(text(MARKER, 2))).isSameAs(failure);
 
-        assertThat(slept).isEmpty();
+        assertThat(slept).containsExactly(Duration.ofSeconds(4));
+        final ILoggingEvent event = log.events().getFirst();
+        assertThat(event.getLevel()).isEqualTo(Level.WARN);
+        assertThat(event.getFormattedMessage())
+                .contains("cause=other", "exception=java.lang.IllegalStateException", "deliveryCount=2",
+                        "messageId=" + MESSAGE_ID, "requestedPause=PT4S")
+                .doesNotContain(MARKER);
+        assertThat(event.getThrowableProxy()).as("no exception text in the log").isNull();
         assertThat(MDC.getCopyOfContextMap()).isNullOrEmpty();
     }
 

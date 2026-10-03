@@ -504,6 +504,14 @@ proves the flow with mocked ports; the listener and configuration tests prove th
     `JdbcReceiptStore` bean's `TransactionTemplate` times out at 7 s (`JdbcReceiptStoreIT` proves the timeout
     with its own template); 5 tests, 0 failures.
 
+  - Ruling (pause before every rollback, recorded with T011): the broker redelivers a rolled-back message
+    whatever the exception, so the capped pause now comes before any runtime failure escapes the listener,
+    not only a `RetryableIntakeException` (research R14 already said "any `RuntimeException`"). Intake still
+    counts such a failure once as `cause=other`; the listener logs `cause=other`, the exception's class name
+    and the requested pause, never its message. A `JMSException` reading the text still escapes at once,
+    before intake. The note above ("Only `RetryableIntakeException` is paused") is superseded. RED and GREEN
+    are under T011.
+
 **Checkpoint**: phase-gate run 2 ends with every reviewer at PASS.
 
 ---
@@ -593,6 +601,13 @@ US1–US4 and US6 on Testcontainers Postgres.
   - Cases: a share is stored and acknowledged; store fails once then `STORED` with attempts 2; first `session.commit()` fails → one share, receipt `STORED` on redelivery; unreadable and no-identity bodies acknowledged and not redelivered; a persistent failure ends on the dead-letter address with its attempts on the receipt; two listener containers on the one shared subscription with 50 out-of-order shares of one day → one latest, gapless chain, count 50; the same share twice at once → one `STORED`, one `DUPLICATE`; a message with no message id stored under its `sha256:` key; every receipt ends in an end state.
   - Covers: US1–US4, US6; SC-001–SC-005, SC-007.
   - Done when: `IntakeIT` green; the gate green.
+  - Ruling (a), pause before every rollback (see T007): `HearingResultedEventListenerTest`'s
+    `other_failure_should_escape_without_a_pause_and_clear_the_context` became
+    `other_failure_should_pause_then_escape_with_its_class_only_in_the_log`. RED (test before the listener
+    changed): `./gradlew test --tests '*HearingResultedEventListenerTest'`: 12 completed, 1 failed,
+    `Expecting actual: [] … but could not find the following elements: [PT4S]`. GREEN: the listener catches
+    `RuntimeException` after `RetryableIntakeException`, pauses, logs `cause=other exception=<class>` and
+    rethrows the same exception; `HearingResultedEventListenerTest` 12 tests, 0 failures.
   - RED: _to be recorded_
   - GREEN: _to be recorded_
 

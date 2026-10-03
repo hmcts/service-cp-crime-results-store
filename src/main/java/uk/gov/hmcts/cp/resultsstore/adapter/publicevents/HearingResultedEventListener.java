@@ -15,6 +15,7 @@ import uk.gov.hmcts.cp.resultsstore.application.IntakeResult;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.config.PublicEventsConfig;
+import uk.gov.hmcts.cp.resultsstore.domain.IntakeFailureCause;
 
 /**
  * Receives {@code public.events.hearing.hearing-resulted} from the shared durable subscription and
@@ -22,9 +23,9 @@ import uk.gov.hmcts.cp.resultsstore.config.PublicEventsConfig;
  *
  * <p>This is the one place an exception becomes a broker decision. A normal return lets the
  * container commit the transacted session, which acknowledges the message; intake returns only after
- * its transactions commit. A {@link RetryableIntakeException} is rethrown after the capped pause, so
- * the container rolls the session back and the broker redelivers. Anything else escapes as it is and
- * is rolled back too.
+ * its transactions commit. A {@link RetryableIntakeException}, or any other runtime failure, is
+ * rethrown after the capped pause, so the container rolls the session back and the broker redelivers.
+ * A {@code JMSException} reading the message escapes at once, before intake runs.
  *
  * <p>The logging context holds the message id from the start and the share's ids once intake returns,
  * and is cleared after every message (FR-041). Log lines hold ids, counts and bounded codes only:
@@ -78,6 +79,9 @@ public class HearingResultedEventListener {
             subscription = "${resultsstore.publicevents.subscription}",
             selector = "${resultsstore.publicevents.selector}",
             containerFactory = PublicEventsConfig.LISTENER_CONTAINER_FACTORY)
+    // Pause-then-rethrow: nothing is swallowed. Any runtime failure rolls the message back, so each one
+    // waits the capped pause before it escapes (orchestrator ruling, T011). Errors are not caught.
+    @SuppressWarnings("PMD.AvoidCatchingGenericException")
     public void onHearingResulted(final Message message) throws JMSException {
         final String messageId = message.getJMSMessageID();
         final int deliveryCount = deliveryCount(message);
@@ -96,6 +100,15 @@ public class HearingResultedEventListener {
             LOG.warn("Intake failed and is rolled back for the broker to redeliver. stage={} cause={} "
                             + "messageId={} deliveryCount={} requestedPause={}",
                     failure.getStage().tag(), failure.getFailureCause().tag(), messageId, deliveryCount, requested);
+            throw failure;
+        } catch (final RuntimeException failure) {
+            // Counted by intake as cause other. It is rolled back and redelivered like a retryable failure,
+            // so it waits the same pause; only its class is logged, never its message.
+            final Duration requested = pause.pause(deliveryCount);
+            LOG.warn("Intake failed unexpectedly and is rolled back for the broker to redeliver. cause={} "
+                            + "exception={} messageId={} deliveryCount={} requestedPause={}",
+                    IntakeFailureCause.OTHER.tag(), failure.getClass().getName(), messageId, deliveryCount,
+                    requested);
             throw failure;
         } finally {
             MDC_KEYS.forEach(MDC::remove);
