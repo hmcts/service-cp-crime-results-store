@@ -9,6 +9,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.mock.env.MockEnvironment;
 
@@ -68,6 +69,19 @@ class StatementTimeoutBackstopTest {
                     .hasMessage("spring.datasource.hikari.connection-init-sql must not be set: the pool's "
                             + "statement_timeout is set from resultsstore.intake.store.statement-timeout")
                     .hasMessageNotContaining("99s");
+        }
+    }
+
+    /** An empty or blank value (an empty environment variable) is no init SQL, so the backstop sets its own. */
+    @ParameterizedTest
+    @ValueSource(strings = {"", "  "})
+    void a_blank_init_sql_should_be_treated_as_unset(final String blank) {
+        try (HikariDataSource pool = new HikariDataSource()) {
+            pool.setConnectionInitSql(blank);
+
+            backstop(new MockEnvironment()).postProcessAfterInitialization(pool, "dataSource");
+
+            assertThat(pool.getConnectionInitSql()).isEqualTo("SET statement_timeout = '10000ms'");
         }
     }
 

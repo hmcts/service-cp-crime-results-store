@@ -43,7 +43,7 @@ the three PostgreSQL limits in whole milliseconds (they are sent as `<n>ms`, so 
 
 | Setting | Value | Set by | Rule |
 |---|---|---|---|
-| `spring.datasource.hikari.connection-init-sql` | `SET statement_timeout = '<n>ms'`, n = `resultsstore.intake.store.statement-timeout` in milliseconds (`10000ms` by default) | `config/StatementTimeoutBackstop` (a `BeanPostProcessor` on the `HikariDataSource`), from the bound intake property, so the two cannot differ | not set in `application.yaml` and not settable on its own. A test proves the pooled value equals the intake property, at the default and at a custom value |
+| `spring.datasource.hikari.connection-init-sql` | `SET statement_timeout = '<n>ms'`, n = `resultsstore.intake.store.statement-timeout` in milliseconds (`10000ms` by default) | `config/StatementTimeoutBackstop` (a `BeanPostProcessor` on the `HikariDataSource`), from the bound intake property, so the two cannot differ | not set in `application.yaml` and not settable on its own: a non-blank value stops the service naming the property; an empty or blank one (an empty environment variable) counts as unset and is replaced. A test proves the pooled value equals the intake property, at the default and at a custom value |
 
 Why in Java, not as a YAML line built from the same environment variable: Spring and PostgreSQL read
 duration strings differently (`1m` is a minute to Spring and an error to PostgreSQL; `PT10S` is valid

@@ -292,9 +292,12 @@ text in assertion or log output; one commit per task, red run quoted before gree
    commit, or a clock step can still present a lower number behind a consumer's cursor (research R4).
    Mitigations: the overrun counter; consumer reconciliation.
 2. Consumers wait about 90 seconds for every share; a raised transaction timeout raises the lag, capped
-   at 10 minutes. The pool-wide `statement_timeout` of 10 s (FR-062) also applies to Flyway migrations,
-   the sweep and the receipt transaction; a migration or job that needs longer sets its own `SET LOCAL
-   statement_timeout` inside its transaction. The lower intake statement (10 s) and lock (5 s) timeouts
+   at 10 minutes. The pool-wide `statement_timeout` of 10 s (FR-062) also applies to the sweep and the
+   receipt transaction; a job on a pooled connection that needs longer sets its own `SET LOCAL
+   statement_timeout` inside its transaction. Flyway is not bound by it: it migrates on its own unpooled
+   connection (a `SimpleDriverDataSource`) with `statement_timeout` lifted
+   (`RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT`, default `0`, no limit; contracts/configuration.md *Flyway's own
+   connection and statement timeout*). The lower intake statement (10 s) and lock (5 s) timeouts
    end a slow store transaction sooner; that is a database error and the message is redelivered (V).
 3. Read-time filter semantics will surprise consumers (out-of-order shares, changing `versionNumber`,
    rows rewritten in place). The contract's normative text and the page notes carry this; YOT's redesign

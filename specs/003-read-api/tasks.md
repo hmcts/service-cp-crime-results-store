@@ -701,6 +701,10 @@ prove the overrun counter.
     idle-in-transaction-timeout=100ms" … FAILED` `Expecting: <Started application …> to have failed but context
     started successfully`. GREEN: `ConfigurationValidationTest`, `IntakeConfigTest`, `StatementTimeoutBackstopTest`
     0 failures.
+  - Gate round 1 (QA LOW): `StatementTimeoutBackstopTest.a_blank_init_sql_should_be_treated_as_unset` (`""`
+    and `"  "`) pins the existing `isBlank()` branch: an empty or blank `connection-init-sql` counts as unset and
+    is replaced; contracts/configuration.md *Pool backstop* says so. Passes at once (behaviour T008 built).
+    plan.md Risk 2 reworded (spec-validator LOW): Flyway is on its own connection, not bound by the backstop.
 
 ---
 
