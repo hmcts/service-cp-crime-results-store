@@ -1,6 +1,10 @@
 package uk.gov.hmcts.cp.resultsstore.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import java.util.List;
@@ -36,7 +40,11 @@ import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uk.gov.hmcts.cp.resultsstore.application.BadParameterException;
 import uk.gov.hmcts.cp.resultsstore.application.NotFoundException;
+import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
+import uk.gov.hmcts.cp.resultsstore.domain.ReadEndpoint;
+import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
+import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
 import uk.gov.hmcts.cp.resultsstore.openapi.api.SharesApi;
 import uk.gov.hmcts.cp.resultsstore.openapi.model.ProblemDetail;
 import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
@@ -47,7 +55,9 @@ class ReadApiExceptionHandlerTest {
 
     private static final String SECRET = "zz-secret-message-zz";
 
-    private final ReadApiExceptionHandler handler = new ReadApiExceptionHandler();
+    private final ReadObserver observer = mock(ReadObserver.class);
+
+    private final ReadApiExceptionHandler handler = new ReadApiExceptionHandler(observer);
 
     private final MockHttpServletRequest request = new MockHttpServletRequest("GET", "/results-store/v1/shares");
 
@@ -241,6 +251,51 @@ class ReadApiExceptionHandlerTest {
                 assertThat(event.getMDCPropertyMap()).containsEntry("shareId", shareId);
             });
         }
+    }
+
+    private static HttpMediaTypeNotAcceptableException notAcceptable() {
+        return new HttpMediaTypeNotAcceptableException(List.of(MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    void a_406_on_a_matched_route_before_any_handler_should_be_counted_once_as_bad_request() throws Exception {
+        request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, ApiRoute.GET_SHARE);
+
+        handler.handleException(notAcceptable(), new ServletWebRequest(request));
+        handler.handleException(notAcceptable(), new ServletWebRequest(request));
+
+        verify(observer).requestWithoutHandler(ReadEndpoint.SHARE, ReadOutcome.BAD_REQUEST);
+        verifyNoMoreInteractions(observer);
+    }
+
+    @Test
+    void a_failure_on_a_matched_route_before_any_handler_should_be_counted_once_as_failed() {
+        request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, ApiRoute.SEARCH_SHARES);
+
+        handler.internalError(new IllegalStateException(SECRET), request);
+
+        verify(observer).requestWithoutHandler(ReadEndpoint.SEARCH, ReadOutcome.FAILED);
+        verifyNoMoreInteractions(observer);
+    }
+
+    @Test
+    void an_error_after_the_handler_started_should_be_left_to_the_interceptor() throws Exception {
+        request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, ApiRoute.GET_SHARE);
+        new ReadMetricsInterceptor(observer, () -> 0L).preHandle(request, new MockHttpServletResponse(),
+                new Object());
+
+        handler.handleException(notAcceptable(), new ServletWebRequest(request));
+        handler.internalError(new IllegalStateException(SECRET), request);
+
+        verifyNoInteractions(observer);
+    }
+
+    @Test
+    void an_error_on_no_matched_route_should_not_be_counted_here() throws Exception {
+        handler.handleException(notAcceptable(), new ServletWebRequest(request));
+        handler.internalError(new IllegalStateException(SECRET), request);
+
+        verifyNoInteractions(observer);
     }
 
     @ParameterizedTest

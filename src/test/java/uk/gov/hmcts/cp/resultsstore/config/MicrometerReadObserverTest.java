@@ -94,6 +94,26 @@ class MicrometerReadObserverTest {
     }
 
     @Test
+    void a_request_refused_before_its_handler_should_move_its_request_counter_and_no_timer() {
+        observer.requestWithoutHandler(ReadEndpoint.SHARE, ReadOutcome.BAD_REQUEST);
+
+        assertThat(registry.get(REQUESTS).tag("endpoint", "share").tag("outcome", "bad_request").counter().count())
+                .isOne();
+        assertThat(registry.find(REQUESTS).counters()).extracting(Counter::count).containsOnlyOnce(1.0);
+        assertThat(registry.find(DURATION).timers()).allSatisfy(timer -> assertThat(timer.count()).isZero());
+    }
+
+    @Test
+    void a_pair_that_is_not_registered_should_be_refused_without_a_handler_too() {
+        final int before = registry.getMeters().size();
+
+        assertThatThrownBy(() -> observer.requestWithoutHandler(ReadEndpoint.SHARE, ReadOutcome.NOT_MODIFIED))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("not_modified is not an outcome of share");
+        assertThat(registry.getMeters()).hasSize(before);
+    }
+
+    @Test
     void a_pair_that_is_not_registered_should_be_refused_rather_than_create_a_series() {
         final int before = registry.getMeters().size();
 

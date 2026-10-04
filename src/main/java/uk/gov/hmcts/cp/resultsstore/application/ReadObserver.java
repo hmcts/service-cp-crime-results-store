@@ -17,6 +17,16 @@ public interface ReadObserver {
     void request(ReadEndpoint endpoint, ReadOutcome outcome, Duration duration);
 
     /**
+     * Records one request on a matched route that Spring MVC refused before choosing its handler (a {@code 406}
+     * from content negotiation): {@code resultsstore.read.requests} only. No handler started, so there is no
+     * {@code resultsstore.read.duration} to record.
+     *
+     * @param endpoint the endpoint
+     * @param outcome  how it ended
+     */
+    void requestWithoutHandler(ReadEndpoint endpoint, ReadOutcome outcome);
+
+    /**
      * Records the items of one pull or search page: {@code resultsstore.read.page.items}.
      *
      * @param items the number of items returned

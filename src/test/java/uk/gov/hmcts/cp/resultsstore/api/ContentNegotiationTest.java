@@ -2,6 +2,8 @@ package uk.gov.hmcts.cp.resultsstore.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
@@ -36,6 +38,7 @@ import uk.gov.hmcts.cp.resultsstore.application.SearchPage;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
+import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
 import uk.gov.hmcts.cp.resultsstore.filters.ActionRequestWrapper;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
 import uk.gov.hmcts.cp.resultsstore.filters.QueryParameterNames;
@@ -139,6 +142,15 @@ class ContentNegotiationTest {
         assertThat(response.getStatus()).isEqualTo(406);
         assertThat(JSON.readTree(response.getContentAsString())).isEqualTo(JSON.readTree(
                 "{\"type\":\"about:blank\",\"title\":\"Not Acceptable\",\"status\":406,\"reason\":\"not_acceptable\"}"));
+    }
+
+    @ParameterizedTest
+    @EnumSource(ApiRoute.class)
+    void accept_text_html_should_be_counted_once_as_bad_request(final ApiRoute route) throws Exception {
+        call(route, "text/html");
+
+        verify(observer).requestWithoutHandler(route.endpoint(), ReadOutcome.BAD_REQUEST);
+        verify(observer, never()).request(any(), any(), any());
     }
 
     @ParameterizedTest

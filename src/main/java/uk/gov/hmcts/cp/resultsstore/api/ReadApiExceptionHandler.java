@@ -25,8 +25,11 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uk.gov.hmcts.cp.resultsstore.application.BadParameterException;
 import uk.gov.hmcts.cp.resultsstore.application.NotFoundException;
+import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.CanonicalUuid;
 import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
+import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
+import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
 import uk.gov.hmcts.cp.resultsstore.openapi.model.ProblemDetail;
 
 /**
@@ -43,6 +46,9 @@ import uk.gov.hmcts.cp.resultsstore.openapi.model.ProblemDetail;
  *       {@code Retry-After: 5}.</li>
  *   <li>Anything else, an unreadable stored text included: {@code 500 internal_error}, logged by exception class
  *       with the {@code shareId} in the logging context when the path names one; never the message.</li>
+ *   <li>A request on a matched route that fails before its handler is chosen (a {@code 406} from content
+ *       negotiation) is counted here in {@code resultsstore.read.requests}, since {@link ReadMetricsInterceptor}
+ *       never sees it (contracts/metrics.md).</li>
  *   <li>One of Spring MVC's own exceptions once the response is committed: logged by class, nothing written.</li>
  * </ul>
  */
@@ -75,6 +81,18 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
             Map.entry(SHARE_ID, ProblemReason.INVALID_SHARE_ID),
             Map.entry("hearingId", ProblemReason.INVALID_HEARING_ID),
             Map.entry("hearingDay", ProblemReason.INVALID_HEARING_DAY));
+
+    private final ReadObserver observer;
+
+    /**
+     * Creates the advice.
+     *
+     * @param observer the read meters, for a request refused before its handler was chosen
+     */
+    public ReadApiExceptionHandler(final ReadObserver observer) {
+        super();
+        this.observer = observer;
+    }
 
     /**
      * The body and headers of a refusal.
@@ -121,6 +139,7 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
      */
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Object> internalError(final RuntimeException exception, final HttpServletRequest request) {
+        countWithoutHandler(request, HttpStatus.INTERNAL_SERVER_ERROR);
         logFailure(FAILURE, exception, request);
         return problem(ProblemReason.INTERNAL_ERROR, new HttpHeaders());
     }
@@ -136,6 +155,9 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
         final ServletWebRequest servlet = request instanceof ServletWebRequest servletRequest ? servletRequest : null;
         final HttpServletRequest servletRequest = servlet == null ? null : servlet.getRequest();
         final HttpServletResponse response = servlet == null ? null : servlet.getResponse();
+        if (servletRequest != null) {
+            countWithoutHandler(servletRequest, statusCode);
+        }
         final ResponseEntity<Object> answer;
         if (response != null && response.isCommitted()) {
             logFailure(COMMITTED_FAILURE, exception, servletRequest);
@@ -149,6 +171,18 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
             answer = problem(reason(exception, statusCode), headers);
         }
         return answer;
+    }
+
+    /**
+     * Counts a request on a matched route that failed before Spring MVC chose its handler (a {@code 406} from
+     * content negotiation), which {@link ReadMetricsInterceptor} never sees; once only, and never one the
+     * interceptor counts.
+     */
+    private void countWithoutHandler(final HttpServletRequest request, final HttpStatusCode statusCode) {
+        if (request.getAttribute(ApiRoute.REQUEST_ATTRIBUTE) instanceof ApiRoute route
+                && !ReadMetricsInterceptor.handlerStarted(request) && ReadMetricsInterceptor.claimCount(request)) {
+            observer.requestWithoutHandler(route.endpoint(), ReadOutcome.forStatus(statusCode.value()));
+        }
     }
 
     /** Logs a failure by its class, with the canonical {@code shareId} in the logging context when there is one. */

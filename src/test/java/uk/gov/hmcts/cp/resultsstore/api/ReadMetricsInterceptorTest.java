@@ -1,17 +1,23 @@
 package uk.gov.hmcts.cp.resultsstore.api;
 
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.web.HttpMediaTypeNotAcceptableException;
+import org.springframework.web.context.request.ServletWebRequest;
 import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadEndpoint;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
@@ -85,5 +91,20 @@ class ReadMetricsInterceptorTest {
         interceptor.afterCompletion(request, response, new Object(), null);
 
         verify(observer).request(ReadEndpoint.PULL, ReadOutcome.BAD_REQUEST, Duration.ZERO);
+    }
+
+    @Test
+    void a_request_the_advice_already_counted_should_not_be_counted_again() throws Exception {
+        request.setAttribute(ApiRoute.REQUEST_ATTRIBUTE, ApiRoute.GET_SHARE);
+        new ReadApiExceptionHandler(observer).handleException(
+                new HttpMediaTypeNotAcceptableException(List.of(MediaType.APPLICATION_JSON)),
+                new ServletWebRequest(request, response));
+        response.setStatus(406);
+
+        interceptor.preHandle(request, response, new Object());
+        interceptor.afterCompletion(request, response, new Object(), null);
+
+        verify(observer).requestWithoutHandler(ReadEndpoint.SHARE, ReadOutcome.BAD_REQUEST);
+        verify(observer, never()).request(any(), any(), any());
     }
 }

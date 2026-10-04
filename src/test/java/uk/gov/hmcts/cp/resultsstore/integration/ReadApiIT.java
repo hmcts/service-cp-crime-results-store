@@ -501,6 +501,20 @@ class ReadApiIT {
                 .isEqualTo(durations + 2);
     }
 
+    @Test
+    void accept_text_html_should_count_one_bad_request_and_no_duration() throws Exception {
+        final UUID shareId = stored("2026-10-02T09:00:00Z");
+        final double badRequest = requests("share", "bad_request");
+        final long durations = meters.get("resultsstore.read.duration").tag("endpoint", "share").timer().count();
+
+        assertBounded(get(SHARES + "/" + shareId, Map.of(USER_ID_HEADER, SYSTEM_USER, "Accept", "text/html")), 406,
+                "not_acceptable");
+
+        assertThat(requests("share", "bad_request")).isEqualTo(badRequest + 1);
+        assertThat(meters.get("resultsstore.read.duration").tag("endpoint", "share").timer().count())
+                .isEqualTo(durations);
+    }
+
     private double requests(final String endpoint, final String outcome) {
         return meters.get("resultsstore.read.requests").tag("endpoint", endpoint).tag("outcome", outcome).counter()
                 .count();

@@ -15,7 +15,10 @@ line points here, and this file stays as the record of the change.
   `MicrometerReadObserver` (T005) the other read meters; `MicrometerIntakeObserver` (T008) the overrun
   counter.
 - **Read meters describe a request, not a transaction.** `requests` and `duration` are recorded by
-  `api/ReadMetricsInterceptor` when the request completes; `page.items` and `payload.bytes` by
+  `api/ReadMetricsInterceptor` when the request completes, except a request on a matched route that
+  Spring MVC refuses before choosing its handler (a `406` from content negotiation): the interceptor never
+  sees it, so `api/ReadApiExceptionHandler` counts it in `requests` (no `duration`: no handler started).
+  The two share one per-request marker, so a request is counted once; `page.items` and `payload.bytes` by
   `ShareReadService` when the answer is built. The overrun counter fires after the store transaction's
   commit has returned.
 - `outcome=not_modified` exists for `payload` and `arrived_payload` only; every other
@@ -38,7 +41,7 @@ line points here, and this file stays as the record of the change.
 
 | Name | Tags (allowed values) | Moves when | FR |
 |---|---|---|---|
-| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (phase D); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request that reached a controller, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above) | FR-055 |
+| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (phase D); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request on a matched route, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above); a request refused before its handler is chosen (a `406`) is counted once by `api/ReadApiExceptionHandler` instead, by the same table | FR-055 |
 | `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` \| `connector_rejected` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter), by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`), or by the HTTP connector before the service sees it (`400 bad_request` from the host's error report, `api/ProblemErrorReportValve`: an encoded slash or backslash, a NUL, a malformed escape, a character outside the standard set; counted as `connector_rejected` once the report's body has been written). These requests are not audited, so this counter is their only record in this service. Every refusal is counted after its body is written; a body that cannot be written (the client has gone) is not counted | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN = yes, E4). The threshold is the effective lag, 90 s by default | FR-020 |
 
@@ -46,7 +49,7 @@ line points here, and this file stays as the record of the change.
 
 | Name | Tags | Records | FR |
 |---|---|---|---|
-| `resultsstore.read.duration` | `endpoint` (as above) | from the handler's start to the request's completion in Spring MVC, including the query and writing the body. Not this service's filters, not the authorisation or audit filters | FR-055 |
+| `resultsstore.read.duration` | `endpoint` (as above) | from the handler's start to the request's completion in Spring MVC, including the query and writing the body. Not this service's filters, not the authorisation or audit filters. A request refused before its handler is chosen (a `406`) has no handler start and records no duration | FR-055 |
 
 ## Distribution summaries (no tags)
 

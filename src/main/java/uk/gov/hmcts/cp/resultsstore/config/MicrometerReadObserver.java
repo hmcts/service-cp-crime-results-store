@@ -63,12 +63,22 @@ public class MicrometerReadObserver implements ReadObserver {
 
     @Override
     public void request(final ReadEndpoint endpoint, final ReadOutcome outcome, final Duration duration) {
+        counter(endpoint, outcome).increment();
+        durations.get(endpoint).record(duration);
+    }
+
+    @Override
+    public void requestWithoutHandler(final ReadEndpoint endpoint, final ReadOutcome outcome) {
+        counter(endpoint, outcome).increment();
+    }
+
+    /** The registered counter for the pair; a pair that is not registered is refused. */
+    private Counter counter(final ReadEndpoint endpoint, final ReadOutcome outcome) {
         final Counter counter = requests.get(endpoint).get(outcome);
         if (counter == null) {
             throw new IllegalArgumentException(outcome.tag() + " is not an outcome of " + endpoint.tag());
         }
-        counter.increment();
-        durations.get(endpoint).record(duration);
+        return counter;
     }
 
     @Override
