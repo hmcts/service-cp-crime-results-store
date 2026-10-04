@@ -65,6 +65,8 @@ class MicrometerIntakeObserverTest {
 
     private static final String LAG = "resultsstore.intake.lag";
 
+    private static final String OVERRUN = "resultsstore.intake.visibility.overrun";
+
     private static final String APPLICATIONS = "resultsstore.enrichment.applications";
 
     private static final String LOOKUP = "resultsstore.enrichment.lookup";
@@ -107,9 +109,9 @@ class MicrometerIntakeObserverTest {
 
         assertThat(registered).containsOnlyKeys(RECEIVED, STORED, NOT_SHARE, DUPLICATE, ALREADY_SETTLED, FAILED,
                 MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG,
-                APPLICATIONS, LOOKUP, SKIPPED, APPLIED);
+                APPLICATIONS, LOOKUP, SKIPPED, APPLIED, OVERRUN);
         for (final String untagged : List.of(RECEIVED, DUPLICATE, ALREADY_SETTLED, MESSAGE_ID_MISSING,
-                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED, APPLIED)) {
+                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED, APPLIED, OVERRUN)) {
             assertThat(registered.get(untagged)).as(untagged).containsExactly(Map.of());
         }
         final Set<Map<String, String>> orders = Set.of(Map.of("order", "in_order"), Map.of("order", "out_of_order"));
@@ -181,7 +183,8 @@ class MicrometerIntakeObserverTest {
                         APPLICATIONS, OUTCOME, "invalid_id"),
                 event("enrichment skipped", o -> o.enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS), SKIPPED,
                         "reason", "unstorable_results"),
-                event("enrichment applied", IntakeObserver::enrichmentApplied, APPLIED));
+                event("enrichment applied", IntakeObserver::enrichmentApplied, APPLIED),
+                event("visibility overrun", IntakeObserver::visibilityOverrun, OVERRUN));
     }
 
     private static Arguments event(final String name, final Consumer<IntakeObserver> event, final String meter,
@@ -202,6 +205,15 @@ class MicrometerIntakeObserverTest {
                 .filter(counter -> !counter.getId().equals(moved.getId()))
                 .mapToDouble(Counter::count).sum();
         assertThat(others).isZero();
+    }
+
+    @Test
+    void visibility_overrun_should_move_by_one() {
+        assertThat(registry.get(OVERRUN).counter().count()).isZero();
+
+        observer.visibilityOverrun();
+
+        assertThat(registry.get(OVERRUN).counter().count()).isEqualTo(1.0);
     }
 
     @Test
@@ -291,6 +303,7 @@ class MicrometerIntakeObserverTest {
         observer.lookupTimed(Optional.empty(), Duration.ofMillis(3));
         Arrays.stream(EnrichmentSkip.values()).forEach(observer::enrichmentSkipped);
         observer.enrichmentApplied();
+        observer.visibilityOverrun();
     }
 
     private static Map<String, String> tags(final Meter meter) {

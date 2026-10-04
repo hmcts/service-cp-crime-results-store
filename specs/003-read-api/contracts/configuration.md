@@ -50,8 +50,29 @@ store transaction still sets its own `statement_timeout`, `lock_timeout` and
 rests on those. Client-side timeouts (the JDBC query timeout, a Spring transaction timeout used as a
 client deadline) are never part of the bound.
 
-It also applies to Flyway migrations, the sweep and the receipt transaction. A migration or job that
-needs longer than the statement timeout sets `SET LOCAL statement_timeout` inside its own transaction.
+It also applies to the sweep and the receipt transaction. A job on a pooled connection that needs longer
+than the statement timeout sets `SET LOCAL statement_timeout` inside its own transaction.
+
+## Flyway's own connection and statement timeout (T008)
+
+The backstop would also bind Flyway if it migrated on a pooled connection, and an index build on a large
+table can exceed 10 s. A session-level `SET` on a pooled connection would also return to the pool and undo
+the backstop for the next borrower. So Flyway migrates on its own connection, with its limit lifted:
+
+| Setting | Value | Why |
+|---|---|---|
+| `spring.flyway.user` | `${spring.datasource.username}` | with a Flyway user set, Boot gives Flyway an unpooled `SimpleDriverDataSource` derived from `spring.datasource` (same URL), not the Hikari pool; the backstop never applies to it, and nothing it sets reaches the pool |
+| `spring.flyway.password` | `${spring.datasource.password:}` | the same credentials |
+| `spring.flyway.init-sqls` | `SET statement_timeout = '${RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT:0}'` | Flyway's connection runs with the limit lifted: `0` (no limit) by default |
+
+| Environment variable | Default | Rule |
+|---|---|---|
+| `RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT` | `0` | a **PostgreSQL** duration (`0`, `30min`, `600000`), not a Spring one; it is written into the SQL as sent |
+
+Proved by `FlywayMigrationIT.flyway_should_migrate_on_its_own_connection_with_the_lifted_statement_timeout`
+(Flyway's data source is not the Hikari pool, its init SQL is the line above, and a migration's
+`BEFORE_MIGRATE` callback reads `statement_timeout` `0` on Flyway's connection) and by
+`PooledStatementTimeoutIT` (every pooled connection, borrowed at once after Flyway has run, reads `10s`).
 
 ## `resultsstore.read.*` (`ReadApiProperties`)
 

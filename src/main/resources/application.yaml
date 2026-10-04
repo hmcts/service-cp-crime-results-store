@@ -19,6 +19,15 @@ spring:
   flyway:
     # Migrates on startup, so the application needs the database to start.
     enabled: true
+    # Flyway's own connection, not one from the pool: with a user set, Boot gives Flyway an unpooled
+    # data source derived from spring.datasource. Every pooled connection carries the intake statement
+    # timeout as a backstop (config/StatementTimeoutBackstop); an index build on a large table can take
+    # longer, so Flyway lifts the limit on its connection, and the lifted value never reaches the pool.
+    user: ${spring.datasource.username}
+    password: ${spring.datasource.password:}
+    init-sqls:
+      # A PostgreSQL duration, not a Spring one: 0 (no limit, the default) or, for example, 30min.
+      - SET statement_timeout = '${RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT:0}'
 
   # The Artemis connection behind the `public.event` subscription. Bindings only: the broker URL and
   # credentials come from Key Vault in deployed environments, and docker-compose sets them locally.
@@ -77,9 +86,13 @@ resultsstore:
       # The outer bound of the store transaction; at least each timeout below.
       transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT:60s}
       # Set per store transaction with set_config(..., true), so they never leak to the next borrower.
-      lock-timeout: ${RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT:10s}
-      # Below the socket timeout above, so a long statement ends as a database error.
-      statement-timeout: ${RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT:20s}
+      # At most the statement timeout. 5s since spec 003 (was 10s).
+      lock-timeout: ${RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT:5s}
+      # Below the socket timeout above, so a long statement ends as a database error. 10s since spec 003
+      # (was 20s), so the pull's 90 s visibility lag holds: lag >= transaction + 2 x statement +
+      # idle-in-transaction (specs/003-read-api research R4). Every pooled connection also starts with
+      # this statement_timeout (config/StatementTimeoutBackstop), as a backstop for any statement.
+      statement-timeout: ${RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT:10s}
       idle-in-transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT:10s}
   # The extraction sweep, which retries shares whose key details could not be read.
   sweep:

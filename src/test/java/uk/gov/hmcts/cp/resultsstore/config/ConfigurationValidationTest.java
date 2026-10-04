@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -40,8 +41,8 @@ class ConfigurationValidationTest {
             assertThat(intake.redeliveryPause().cap()).isEqualTo(Duration.ofSeconds(30));
             assertThat(intake.receiptTimeout()).isEqualTo(Duration.ofSeconds(10));
             assertThat(intake.store().transactionTimeout()).isEqualTo(Duration.ofSeconds(60));
-            assertThat(intake.store().lockTimeout()).isEqualTo(Duration.ofSeconds(10));
-            assertThat(intake.store().statementTimeout()).isEqualTo(Duration.ofSeconds(20));
+            assertThat(intake.store().lockTimeout()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(intake.store().statementTimeout()).isEqualTo(Duration.ofSeconds(10));
             assertThat(intake.store().idleInTransactionTimeout()).isEqualTo(Duration.ofSeconds(10));
             final SweepProperties sweep = context.getBean(SweepProperties.class);
             assertThat(sweep.enabled()).isTrue();
@@ -50,6 +51,35 @@ class ConfigurationValidationTest {
             assertThat(sweep.batchSize()).isEqualTo(100);
             assertThat(sweep.maxAttempts()).isEqualTo(3);
         });
+    }
+
+    /** Spec 003 (E3, FR-061): statement 20 s → 10 s and lock 10 s → 5 s, so the 90 s lag holds. */
+    @Test
+    void the_intake_store_defaults_should_be_60s_10s_5s_10s() {
+        runner.run(context -> {
+            final IntakeProperties.Store store = context.getBean(IntakeProperties.class).store();
+            assertThat(List.of(store.transactionTimeout(), store.statementTimeout(), store.lockTimeout(),
+                    store.idleInTransactionTimeout())).containsExactly(Duration.ofSeconds(60), Duration.ofSeconds(10),
+                    Duration.ofSeconds(5), Duration.ofSeconds(10));
+        });
+        // The record's own defaults, used when application.yaml is not loaded, agree with the file.
+        new ApplicationContextRunner().withUserConfiguration(IntakeConfig.class)
+                .withPropertyValues("resultsstore.publicevents.enabled=false")
+                .run(context -> {
+                    final IntakeProperties.Store store = context.getBean(IntakeProperties.class).store();
+                    assertThat(List.of(store.transactionTimeout(), store.statementTimeout(), store.lockTimeout(),
+                            store.idleInTransactionTimeout())).containsExactly(Duration.ofSeconds(60),
+                            Duration.ofSeconds(10), Duration.ofSeconds(5), Duration.ofSeconds(10));
+                });
+    }
+
+    @Test
+    void a_lock_timeout_above_the_statement_timeout_should_still_stop_the_service() {
+        runner.withPropertyValues("resultsstore.intake.store.lock-timeout=11s")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageStartingWith("resultsstore.intake.store.lock-timeout must not exceed "
+                                + "resultsstore.intake.store.statement-timeout"));
     }
 
     @Test
@@ -79,7 +109,7 @@ class ConfigurationValidationTest {
         resultsstore.intake.store.statement-timeout=-1s | resultsstore.intake.store.statement-timeout must be above zero
         resultsstore.intake.store.idle-in-transaction-timeout=0s | resultsstore.intake.store.idle-in-transaction-timeout must be above zero
         resultsstore.intake.store.idle-in-transaction-timeout=61s | resultsstore.intake.store.idle-in-transaction-timeout must not exceed resultsstore.intake.store.transaction-timeout
-        resultsstore.intake.store.transaction-timeout=19s | resultsstore.intake.store.statement-timeout must not exceed resultsstore.intake.store.transaction-timeout
+        resultsstore.intake.store.transaction-timeout=9s | resultsstore.intake.store.statement-timeout must not exceed resultsstore.intake.store.transaction-timeout
         resultsstore.sweep.initial-delay=-1s | resultsstore.sweep.initial-delay must be at least
         resultsstore.sweep.fixed-delay=9s | resultsstore.sweep.fixed-delay must be from
         resultsstore.sweep.fixed-delay=25h | resultsstore.sweep.fixed-delay must be from
@@ -109,10 +139,10 @@ class ConfigurationValidationTest {
         "resultsstore.intake.redelivery-pause.enabled=false",
         "resultsstore.intake.receipt-timeout=1s",
         "resultsstore.intake.receipt-timeout=60s",
-        "resultsstore.intake.store.lock-timeout=20s",
+        "resultsstore.intake.store.lock-timeout=10s",
         "resultsstore.intake.store.statement-timeout=29s",
         "resultsstore.intake.store.idle-in-transaction-timeout=60s",
-        "resultsstore.intake.store.transaction-timeout=20s",
+        "resultsstore.intake.store.transaction-timeout=10s",
         "resultsstore.sweep.enabled=false",
         "resultsstore.sweep.initial-delay=0s",
         "resultsstore.sweep.fixed-delay=10s",

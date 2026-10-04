@@ -1,5 +1,6 @@
 package uk.gov.hmcts.cp.resultsstore.application;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -15,9 +16,21 @@ public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Dupl
      * @param outOfOrder        whether a later share of the day was stored first
      * @param parsedCopySkipped whether the payload's parsed copy was left empty (FR-015)
      * @param enrichmentApplied the {@code enrichment_applied} actually stored (specs/002-enrichment FR-030)
+     * @param insertToCommit    from sending the share insert to the commit returning, on a monotonic clock: at
+     *                          least the time the share's number was held open (specs/003-read-api FR-020)
      */
     record Stored(UUID shareId, Instant storedAt, boolean outOfOrder, boolean parsedCopySkipped,
-            boolean enrichmentApplied) implements StoreResult {
+            boolean enrichmentApplied, Duration insertToCommit) implements StoreResult {
+
+        /**
+         * The same result with its measured time.
+         *
+         * @param measured from sending the share insert to the commit returning
+         * @return the result
+         */
+        public Stored withInsertToCommit(final Duration measured) {
+            return new Stored(shareId, storedAt, outOfOrder, parsedCopySkipped, enrichmentApplied, measured);
+        }
     }
 
     /**

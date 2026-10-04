@@ -63,6 +63,9 @@ public class MicrometerIntakeObserver implements IntakeObserver {
 
     private static final String APPLIED_METER = PREFIX + "enrichment.applied";
 
+    /** A store transaction outlived the pull's visibility lag (specs/003-read-api contracts/metrics.md). */
+    private static final String OVERRUN_METER = "resultsstore.intake.visibility.overrun";
+
     /** The lookup timer's outcome for a call that ended in a {@code progression_*} cause. */
     private static final String LOOKUP_FAILED = "failed";
 
@@ -82,7 +85,7 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     public MicrometerIntakeObserver(final MeterRegistry registry) {
         this.registry = registry;
         Arrays.stream(new String[] {RECEIVED_METER, DUPLICATE_METER, ALREADY_SETTLED_METER, MESSAGE_ID_MISSING_METER,
-                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER, APPLIED_METER})
+                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER, APPLIED_METER, OVERRUN_METER})
                 .forEach(name -> Counter.builder(name).register(registry));
         Arrays.stream(ShareOrder.values()).forEach(order -> {
             stored(order);
@@ -181,6 +184,11 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     @Override
     public void enrichmentApplied() {
         registry.counter(APPLIED_METER).increment();
+    }
+
+    @Override
+    public void visibilityOverrun() {
+        registry.counter(OVERRUN_METER).increment();
     }
 
     private Counter stored(final ShareOrder order) {

@@ -115,9 +115,21 @@ public class IntakeConfig {
     @ConditionalOnProperty(name = SUBSCRIPTION_ENABLED, havingValue = TRUE)
     public IntakeService intakeService(final ShareIdentityParser parser, final KeyDetailsExtractor extractor,
             final JdbcReceiptStore receipts, final ShareStore shareStore, final IntakeObserver observer,
-            final ApplicationResultsEnricher enricher, final ObjectProvider<ProgressionApplications> progression) {
+            final ApplicationResultsEnricher enricher, final ObjectProvider<ProgressionApplications> progression,
+            final IntakeProperties intake) {
+        // Until the read settings land (spec 003 T009), the overrun threshold is the derived default lag.
         return new IntakeService(parser, extractor, receipts, shareStore, observer, enricher,
-                progression.getIfAvailable(), System::nanoTime);
+                progression.getIfAvailable(), System::nanoTime, intake.store().visibilityBound());
+    }
+
+    /**
+     * The pool's server-side {@code statement_timeout} (specs/003-read-api FR-062), whatever the subscription
+     * says: the read API and every other statement on a pooled connection is bounded by it. Static, as a
+     * {@code BeanPostProcessor} must be.
+     */
+    @Bean
+    public static StatementTimeoutBackstop statementTimeoutBackstop(final Environment environment) {
+        return new StatementTimeoutBackstop(environment);
     }
 
     @Bean

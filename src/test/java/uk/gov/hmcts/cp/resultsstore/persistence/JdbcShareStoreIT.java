@@ -3,12 +3,14 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Date;
 import java.sql.SQLException;
 import java.sql.Timestamp;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -19,6 +21,7 @@ import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -41,6 +44,10 @@ import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ApplicationAnswer;
+import uk.gov.hmcts.cp.resultsstore.application.ApplicationResultsEnricher;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeCommand;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
+import uk.gov.hmcts.cp.resultsstore.application.IntakeService;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
@@ -134,7 +141,8 @@ class JdbcShareStoreIT {
         final StoreResult result = store.store(request);
 
         final Map<String, Object> share = share(request.shareId());
-        assertThat(result).isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, false));
+        assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, false, Duration.ZERO));
         assertThat(share)
                 .containsEntry("hearing_id", hearingId)
                 .containsEntry("hearing_day", Date.valueOf(HEARING_DAY))
@@ -170,6 +178,65 @@ class JdbcShareStoreIT {
     }
 
     @Test
+    void stored_should_carry_the_time_from_sending_the_insert_to_the_commit_returning() {
+        // Each read of the clock is 250 ms after the one before: one read before the insert, one after the commit.
+        final AtomicLong clock = new AtomicLong();
+        final JdbcShareStore stepping = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager), receipts,
+                JdbcShareStore.Timeouts.DEFAULTS, () -> clock.getAndAdd(250_000_000L));
+
+        final StoreResult result = stepping.store(received("ID:1", SampleShares.share(hearingId, HEARING_DAY,
+                SHARED_TIME)));
+
+        assertThat(result).isInstanceOfSatisfying(Stored.class,
+                stored -> assertThat(stored.insertToCommit()).isEqualTo(Duration.ofMillis(250)));
+        assertThat(clock.get()).as("the clock was read twice").isEqualTo(500_000_000L);
+    }
+
+    @Test
+    void a_duplicate_should_not_read_the_clock_after_the_commit_as_a_stored_share() {
+        store.store(received("ID:1", SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME)));
+        final AtomicLong clock = new AtomicLong();
+        final JdbcShareStore stepping = new JdbcShareStore(jdbc, new TransactionTemplate(transactionManager), receipts,
+                JdbcShareStore.Timeouts.DEFAULTS, () -> clock.getAndAdd(250_000_000L));
+
+        assertThat(stepping.store(received("ID:2", SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME))))
+                .isInstanceOf(Duplicate.class);
+    }
+
+    @Test
+    void a_slow_commit_should_be_measured() {
+        // A test-only deferred constraint trigger on this test's hearing alone: the sleep runs at COMMIT.
+        jdbc.sql("""
+                CREATE FUNCTION slow_commit_test() RETURNS trigger LANGUAGE plpgsql AS $$
+                BEGIN
+                    PERFORM pg_sleep(1.1);
+                    RETURN NULL;
+                END $$
+                """).update();
+        jdbc.sql("CREATE CONSTRAINT TRIGGER slow_commit_test_tg AFTER INSERT ON hearing_share DEFERRABLE INITIALLY "
+                + "DEFERRED FOR EACH ROW WHEN (NEW.hearing_id = '" + hearingId + "') EXECUTE FUNCTION slow_commit_test()")
+                .update();
+        try {
+            final IntakeObserver observer = mock(IntakeObserver.class);
+            final IntakeService intake = new IntakeService(parser, new KeyDetailsExtractor(), receipts, store,
+                    observer, new ApplicationResultsEnricher(JsonMapper.builder().build()), null, System::nanoTime,
+                    Duration.ofSeconds(1));
+            final String text = SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME);
+
+            final StoreResult measured = store.store(received("ID:1", text));
+            assertThat(measured).isInstanceOfSatisfying(Stored.class, stored -> assertThat(stored.insertToCommit())
+                    .isGreaterThanOrEqualTo(Duration.ofMillis(1100)));
+
+            intake.receive(IntakeCommand.ofText("ID:2", 1, SampleShares.share(hearingId, HEARING_DAY,
+                    "2026-10-02T15:00:00.000Z")));
+            verify(observer).visibilityOverrun();
+        } finally {
+            jdbc.sql("DROP TRIGGER slow_commit_test_tg ON hearing_share").update();
+            jdbc.sql("DROP FUNCTION slow_commit_test()").update();
+        }
+    }
+
+    @Test
     void enriched_share_should_keep_the_arrived_text_and_checksum_and_store_the_working_copy_and_flag() {
         final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, SHARED_TIME, APPLICATION_ID);
         final StoreRequest request = enriched("ID:1", text, SampleShares.finalised("Granted"));
@@ -178,7 +245,8 @@ class JdbcShareStoreIT {
         final StoreResult result = store.store(request);
 
         final Map<String, Object> share = share(request.shareId());
-        assertThat(result).isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, true));
+        assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, true, Duration.ZERO));
         assertThat(share)
                 .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
                 .containsEntry("enrichment_applied", true);

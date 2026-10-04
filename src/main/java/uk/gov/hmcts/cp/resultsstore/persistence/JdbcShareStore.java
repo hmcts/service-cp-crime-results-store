@@ -9,6 +9,8 @@ import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -183,6 +185,8 @@ public class JdbcShareStore implements ShareStore {
 
     private final Timeouts timeouts;
 
+    private final LongSupplier nanoClock;
+
     /**
      * Creates the store.
      *
@@ -193,6 +197,22 @@ public class JdbcShareStore implements ShareStore {
      */
     public JdbcShareStore(final JdbcClient jdbc, final TransactionOperations storeTransaction,
             final JdbcReceiptStore receipts, final Timeouts timeouts) {
+        this(jdbc, storeTransaction, receipts, timeouts, System::nanoTime);
+    }
+
+    /**
+     * Creates the store with its clock.
+     *
+     * @param jdbc             the database
+     * @param storeTransaction the store transaction, bounded by its timeout
+     * @param receipts         the receipt table, marked inside the store transaction
+     * @param timeouts         the PostgreSQL timeouts set for each store transaction
+     * @param nanoClock        a monotonic clock in nanoseconds, read before the share insert is sent and after
+     *                         the transaction returns (specs/003-read-api FR-020)
+     */
+    public JdbcShareStore(final JdbcClient jdbc, final TransactionOperations storeTransaction,
+            final JdbcReceiptStore receipts, final Timeouts timeouts, final LongSupplier nanoClock) {
+        this.nanoClock = nanoClock;
         this.jdbc = jdbc;
         this.storeTransaction = storeTransaction;
         this.receipts = receipts;
@@ -215,20 +235,29 @@ public class JdbcShareStore implements ShareStore {
             // Refused before any transaction opens: nothing to roll back (specs/002-enrichment research R18).
             result = new StoreResult.EnrichedCopyRefused();
         } else {
+            // Read before the share insert is sent, inside the transaction; local to this call.
+            final AtomicLong insertSent = new AtomicLong();
+            final StoreResult committed;
             try {
-                result = storeTransaction.execute(status -> storeLocked(request, status));
+                committed = storeTransaction.execute(status -> storeLocked(request, status, insertSent));
             } catch (final DataAccessException | TransactionException failure) {
                 throw RetryableFailures.classify(IntakeStage.STORE, failure);
             }
+            // After the commit returned: the measure can only over-state the time the number was held open.
+            result = committed instanceof StoreResult.Stored stored
+                    ? stored.withInsertToCommit(Duration.ofNanos(nanoClock.getAsLong() - insertSent.get()))
+                    : committed;
         }
         return result;
     }
 
-    private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status) {
+    private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status,
+            final AtomicLong insertSent) {
         final ShareIdentity identity = request.identity();
         setTimeouts();
         lockDay(identity.hearingId(), identity.hearingDay());
         final ShareChain.Place place = chain.place(identity);
+        insertSent.set(nanoClock.getAsLong());
         final Optional<Instant> storedAt = insertShare(request, place);
         final StoreResult result;
         if (storedAt.isEmpty()) {
@@ -252,7 +281,7 @@ public class JdbcShareStore implements ShareStore {
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
             result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !parsed,
-                    request.enrichmentApplied());
+                    request.enrichmentApplied(), Duration.ZERO);
         }
         return result;
     }
@@ -553,6 +582,6 @@ public class JdbcShareStore implements ShareStore {
 
         /** The defaults of contracts/configuration.md. */
         public static final Timeouts DEFAULTS =
-                new Timeouts(Duration.ofSeconds(10), Duration.ofSeconds(20), Duration.ofSeconds(10));
+                new Timeouts(Duration.ofSeconds(5), Duration.ofSeconds(10), Duration.ofSeconds(10));
     }
 }

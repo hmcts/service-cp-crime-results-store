@@ -105,4 +105,11 @@ public interface IntakeObserver {
 
     /** A share was stored with {@code enrichment_applied = true}; reported after the commit. */
     void enrichmentApplied();
+
+    /**
+     * A share's store transaction took at least the pull's visibility lag from sending its insert to the commit
+     * returning (specs/003-read-api FR-020): evidence that pull safety's assumption was broken. Reported after
+     * the commit.
+     */
+    void visibilityOverrun();
 }

@@ -60,6 +60,8 @@ public class IntakeService {
 
     private final LongSupplier nanoClock;
 
+    private final Duration overrunAt;
+
     /**
      * Creates the service.
      *
@@ -71,11 +73,14 @@ public class IntakeService {
      * @param enricher    finds the applications needing results and builds the working copy
      * @param progression progression's application query, or {@code null} when enrichment is off
      * @param nanoClock   a monotonic clock in nanoseconds, for the lookup timer
+     * @param overrunThreshold a store transaction whose share insert to commit took at least this long is counted
+     *                    as a visibility overrun (specs/003-read-api FR-020): the pull's visibility lag
      */
     public IntakeService(final ShareIdentityParser parser, final KeyDetailsExtractor extractor,
             final EventReceipts receipts, final ShareStore shareStore, final IntakeObserver observer,
             final ApplicationResultsEnricher enricher, final ProgressionApplications progression,
-            final LongSupplier nanoClock) {
+            final LongSupplier nanoClock, final Duration overrunThreshold) {
+        this.overrunAt = overrunThreshold;
         this.parser = parser;
         this.extractor = extractor;
         this.receipts = receipts;
@@ -94,6 +99,15 @@ public class IntakeService {
      */
     public boolean enrichesFromProgression() {
         return progression != null;
+    }
+
+    /**
+     * The overrun threshold, observable to the wiring tests.
+     *
+     * @return the time from share insert to commit at or above which a store is counted as an overrun
+     */
+    public Duration overrunThreshold() {
+        return overrunAt;
     }
 
     /**
@@ -250,6 +264,10 @@ public class IntakeService {
         if (stored.enrichmentApplied()) {
             // From the flag actually stored, so the fallback never counts (FR-030).
             observer.enrichmentApplied();
+        }
+        if (stored.insertToCommit().compareTo(overrunAt) >= 0) {
+            // The share's number was held open at least as long as the pull's lag (specs/003-read-api FR-020).
+            observer.visibilityOverrun();
         }
         return result(IntakeOutcome.STORED, messageId, stored.shareId(), identity);
     }

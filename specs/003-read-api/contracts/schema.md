@@ -33,5 +33,7 @@ No table, column, constraint or guard changes. V1 to V4 are not edited.
    with these names and column orders, the
    trigger fires on insert, the sequence cache is 1, and V1 to V4 are unchanged.
 7. Every connection the pool opens starts with `statement_timeout` equal to
-   `resultsstore.intake.store.statement-timeout` (10 s by default; contracts/configuration.md). A
-   migration that needs longer sets `SET LOCAL statement_timeout` inside its own transaction.
+   `resultsstore.intake.store.statement-timeout` (10 s by default; contracts/configuration.md). Flyway
+   migrates on its own unpooled connection with `statement_timeout` lifted (`spring.flyway.init-sqls`,
+   `0` by default; contracts/configuration.md *Flyway's own connection*), so a migration needs no
+   `SET LOCAL` of its own.

@@ -587,11 +587,77 @@ prove the overrun counter.
   - GREEN: `ShareReadServiceTest` 30, 0 failures; the gate green (1481 tests passed, 0 skipped; JaCoCo report
     line 0.9954, branch 0.9744).
 
-- [ ] T008 [P] [US1] [US7] (D-OVERRUN = yes, E4; D-LAG-VALUE = 90 s, E3; touches spec 001 code) Test first: `IntakeServiceTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/IntakeServiceTest.java, `JdbcShareStoreIT` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java, `MicrometerIntakeObserverTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `IntakeConfigTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ConfigurationValidationTest` (extended, intake defaults only) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, `StatementTimeoutBackstopTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/StatementTimeoutBackstopTest.java, `PooledStatementTimeoutIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/PooledStatementTimeoutIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreResult.java (`Stored` + `insertToCommit`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java (an injected nanosecond clock read before sending `INSERT_SHARE` and after the transaction returns, in a holder local to `store(...)`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeService.java (threshold `Duration`; `Stored` at or above it → `visibilityOverrun()`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeObserver.java (+ `visibilityOverrun()`), src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (+ `resultsstore.intake.visibility.overrun`, registered at start), src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java (clock `System::nanoTime`; threshold = transaction + 2 × statement + idle-in-transaction from `IntakeProperties`); every `StoreResult.Stored` call site and exhaustive switch updated; and the intake timeouts (E3): src/main/resources/application.yaml (`resultsstore.intake.store.statement-timeout` default `20s` → `10s`, `lock-timeout` default `10s` → `5s`, with their comments), src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java (`Store`'s `@DefaultValue`s `20s` → `10s` and `10s` → `5s`; the existing rules unchanged, lock ≤ statement included), src/main/java/uk/gov/hmcts/cp/resultsstore/config/StatementTimeoutBackstop.java (new: a static `BeanPostProcessor` bean that sets the `HikariDataSource`'s `connectionInitSql` to `SET statement_timeout = '<n>ms'`, n = `resultsstore.intake.store.statement-timeout` in milliseconds, read through Boot's `Binder` from the same property; registered in `IntakeConfig` unconditionally, not behind the subscription switch)
+- [X] T008 [P] [US1] [US7] (D-OVERRUN = yes, E4; D-LAG-VALUE = 90 s, E3; touches spec 001 code) Test first: `IntakeServiceTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/IntakeServiceTest.java, `JdbcShareStoreIT` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java, `MicrometerIntakeObserverTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java, `IntakeConfigTest` (extended) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfigTest.java, `ConfigurationValidationTest` (extended, intake defaults only) in src/test/java/uk/gov/hmcts/cp/resultsstore/config/ConfigurationValidationTest.java, `StatementTimeoutBackstopTest` in src/test/java/uk/gov/hmcts/cp/resultsstore/config/StatementTimeoutBackstopTest.java, `PooledStatementTimeoutIT` in src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/PooledStatementTimeoutIT.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/StoreResult.java (`Stored` + `insertToCommit`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStore.java (an injected nanosecond clock read before sending `INSERT_SHARE` and after the transaction returns, in a holder local to `store(...)`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeService.java (threshold `Duration`; `Stored` at or above it → `visibilityOverrun()`), src/main/java/uk/gov/hmcts/cp/resultsstore/application/IntakeObserver.java (+ `visibilityOverrun()`), src/main/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserver.java (+ `resultsstore.intake.visibility.overrun`, registered at start), src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeConfig.java (clock `System::nanoTime`; threshold = transaction + 2 × statement + idle-in-transaction from `IntakeProperties`); every `StoreResult.Stored` call site and exhaustive switch updated; and the intake timeouts (E3): src/main/resources/application.yaml (`resultsstore.intake.store.statement-timeout` default `20s` → `10s`, `lock-timeout` default `10s` → `5s`, with their comments), src/main/java/uk/gov/hmcts/cp/resultsstore/config/IntakeProperties.java (`Store`'s `@DefaultValue`s `20s` → `10s` and `10s` → `5s`; the existing rules unchanged, lock ≤ statement included), src/main/java/uk/gov/hmcts/cp/resultsstore/config/StatementTimeoutBackstop.java (new: a static `BeanPostProcessor` bean that sets the `HikariDataSource`'s `connectionInitSql` to `SET statement_timeout = '<n>ms'`, n = `resultsstore.intake.store.statement-timeout` in milliseconds, read through Boot's `Binder` from the same property; registered in `IntakeConfig` unconditionally, not behind the subscription switch)
   - Cases: `IntakeServiceTest`: `a_stored_share_at_the_threshold_should_count_one_overrun`; `a_stored_share_below_the_threshold_should_count_none`; `a_duplicate_or_refused_copy_should_never_count`. `JdbcShareStoreIT`: `stored_should_carry_the_time_from_sending_the_insert_to_the_commit_returning` (a stepping clock gives an exact value); `a_slow_commit_should_be_measured` (a test-only `DEFERRABLE INITIALLY DEFERRED` constraint trigger on `hearing_share` running `pg_sleep(1.1)`, so the sleep runs at `COMMIT` → at least 1.1 s, compared with a 1 s threshold through `IntakeService`). `MicrometerIntakeObserverTest`: the full registered set includes the overrun counter at zero; `visibility_overrun_should_move_by_one`. `IntakeConfigTest`: `the_overrun_threshold_should_be_transaction_plus_twice_statement_plus_idle` (90 s at the defaults; 45 s for 30 s / 5 s / 5 s); `the_backstop_bean_should_exist_with_the_subscription_off`. `ConfigurationValidationTest`: `the_intake_store_defaults_should_be_60s_10s_5s_10s` (transaction, statement, lock, idle-in-transaction); `a_lock_timeout_above_the_statement_timeout_should_still_stop_the_service`. `StatementTimeoutBackstopTest`: `the_init_sql_should_be_set_statement_timeout_in_milliseconds_of_the_intake_property` (`10s` → `SET statement_timeout = '10000ms'`; `1m` → `'60000ms'`; `500ms` → `'500ms'`); `a_non_hikari_data_source_should_be_left_alone`; `an_existing_init_sql_should_stop_the_service_naming_the_property` (two sources would drift). `PooledStatementTimeoutIT` (Testcontainers, full context): `a_pooled_connection_should_report_the_intake_statement_timeout` (`SHOW statement_timeout` outside any store transaction = `10s` at the default); `a_custom_intake_statement_timeout_should_reach_the_pool` (`resultsstore.intake.store.statement-timeout=7s` → `7s`); `the_store_transactions_own_setting_should_still_win_inside_it` (`set_config(..., true)` applies inside the transaction and the session value returns after it).
   - Notes: the limitation (a commit the client never sees return is not counted) is stated in contracts/metrics.md; no test can produce it. The research R4 proof is re-derived for 10 s / 5 s (90 s); the backstop is not part of it. Client-side timeouts are never part of the bound.
   - Covers: FR-017 (threshold half), FR-020, FR-061, FR-062; SC-009, SC-015.
   - Done when: the seven test classes and every changed call site green; the gate green.
+  - Built: `StoreResult.Stored` + `insertToCommit` (`Duration`) and `withInsertToCommit`; `JdbcShareStore` gains a
+    five-argument constructor with a `LongSupplier` nanosecond clock (the four-argument one passes
+    `System::nanoTime`, so the suites that build a store keep their call); the clock is read into an
+    `AtomicLong` local to `store(...)` just before `INSERT_SHARE` is sent and again after the transaction
+    returns, and only a `Stored` result carries the difference; `JdbcShareStore.Timeouts.DEFAULTS` follows the
+    new defaults (5 s lock, 10 s statement, 10 s idle). `IntakeService` takes the threshold as a ninth
+    argument (`overrunThreshold()` exposes it to the wiring tests) and calls `IntakeObserver.visibilityOverrun()`
+    after the commit when `insertToCommit` is at or above it. `MicrometerIntakeObserver` registers
+    `resultsstore.intake.visibility.overrun` at start. `IntakeProperties.Store` defaults 5 s lock / 10 s
+    statement, and `Store.visibilityBound()` = transaction + 2 × statement + idle-in-transaction, which
+    `IntakeConfig` passes as the threshold (T009 replaces it with the effective lag). `StatementTimeoutBackstop`
+    (a `BeanPostProcessor`, after initialisation, before the pool starts) binds `resultsstore.intake` through
+    Boot's `Binder` (`bindOrCreate`, so the record's own defaults apply) and sets the `HikariDataSource`'s
+    `connectionInitSql`; any other data source is left alone; an init SQL already set stops the service
+    naming `spring.datasource.hikari.connection-init-sql` (never its value). Registered as a static bean in
+    `IntakeConfig`, unconditionally. `application.yaml`: the two defaults with their comments.
+  - ORCHESTRATOR ADDITION (Flyway): the pool-wide `statement_timeout` would bind Flyway too, and a
+    session-level `SET` on a pooled connection would go back to the pool and undo the backstop. So
+    `application.yaml` gives Flyway its own unpooled connection (`spring.flyway.user:
+    ${spring.datasource.username}`, `password: ${spring.datasource.password:}`: with a Flyway user set, Boot
+    4.1's `FlywayAutoConfiguration` builds a `SimpleDriverDataSource` derived from `spring.datasource`, read from
+    the jar with `javap`) and `spring.flyway.init-sqls: SET statement_timeout =
+    '${RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT:0}'` (a PostgreSQL duration; `0` = no limit). Recorded in
+    contracts/configuration.md *Flyway's own connection and statement timeout*; contracts/schema.md rule 7
+    reworded to match (it said a migration sets `SET LOCAL` itself).
+  - Tests: as listed, plus `IntakeServiceTest.VisibilityOverrun` (`a_stored_share_above_the_threshold_should_count_
+    one_overrun`, `the_threshold_should_be_observable_to_the_wiring`), `JdbcShareStoreIT.a_duplicate_should_not_
+    read_the_clock_after_the_commit_as_a_stored_share`, `StatementTimeoutBackstopTest.the_init_sql_should_follow_
+    the_intake_default_when_the_property_is_unset` and a `PT7S` row, `FlywayMigrationIT.flyway_should_migrate_on_
+    its_own_connection_with_the_lifted_statement_timeout` (Flyway's data source is not the Hikari pool; its init
+    SQL is `SET statement_timeout = '0'`; a migration of a fresh schema with the context's Flyway configuration
+    reads `statement_timeout` `0` in a `BEFORE_MIGRATE` callback). `PooledStatementTimeoutIT` borrows every pooled
+    connection at once and reads each one (all `10s`), so a connection Flyway had altered would show; its
+    custom-value case is a `@Nested` class with `@TestPropertySource`. `a_slow_commit_should_be_measured` scopes
+    its test-only deferred constraint trigger to the test's hearing (`WHEN (NEW.hearing_id = …)`) and drops it in
+    a `finally`. Every existing test that named the old defaults was updated: `ConfigurationValidationTest`
+    (`defaults_should_be_those_of_the_contract`; the refusal row `transaction-timeout=19s` → `9s`; the boundary
+    rows `lock-timeout=20s` → `10s`, `transaction-timeout=20s` → `10s`); the 17 `new Stored(…)` in
+    `IntakeServiceTest` and 2 in `JdbcShareStoreIT` (the two equality checks now ignore `insertToCommit`).
+    `StoreTimeoutIT` keeps its own short values and is unchanged.
+  - RED (seams: `Stored` with the component, the store returning `Duration.ZERO`, `IntakeService` holding but not
+    using the threshold, `IntakeConfig` passing `Duration.ZERO`, `visibilityOverrun()` doing nothing and
+    registering nothing, `StatementTimeoutBackstop` passing every bean through and not registered, defaults
+    unchanged, no Flyway settings). Run per method (`failFast`): `IntakeServiceTest$VisibilityOverrun.a_stored_
+    share_at_the_threshold_should_count_one_overrun() FAILED` `Verification in order failure Wanted but not
+    invoked: observer.visibilityOverrun();`; `JdbcShareStoreIT.stored_should_carry_the_time_from_sending_the_
+    insert_to_the_commit_returning() FAILED` `expected: 0.25S but was: 0S`; `JdbcShareStoreIT.a_slow_commit_
+    should_be_measured() FAILED` `Expecting actual: 0S to be greater than or equal to: 1.1S`;
+    `MicrometerIntakeObserverTest.visibility_overrun_should_move_by_one() FAILED` `MeterNotFoundException: … No
+    meter with name 'resultsstore.intake.visibility.overrun' was found.`; `IntakeConfigTest.the_overrun_threshold_
+    should_be_transaction_plus_twice_statement_plus_idle() FAILED` `expected: 1M30S but was: 0S`;
+    `IntakeConfigTest.the_backstop_bean_should_exist_with_the_subscription_off() FAILED` `… to have a single bean
+    of type: <…StatementTimeoutBackstop> but found no beans of that type`; `ConfigurationValidationTest.the_intake_
+    store_defaults_should_be_60s_10s_5s_10s() FAILED` `Expecting actual: [1M, 20S, 10S, 10S] to contain exactly
+    (and in same order): [1M, 10S, 5S, 10S]`; `StatementTimeoutBackstopTest.an_existing_init_sql_should_stop_the_
+    service_naming_the_property() FAILED` `Expecting code to raise a throwable.`; `PooledStatementTimeoutIT.a_
+    pooled_connection_should_report_the_intake_statement_timeout() FAILED` `Expecting ArrayList: ["0", "0", …]
+    to contain only: ["10s"]`; `FlywayMigrationIT.flyway_should_migrate_on_its_own_connection_with_the_lifted_
+    statement_timeout() FAILED` `[Flyway's data source] Expecting actual: HikariDataSource (HikariPool-1) not to
+    be an instance of: com.zaxxer.hikari.HikariDataSource`. `a_lock_timeout_above_the_statement_timeout_should_
+    still_stop_the_service` was first written with `6s`, which is legal at the new 10 s statement default; it was
+    corrected to `11s` and passes, pinning the rule.
+  - GREEN: `IntakeServiceTest` 42 (`VisibilityOverrun` 5), `JdbcShareStoreIT` 29, `MicrometerIntakeObserverTest`
+    28, `IntakeConfigTest` 10, `ConfigurationValidationTest` 65, `StatementTimeoutBackstopTest` 7,
+    `PooledStatementTimeoutIT` 3, `FlywayMigrationIT` 128, `StoreTimeoutIT` 6, 0 failures; the gate green (1506
+    tests passed, 0 skipped; JaCoCo report line 0.9954, branch 0.9734).
 
 ---
 

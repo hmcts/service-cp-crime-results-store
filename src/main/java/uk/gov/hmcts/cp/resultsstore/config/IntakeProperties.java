@@ -48,8 +48,8 @@ public record IntakeProperties(@DefaultValue Pause redeliveryPause, @DefaultValu
      * @param statementTimeout          PostgreSQL {@code statement_timeout}
      * @param idleInTransactionTimeout  PostgreSQL {@code idle_in_transaction_session_timeout}
      */
-    public record Store(@DefaultValue("60s") Duration transactionTimeout, @DefaultValue("10s") Duration lockTimeout,
-            @DefaultValue("20s") Duration statementTimeout, @DefaultValue("10s") Duration idleInTransactionTimeout) {
+    public record Store(@DefaultValue("60s") Duration transactionTimeout, @DefaultValue("5s") Duration lockTimeout,
+            @DefaultValue("10s") Duration statementTimeout, @DefaultValue("10s") Duration idleInTransactionTimeout) {
 
         /** Checks each timeout and how they relate. */
         public Store {
@@ -64,6 +64,17 @@ public record IntakeProperties(@DefaultValue Pause redeliveryPause, @DefaultValu
                     "resultsstore.intake.store.transaction-timeout", transactionTimeout);
             Rules.atMost("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout,
                     "resultsstore.intake.store.transaction-timeout", transactionTimeout);
+        }
+
+        /**
+         * The longest a store transaction can hold a share's number open, every limit enforced by PostgreSQL or by
+         * Spring before a statement (specs/003-read-api research R4): transaction + 2 × statement +
+         * idle-in-transaction, 90 s at the defaults. The pull's visibility lag must be at least this.
+         *
+         * @return the bound
+         */
+        public Duration visibilityBound() {
+            return transactionTimeout.plus(statementTimeout.multipliedBy(2)).plus(idleInTransactionTimeout);
         }
     }
 }

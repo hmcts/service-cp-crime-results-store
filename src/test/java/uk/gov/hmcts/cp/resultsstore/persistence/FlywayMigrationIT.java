@@ -17,6 +17,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.flywaydb.core.Flyway;
 import org.flywaydb.core.api.FlywayException;
+import org.flywaydb.core.api.callback.Callback;
+import org.flywaydb.core.api.callback.Context;
+import org.flywaydb.core.api.callback.Event;
 import org.flywaydb.core.api.configuration.FluentConfiguration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -88,6 +91,9 @@ class FlywayMigrationIT {
     @Autowired
     private TransactionTemplate transaction;
 
+    @Autowired
+    private Flyway migrations;
+
     @DynamicPropertySource
     static void store(final DynamicPropertyRegistry registry) {
         PostgresTestSupport.register(registry);
@@ -155,6 +161,50 @@ class FlywayMigrationIT {
                 .containsEntry("event_manipulation", "INSERT")
                 .containsEntry("action_orientation", "ROW")
                 .containsEntry("action_statement", "EXECUTE FUNCTION hearing_share_stored_at()"));
+    }
+
+    @Test
+    void flyway_should_migrate_on_its_own_connection_with_the_lifted_statement_timeout() {
+        // The pool's connections carry the 10 s backstop (FR-062); an index build on a large table could take
+        // longer, so Flyway runs on its own unpooled connection with its init SQL lifting the limit.
+        final List<String> seen = new java.util.ArrayList<>();
+        final Callback show = new Callback() {
+            @Override
+            public boolean supports(final Event event, final Context context) {
+                return event == Event.BEFORE_MIGRATE;
+            }
+
+            @Override
+            public boolean canHandleInTransaction(final Event event, final Context context) {
+                return true;
+            }
+
+            @Override
+            public void handle(final Event event, final Context context) {
+                try (java.sql.Statement statement = context.getConnection().createStatement();
+                        java.sql.ResultSet value = statement.executeQuery("SHOW statement_timeout")) {
+                    if (value.next()) {
+                        seen.add(value.getString(1));
+                    }
+                } catch (final SQLException failure) {
+                    throw new IllegalStateException("could not read statement_timeout", failure);
+                }
+            }
+
+            @Override
+            public String getCallbackName() {
+                return "show-statement-timeout";
+            }
+        };
+        final String schema = "flyway_timeout_" + UUID.randomUUID().toString().replace("-", "");
+
+        assertThat(migrations.getConfiguration().getDataSource()).as("Flyway's data source")
+                .isNotInstanceOf(com.zaxxer.hikari.HikariDataSource.class);
+        assertThat(migrations.getConfiguration().getInitSql()).isEqualTo("SET statement_timeout = '0'");
+        Flyway.configure().configuration(migrations.getConfiguration()).schemas(schema).defaultSchema(schema)
+                .createSchemas(true).callbacks(show).load().migrate();
+
+        assertThat(seen).isNotEmpty().containsOnly("0");
     }
 
     @Test

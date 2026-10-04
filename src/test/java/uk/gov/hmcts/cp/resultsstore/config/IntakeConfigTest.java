@@ -62,6 +62,25 @@ class IntakeConfigTest {
     }
 
     @Test
+    void the_overrun_threshold_should_be_transaction_plus_twice_statement_plus_idle() {
+        runner.withPropertyValues("resultsstore.publicevents.enabled=true", BASE_URL, SYSTEM_USER_ID)
+                .run(context -> assertThat(context.getBean(IntakeService.class).overrunThreshold())
+                        .isEqualTo(Duration.ofSeconds(90)));
+        runner.withPropertyValues("resultsstore.publicevents.enabled=true", BASE_URL, SYSTEM_USER_ID,
+                        "resultsstore.intake.store.transaction-timeout=30s",
+                        "resultsstore.intake.store.statement-timeout=5s", "resultsstore.intake.store.lock-timeout=5s",
+                        "resultsstore.intake.store.idle-in-transaction-timeout=5s")
+                .run(context -> assertThat(context.getBean(IntakeService.class).overrunThreshold())
+                        .isEqualTo(Duration.ofSeconds(45)));
+    }
+
+    @Test
+    void the_backstop_bean_should_exist_with_the_subscription_off() {
+        runner.withPropertyValues("resultsstore.publicevents.enabled=false")
+                .run(context -> assertThat(context).hasNotFailed().hasSingleBean(StatementTimeoutBackstop.class));
+    }
+
+    @Test
     void disabled_subscription_should_create_no_intake_bean() {
         runner.withPropertyValues("resultsstore.publicevents.enabled=false").run(context -> assertThat(context)
                 .hasNotFailed()
