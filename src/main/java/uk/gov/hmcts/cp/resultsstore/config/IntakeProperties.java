@@ -22,6 +22,14 @@ public record IntakeProperties(@DefaultValue Pause redeliveryPause, @DefaultValu
 
     private static final Duration ONE_MINUTE = Duration.ofMinutes(1);
 
+    private static final String TRANSACTION_TIMEOUT = "resultsstore.intake.store.transaction-timeout";
+
+    private static final String STATEMENT_TIMEOUT = "resultsstore.intake.store.statement-timeout";
+
+    private static final String LOCK_TIMEOUT = "resultsstore.intake.store.lock-timeout";
+
+    private static final String IDLE_TIMEOUT = "resultsstore.intake.store.idle-in-transaction-timeout";
+
     /** Checks the rules of contracts/configuration.md; a bad value stops the service starting. */
     public IntakeProperties {
         Rules.within("resultsstore.intake.receipt-timeout", receiptTimeout, ONE_SECOND, ONE_MINUTE);
@@ -58,22 +66,17 @@ public record IntakeProperties(@DefaultValue Pause redeliveryPause, @DefaultValu
          * {@link #visibilityBound()} is the bound actually enforced.
          */
         public Store {
-            Rules.whole("resultsstore.intake.store.transaction-timeout", transactionTimeout, ChronoUnit.SECONDS);
-            Rules.whole("resultsstore.intake.store.statement-timeout", statementTimeout, ChronoUnit.MILLIS);
-            Rules.whole("resultsstore.intake.store.lock-timeout", lockTimeout, ChronoUnit.MILLIS);
-            Rules.whole("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout,
-                    ChronoUnit.MILLIS);
-            Rules.positive("resultsstore.intake.store.lock-timeout", lockTimeout);
-            Rules.positive("resultsstore.intake.store.statement-timeout", statementTimeout);
-            Rules.positive("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout);
-            Rules.atMost("resultsstore.intake.store.lock-timeout", lockTimeout,
-                    "resultsstore.intake.store.statement-timeout", statementTimeout);
-            Rules.atMost("resultsstore.intake.store.lock-timeout", lockTimeout,
-                    "resultsstore.intake.store.transaction-timeout", transactionTimeout);
-            Rules.atMost("resultsstore.intake.store.statement-timeout", statementTimeout,
-                    "resultsstore.intake.store.transaction-timeout", transactionTimeout);
-            Rules.atMost("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout,
-                    "resultsstore.intake.store.transaction-timeout", transactionTimeout);
+            Rules.whole(TRANSACTION_TIMEOUT, transactionTimeout, ChronoUnit.SECONDS);
+            Rules.whole(STATEMENT_TIMEOUT, statementTimeout, ChronoUnit.MILLIS);
+            Rules.whole(LOCK_TIMEOUT, lockTimeout, ChronoUnit.MILLIS);
+            Rules.whole(IDLE_TIMEOUT, idleInTransactionTimeout, ChronoUnit.MILLIS);
+            Rules.positive(LOCK_TIMEOUT, lockTimeout);
+            Rules.positive(STATEMENT_TIMEOUT, statementTimeout);
+            Rules.positive(IDLE_TIMEOUT, idleInTransactionTimeout);
+            Rules.atMost(LOCK_TIMEOUT, lockTimeout, STATEMENT_TIMEOUT, statementTimeout);
+            Rules.atMost(LOCK_TIMEOUT, lockTimeout, TRANSACTION_TIMEOUT, transactionTimeout);
+            Rules.atMost(STATEMENT_TIMEOUT, statementTimeout, TRANSACTION_TIMEOUT, transactionTimeout);
+            Rules.atMost(IDLE_TIMEOUT, idleInTransactionTimeout, TRANSACTION_TIMEOUT, transactionTimeout);
         }
 
         /**
