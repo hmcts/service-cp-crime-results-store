@@ -31,6 +31,14 @@ cp:
     enabled: false
 
 spring:
+  datasource:
+    hikari:
+      # Every cached context keeps its own pool against the one shared test database, so each pool
+      # stays small and holds no idle connection. Four is the most any test holds at once:
+      # ExtractionSweepIT's two-sweep race holds the day on one, runs a sweep on each of two more and
+      # watches for their lock waits on a fourth.
+      maximum-pool-size: 4
+      minimum-idle: 0
   artemis:
     # artemis-jakarta-server is on the test classpath, and with it visible Boot deduces embedded
     # mode and starts an in-VM broker in every context. Off; the listener IT runs its own broker.
