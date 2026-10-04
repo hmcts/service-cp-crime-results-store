@@ -609,6 +609,11 @@ prove the overrun counter.
     observer.pageItems(2); Actually, there were zero interactions with this mock.`
   - GREEN: `ShareReadServiceTest` 30, 0 failures; the gate green (1481 tests passed, 0 skipped; JaCoCo report
     line 0.9954, branch 0.9744).
+  - Gate round 1 (Codex MEDIUM, unsigned cursors): not built. A MAC needs a key shared by every pod and its
+    rotation, which R9 did not design; FR-029 asks only for a strict decode, which is what was built. spec.md
+    acceptance 6 and contracts/read-api.md (the cursor note and the `invalid_cursor` row) now say "does not
+    decode to a valid position" instead of "altered" / "not a cursor the store issued". The orchestrator rules
+    whether a signed cursor is wanted (then it is a new task with its key settings).
   - Gate round 1: `a_page_ending_before_the_epoch_should_get_a_next_cursor_that_decodes` (Codex MEDIUM). RED:
     `FAILED` `IllegalArgumentException: sharedAtMicros must not be negative` at `SearchCursor.after`. GREEN:
     `ShareReadServiceTest` 31, 0 failures.

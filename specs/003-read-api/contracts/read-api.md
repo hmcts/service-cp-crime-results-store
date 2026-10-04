@@ -260,8 +260,11 @@ the same shares for the same days, clock changes included.
 
 - Order: `sharedTime`, then `shareId`, ascending, in both forms.
 - `nextCursor` is `null` on the last page. Otherwise pass it back unchanged with the same parameters.
-- The cursor is opaque text of at most 128 characters. Do not build or change it; an altered one is
-  refused. It marks a position, so it stays valid while new shares are stored.
+- The cursor is opaque text of at most 128 characters. Do not build or change it; one that does not
+  decode to a valid position (changed bytes, cut short, padded, another version) is refused. It is not
+  signed: a change that still decodes to a valid position only moves the page within the same court's
+  search, which the caller may already read (FR-029, research R9). It marks a position, so it stays valid
+  while new shares are stored.
 
 **Search is a query, not a feed.** Shares stored while you page may or may not appear. `FAILED` shares
 (court unknown) never appear. No visibility lag applies. Use pull when you need completeness.
@@ -444,7 +447,7 @@ outside the standard set) gets the same body, `400` with `bad_request`. It is no
 | 400 | `time_range_reversed` | `sharedTo` not after `sharedFrom` | no |
 | 400 | `time_range_too_long` | `sharedTo` more than 31 days after `sharedFrom` | no |
 | 400 | `invalid_latest_only` | not `true` or `false` | no |
-| 400 | `invalid_cursor` | not a cursor the store issued | no |
+| 400 | `invalid_cursor` | does not decode to a valid search position | no |
 | 400 | `invalid_share_id` | not a canonical UUID | no |
 | 400 | `invalid_hearing_id` | not a canonical UUID | no |
 | 400 | `invalid_hearing_day` | not a date | no |

@@ -98,7 +98,7 @@ A consumer asks for the shares of one court centre either between two London cal
 3. **Given** a day range longer than 31 days or reversed, **Then** `400` with `day_range_too_long` or `day_range_reversed`; **given** a time range longer than 31 days, or whose `sharedTo` is not after `sharedFrom`, **Then** `400` with `time_range_too_long` or `time_range_reversed`.
 4. **Given** a day parameter and a time parameter in one call, **Then** `400 conflicting_parameters`.
 5. **Given** a page with more rows after it, **Then** `nextCursor` is set; on the last page it is null.
-6. **Given** a cursor that has been altered, cut short or is longer than 128 characters, **Then** `400` with `invalid_cursor`.
+6. **Given** a cursor that has been altered so that it no longer decodes to a valid position, cut short or is longer than 128 characters, **Then** `400` with `invalid_cursor` (FR-029; the cursor is not signed).
 
 ---
 
