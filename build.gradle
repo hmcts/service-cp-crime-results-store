@@ -20,6 +20,14 @@ apply {
   from("$rootDir/gradle/pmd.gradle")
   from("$rootDir/gradle/test.gradle")
   from("$rootDir/gradle/jar.gradle")
+  from("$rootDir/gradle/apispec-validation.gradle")
+}
+
+// The read API's contract jar (specs/003-read-api research R23): the generated SharesApi and models
+// are compiled against, and validateApiSpecVersions checks this configuration's version is a release.
+configurations {
+  apiSpec
+  implementation.extendsFrom apiSpec
 }
 
 // CVE-2026-68497 (jackson-databind, unbounded numeric parsing), then CVE-2026-89407, -89425,
@@ -55,6 +63,9 @@ dependencies {
   // and HTTP audit. Versions in gradle/libs.versions.toml, which dependabot also reads.
   implementation libs.cp.auth.rules.filter
   implementation libs.cp.audit.filter.springboot
+
+  // --- The read API's contract: generated interface, models and openapi/openapi-spec.yml ---
+  apiSpec libs.api.results.store
 
   // --- Persistence: the store (JdbcClient + Flyway) ---
   implementation 'org.springframework.boot:spring-boot-starter-jdbc'

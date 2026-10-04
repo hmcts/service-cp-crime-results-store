@@ -702,8 +702,9 @@ The service takes it the way `service-cp-crime-hearing-results-validator` takes
   this service's `gradle/repositories.gradle`, no credentials) and GitHub Packages.
 - **Versions.** A push to the api repo's `main` publishes the draft `0.2.0-<sha7>`; a push to `team/rs`
   publishes `rs-<sha7>`; a GitHub Release `vX.Y.Z` publishes `X.Y.Z`. The first drafts, from api commit
-  `2c5bc08` (2026-10-04): `0.2.0-2c5bc08` (main) and `rs-2c5bc08` (`team/rs`). This service pins
-  `rs-2c5bc08` until the release `0.2.0` (T012).
+  `2c5bc08` (2026-10-04): `0.2.0-2c5bc08` (main) and `rs-2c5bc08` (`team/rs`). The payload change of C3
+  followed as api commit `69080b1` (`rs-69080b1`), and this service pins `rs-69080b1` (T009) until the
+  release `0.2.0`, which is made after phase D.
 
 The rulings (C1 to C5; lettered so they do not clash with the research numbers):
 

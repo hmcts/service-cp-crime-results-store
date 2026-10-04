@@ -185,11 +185,13 @@ paths:
           content:
             application/json:
               schema:
-                type: object
+                type: string
+                format: binary
                 description: >-
-                  The hearing-resulted payload without `_metadata`: top level `hearing`, `hearingDay`,
-                  `sharedTime` and `isReshare`. Not validated by the store.
-                additionalProperties: true
+                  The working copy's exact bytes (or the arrived text, when the working copy is empty), without
+                  `_metadata`: a JSON object with top level `hearing`, `hearingDay`, `sharedTime` and
+                  `isReshare`, served byte for byte and not validated by the store. The ETag is the SHA-256
+                  over exactly these bytes.
         '304':
           description: The If-None-Match matched. No body; only the ETag is promised.
           headers:

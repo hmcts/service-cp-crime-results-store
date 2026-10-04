@@ -116,10 +116,11 @@ public class IntakeConfig {
     public IntakeService intakeService(final ShareIdentityParser parser, final KeyDetailsExtractor extractor,
             final JdbcReceiptStore receipts, final ShareStore shareStore, final IntakeObserver observer,
             final ApplicationResultsEnricher enricher, final ObjectProvider<ProgressionApplications> progression,
-            final IntakeProperties intake) {
-        // Until the read settings land (spec 003 T009), the overrun threshold is the derived default lag.
+            final VisibilityLag lag) {
+        // The overrun threshold is the pull's effective lag (ReadApiConfig): a store transaction that held its
+        // number open that long may have been passed by a pull (specs/003-read-api research R6).
         return new IntakeService(parser, extractor, receipts, shareStore, observer, enricher,
-                progression.getIfAvailable(), System::nanoTime, intake.store().visibilityBound());
+                progression.getIfAvailable(), System::nanoTime, lag.value());
     }
 
     /**

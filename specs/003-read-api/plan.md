@@ -35,8 +35,9 @@ fixed marker instead of the payload (D-AUDIT option 4, E1). Detail: [research.md
 matching (`PathPatternParser.defaultInstance`, `RequestPath`); `cp-auth-rules-filter` 1.0.7 and
 `cp-audit-filter-springboot` 1.0.5 (already dependencies); Jackson 3 (`tools.jackson`) for responses;
 Micrometer. One new dependency, the contract jar (research R23): `apiSpec`
-`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-2c5bc08`** (api commit `2c5bc08`)
-until the release `0.2.0` (T012), in an `apiSpec` configuration that `implementation` extends, with
+`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-69080b1`** (api commit `69080b1`,
+which already carries the payload body of R23 C3; it supersedes the first draft `rs-2c5bc08`) until the
+release `0.2.0` (after phase D), in an `apiSpec` configuration that `implementation` extends, with
 `gradle/apispec-validation.gradle` applied. It resolves from the Azure Artifacts `hmcts-lib` repository
 already in `gradle/repositories.gradle`, read anonymously (no credentials):
 
@@ -271,7 +272,7 @@ schema, ports and service of phase B; phase D needs everything (D-RAW accepted, 
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source), `OpenApiContractDriftTest` | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default); the `apiSpec` dependency on `rs-2c5bc08`, `apispec-validation.gradle` applied, the `validate-api-spec-version` job in `ci-released.yml` | FR-017, FR-018, FR-045, FR-056, FR-063; SC-008 |
+| T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source), `OpenApiContractDriftTest` | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default); the `apiSpec` dependency on `rs-69080b1` (supersedes `rs-2c5bc08`), `apispec-validation.gradle` applied, the `validate-api-spec-version` job in `ci-released.yml` | FR-017, FR-018, FR-045, FR-056, FR-063; SC-008 |
 | T010 | api repo first: the payload body as `byte[]` (pull request, `rs-<sha7>` draft, pin); then `ShareParametersTest`, `ShareParametersInterceptorTest`, `InstantFormatTest`, `ShareResponseMapperTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ContentNegotiationTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | `SharesController implements SharesApi`, the mapper to the generated models, `PayloadResponses`, the parameter interceptor, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053, FR-063 |
 | T011 | `ReadApiIT`, `AuditIT`, `NoPayloadInLogsIT`, `PayloadBodyFreeAuditPayloadGenerationServiceTest` | fixes found; D-AUDIT option 4 (E1) | US1–US7; FR-012, FR-022–FR-030, FR-039, FR-051, FR-052; SC-003–SC-006, SC-011 |
 | T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred; Release `v0.2.0` of the api repo and the bump from the draft | FR-057–FR-060, FR-063; SC-012, SC-013 |

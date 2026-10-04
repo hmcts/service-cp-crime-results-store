@@ -6,6 +6,7 @@ import static org.mockito.Mockito.mock;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
+import javax.sql.DataSource;
 import org.apache.hc.core5.util.Timeout;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.transaction.PlatformTransactionManager;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -40,7 +42,9 @@ class IntakeConfigTest {
             "resultsstore.progression.system-user-id=6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f";
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(IntakeConfig.class)
+            .withUserConfiguration(IntakeConfig.class, ReadApiConfig.class)
+            // The read beans are unconditional; building their template opens no connection.
+            .withBean(DataSource.class, () -> new DriverManagerDataSource("jdbc:postgresql://unused.invalid/none"))
             .withBean(ObjectMapper.class, () -> JsonMapper.builder().build())
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
             .withBean(JdbcClient.class, () -> mock(JdbcClient.class))
@@ -72,6 +76,15 @@ class IntakeConfigTest {
                         "resultsstore.intake.store.idle-in-transaction-timeout=5s")
                 .run(context -> assertThat(context.getBean(IntakeService.class).overrunThreshold())
                         .isEqualTo(Duration.ofSeconds(45)));
+    }
+
+    /** Spec 003 T009: the threshold is the effective lag, so a lag set longer than the sum is what counts. */
+    @Test
+    void the_overrun_threshold_should_be_the_effective_lag() {
+        runner.withPropertyValues("resultsstore.publicevents.enabled=true", BASE_URL, SYSTEM_USER_ID,
+                        "resultsstore.read.pull.visibility-lag=200s")
+                .run(context -> assertThat(context.getBean(IntakeService.class).overrunThreshold())
+                        .isEqualTo(Duration.ofSeconds(200)));
     }
 
     @Test

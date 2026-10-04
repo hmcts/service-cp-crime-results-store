@@ -2,9 +2,13 @@ package uk.gov.hmcts.cp.resultsstore.config;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,6 +16,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.ConfigDataApplicationContextInitializer;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 /**
  * Every rule in contracts/configuration.md refuses a bad value when the service starts (FR-046), with
@@ -27,9 +32,18 @@ class ConfigurationValidationTest {
     private static final String SYSTEM_USER_ID =
             "resultsstore.progression.system-user-id=6f1c2c7e-3a4b-4c5d-8e9f-0a1b2c3d4e5f";
 
+    private static final String VISIBILITY_LAG = "resultsstore.read.pull.visibility-lag";
+
+    private static final String LAG_BELOW_SUM = VISIBILITY_LAG + " must be at least "
+            + "resultsstore.intake.store.transaction-timeout + 2 x resultsstore.intake.store.statement-timeout + "
+            + "resultsstore.intake.store.idle-in-transaction-timeout";
+
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
             .withInitializer(new ConfigDataApplicationContextInitializer())
-            .withUserConfiguration(IntakeConfig.class)
+            .withUserConfiguration(IntakeConfig.class, ReadApiConfig.class)
+            // The read beans are unconditional; building their template opens no connection.
+            .withBean(DataSource.class, () -> new DriverManagerDataSource("jdbc:postgresql://unused.invalid/none"))
+            .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
             // The intake beans need a database; only the settings are under test here.
             .withPropertyValues("resultsstore.publicevents.enabled=false");
 
@@ -290,5 +304,104 @@ class ConfigurationValidationTest {
                     assertThat(context).hasNotFailed().hasSingleBean(EnrichmentProperties.class);
                     assertThat(context.getBean(EnrichmentProperties.class).enabled()).isFalse();
                 });
+    }
+
+    /** Spec 003 (E3, FR-017): unset, the lag is the sum the intake timeouts bound, 90 s at their defaults. */
+    @Test
+    void the_visibility_lag_should_default_to_transaction_plus_twice_statement_plus_idle() {
+        runner.run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(context.getBean(ReadApiProperties.class).pull().visibilityLag()).isNull();
+            assertThat(context.getBean(ReadApiProperties.class).statementTimeout()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(context.getBean(VisibilityLag.class).value()).isEqualTo(Duration.ofSeconds(90));
+        });
+    }
+
+    @Test
+    void the_derived_lag_should_follow_custom_intake_values() {
+        runner.withPropertyValues(storeSettings(
+                        "transaction-timeout=30s;statement-timeout=5s;lock-timeout=5s;idle-in-transaction-timeout=5s"))
+                .run(context -> assertThat(context.getBean(VisibilityLag.class).value())
+                        .isEqualTo(Duration.ofSeconds(45)));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"90s", "200s", "10m"})
+    void a_lag_from_the_sum_to_ten_minutes_should_be_taken_as_set(final String lag) {
+        runner.withPropertyValues(VISIBILITY_LAG + "=" + lag)
+                .run(context -> assertThat(context.getBean(VisibilityLag.class).value())
+                        .isEqualTo(Duration.parse("PT" + lag.toUpperCase(Locale.ROOT))));
+    }
+
+    @Test
+    void a_lag_below_the_sum_should_stop_the_service_naming_the_property() {
+        runner.withPropertyValues(VISIBILITY_LAG + "=89s")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage(LAG_BELOW_SUM));
+        // The sum follows the intake values: 45 s here, so 44 s is refused.
+        runner.withPropertyValues(VISIBILITY_LAG + "=44s").withPropertyValues(storeSettings(
+                        "transaction-timeout=30s;statement-timeout=5s;lock-timeout=5s;idle-in-transaction-timeout=5s"))
+                .run(context -> assertThat(context).getFailure().rootCause().hasMessage(LAG_BELOW_SUM));
+    }
+
+    @Test
+    void a_lag_above_ten_minutes_should_stop_the_service() {
+        runner.withPropertyValues(VISIBILITY_LAG + "=601s")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage(VISIBILITY_LAG + " must not exceed 10 minutes"));
+    }
+
+    @Test
+    void a_lag_of_zero_should_stop_the_service() {
+        runner.withPropertyValues(VISIBILITY_LAG + "=0s")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage(VISIBILITY_LAG + " must be above zero"));
+    }
+
+    @Test
+    void an_unset_lag_whose_derived_value_exceeds_ten_minutes_should_name_the_transaction_timeout() {
+        runner.withPropertyValues("resultsstore.intake.store.transaction-timeout=10m")
+                .run(context -> assertThat(context).getFailure().rootCause()
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageStartingWith("resultsstore.intake.store.transaction-timeout")
+                        .hasMessageContaining(VISIBILITY_LAG));
+    }
+
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+        resultsstore.read.statement-timeout=0s | resultsstore.read.statement-timeout must be above zero
+        resultsstore.read.statement-timeout=30s | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
+        resultsstore.read.statement-timeout=31s | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
+        """)
+    void a_read_statement_timeout_of_zero_or_at_the_socket_timeout_should_stop_the_service(final String setting,
+            final String refusal) {
+        runner.withPropertyValues(setting)
+                .run(context -> assertThat(context).getFailure().rootCause().hasMessage(refusal));
+    }
+
+    @Test
+    void a_read_statement_timeout_below_the_socket_timeout_or_with_none_should_be_accepted() {
+        runner.withPropertyValues("resultsstore.read.statement-timeout=29s")
+                .run(context -> assertThat(context).hasNotFailed());
+        runner.withPropertyValues("spring.datasource.hikari.data-source-properties.socketTimeout=0",
+                        "resultsstore.read.statement-timeout=45s")
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        VISIBILITY_LAG + "=89s",
+        VISIBILITY_LAG + "=601s",
+        "resultsstore.read.statement-timeout=31s",
+        "resultsstore.intake.store.transaction-timeout=10m"
+    })
+    void no_message_should_hold_a_value(final String setting) {
+        final String value = setting.substring(setting.indexOf('=') + 1);
+        runner.withPropertyValues(setting).run(context -> assertThat(context).getFailure().rootCause()
+                .hasMessageNotContaining(value)
+                .hasMessageNotContaining("PT"));
     }
 }

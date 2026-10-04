@@ -102,6 +102,16 @@ resultsstore:
     batch-size: ${RESULTSSTORE_SWEEP_BATCHSIZE:100}
     # Counts the intake's attempt.
     max-attempts: ${RESULTSSTORE_SWEEP_MAXATTEMPTS:3}
+  # The read API (specs/003-read-api/contracts/configuration.md). Checked at start; a bad value stops the
+  # service.
+  read:
+    pull:
+      # Unset: derived from resultsstore.intake.store.* (transaction + 2 x statement +
+      # idle-in-transaction, 90 s at their defaults). Set it only to make it longer; at most 10 minutes.
+      # Every pod must share the intake values.
+      visibility-lag: ${RESULTSSTORE_READ_PULL_VISIBILITYLAG:}
+    # The read queries' JDBC query timeout (a client-side cancel); below the socket timeout above.
+    statement-timeout: ${RESULTSSTORE_READ_STATEMENTTIMEOUT:5s}
   # Enrichment from progression (specs/002-enrichment/contracts/configuration.md).
   enrichment:
     enabled: ${RESULTSSTORE_ENRICHMENT_ENABLED:true}

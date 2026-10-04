@@ -8,12 +8,14 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import javax.sql.DataSource;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.scheduling.TaskScheduler;
 import org.springframework.transaction.PlatformTransactionManager;
 import tools.jackson.databind.ObjectMapper;
@@ -34,7 +36,9 @@ class SweepSchedulingConfigTest {
     private final List<String> databaseThreads = new CopyOnWriteArrayList<>();
 
     private final ApplicationContextRunner runner = new ApplicationContextRunner()
-            .withUserConfiguration(IntakeConfig.class, SweepSchedulingConfig.class)
+            .withUserConfiguration(IntakeConfig.class, ReadApiConfig.class, SweepSchedulingConfig.class)
+            // The read beans are unconditional; building their template opens no connection.
+            .withBean(DataSource.class, () -> new DriverManagerDataSource("jdbc:postgresql://unused.invalid/none"))
             .withBean(ObjectMapper.class, () -> JsonMapper.builder().build())
             .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
             .withBean(JdbcClient.class, () -> mock(JdbcClient.class, invocation -> {

@@ -36,6 +36,16 @@ final class Rules {
         }
     }
 
+    /**
+     * Checks that the value is at least a bound another setting gives. The failure names both, never a value.
+     */
+    /* default */ static void atLeast(final String name, final Duration value, final String boundName,
+            final Duration bound) {
+        if (value.compareTo(bound) < 0) {
+            throw new IllegalArgumentException(name + " must be at least " + boundName);
+        }
+    }
+
     /* default */ static void positive(final String name, final Duration value) {
         if (value.isNegative() || value.isZero()) {
             throw new IllegalArgumentException(name + " must be above zero");

@@ -12,8 +12,8 @@ Build settings, not runtime properties. Set in `gradle/libs.versions.toml` and `
 
 | Item | Value | Where | Rule |
 |---|---|---|---|
-| Coordinates | `uk.gov.hmcts.cp:api-cp-crime-results-store` | `gradle/libs.versions.toml` `[libraries]`, alias `api-cp-crime-results-store`; `apiSpec libs.api.cp.crime.results.store` in `build.gradle` | the `apiSpec` configuration; `implementation.extendsFrom apiSpec` |
-| Version while phase C is built | `rs-2c5bc08` (draft from the api repo's `team/rs`, commit `2c5bc08`); a later `rs-<sha7>` when T010 changes the payload body | `gradle/libs.versions.toml` `[versions]` | an exact draft, never a range |
+| Coordinates | `uk.gov.hmcts.cp:api-cp-crime-results-store` | `gradle/libs.versions.toml` `[libraries]`, alias `api-results-store`; `apiSpec libs.api.results.store` in `build.gradle` | the `apiSpec` configuration; `implementation.extendsFrom apiSpec` |
+| Version while phase C is built | `rs-69080b1` (draft from the api repo's `team/rs`, commit `69080b1`, which already serves the payload as `byte[]`; it superseded the first draft `rs-2c5bc08`) | `gradle/libs.versions.toml` `[versions]` | an exact draft, never a range |
 | Version released | `0.2.0` (T012); `0.3.0` with the arrived route (T013) | the same | strict `X.Y.Z`: `./gradlew validateApiSpecVersions` (`gradle/apispec-validation.gradle`) fails on anything else, and the `validate-api-spec-version` job runs it before `ci-release` in `.github/workflows/ci-released.yml` |
 | Repository | Azure Artifacts `hmcts-lib`, `https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/maven/v1` | `gradle/repositories.gradle` (already there) | read anonymously; no credentials. Also published to GitHub Packages, not used for reading |
 | Audit filter's document | `audit.http.openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}` | `application.yaml` | **unchanged**. The service's own `src/main/resources/results-store-openapi.yaml` stays the one document the glob finds; the jar carries its spec only at `openapi/openapi-spec.yml`. `OpenApiContractDriftTest` keeps the two equal (paths, components, tags; not `info` or `servers`) |

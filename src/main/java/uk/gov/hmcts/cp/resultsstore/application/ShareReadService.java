@@ -43,7 +43,7 @@ public class ShareReadService {
 
     private final ReadObserver observer;
 
-    private final Duration visibilityLag;
+    private final Duration lag;
 
     /**
      * Creates the service.
@@ -55,7 +55,16 @@ public class ShareReadService {
     public ShareReadService(final ShareQueries queries, final ReadObserver observer, final Duration visibilityLag) {
         this.queries = queries;
         this.observer = observer;
-        this.visibilityLag = visibilityLag;
+        this.lag = visibilityLag;
+    }
+
+    /**
+     * The pull's visibility lag, for the wiring tests.
+     *
+     * @return the lag
+     */
+    public Duration visibilityLag() {
+        return lag;
     }
 
     /**
@@ -78,7 +87,7 @@ public class ShareReadService {
         }
         final int checkedLimit = limit(limit);
         final ShareQueries.PullRows rows = queries.pull(new PullQuery(storedAfterSeq, checkedLimit, filter,
-                courtCentreId), visibilityLag);
+                courtCentreId), lag);
         final boolean hasMore = rows.rows().size() > checkedLimit;
         final List<ShareView> items = hasMore ? rows.rows().subList(0, checkedLimit) : rows.rows();
         final long next = hasMore ? items.getLast().storedSeq()
