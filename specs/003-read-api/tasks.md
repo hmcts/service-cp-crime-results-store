@@ -1024,6 +1024,14 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` exit 0
     (`{"FEATURE_DIR":".../specs/003-read-api","AVAILABLE_DOCS":["research.md","data-model.md","contracts/",
     "quickstart.md","tasks.md"]}`).
+  - Gate round 1 (Codex MEDIUM, stale jar in the smoke image): scripts/container-smoke.sh now removes
+    `build/libs/*.jar` before `./gradlew bootJar` and fails unless exactly one jar results; docker/startup.sh
+    refuses (exit 1, message to stderr) when more than one application jar is in `/app` (or `./build/libs`),
+    and now exits 1 when there is none. The Dockerfile keeps its `build/libs/*.jar` copy, because the jar's
+    name carries the build's version. RED (a stale `build/libs/aaa-stale.jar` beside the current jar, image
+    built, `startup.sh` run): `startup.sh : Running docker java jarfile /app/aaa-stale.jar`. GREEN: the same
+    image `startup.sh : ERROR - 2 jarfiles found in /app, expected one. Unable to start application`, exit 1;
+    with one jar it runs it; the smoke prints `PASS`, every check `ok`, exit 0.
 
 ---
 

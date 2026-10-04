@@ -122,9 +122,17 @@ teardown() {
 trap teardown EXIT
 
 # Unconditional: the image is built from whatever sits in build/libs, and a jar left there by an
-# earlier checkout would have this script smoke-testing code that is no longer in the tree.
+# earlier checkout or version would have this script smoke-testing code that is no longer in the tree.
+# The old jars are removed first, so the image holds the one jar built here (docker/startup.sh refuses
+# to start with more than one).
 log "building the application jar"
+rm -f build/libs/*.jar
 ./gradlew bootJar
+jar_count=$(find build/libs -maxdepth 1 -name '*.jar' | wc -l)
+if [ "$jar_count" -ne 1 ]; then
+  log "FAIL: expected one application jar in build/libs, found ${jar_count}"
+  exit 1
+fi
 
 log "starting dependencies"
 compose up --detach postgres artemis wiremock

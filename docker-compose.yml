@@ -4,7 +4,8 @@
 #   docker compose up -d postgres artemis wiremock   # dependencies only, for ./gradlew bootRun
 #   docker compose up -d --build                     # the service in its container as well
 #
-# Build the jar first (./gradlew bootJar): the image copies build/libs/*.jar.
+# Build the jar first (./gradlew bootJar): the image copies build/libs/*.jar, and docker/startup.sh
+# refuses to start when more than one jar is there.
 services:
   app:
     build:
