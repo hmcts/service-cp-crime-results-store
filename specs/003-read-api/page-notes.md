@@ -6,10 +6,10 @@ build to the read API.
 **Status**: notes only. The page has not been edited. Each note gives the section, the wording on the
 page today where this repository records it, and paste-ready wording. Every decision behind them was
 taken with Sachin on 2026-10-03 (spec.md *Decisions taken with Sachin*). Reconciled with what was built
-(phases A to C) by T012 on 2026-10-04.
+(phases A to C) by T012 on 2026-10-04, and with the arrived text (phase D) by T013.
 
 In one line: the read API is six `GET` endpoints under `/results-store/v1` (the sixth, the arrived text,
-in phase D). No response carries the message envelope's metadata (`_metadata`).
+built in phase D). No response carries the message envelope's metadata (`_metadata`).
 Pull is made safe by a visibility lag, not by asking PostgreSQL for the lowest open write. Every action
 is derived from method and path and admits "System Users" and "Second Line Support". The full consumer
 contract is `specs/003-read-api/contracts/read-api.md`.
@@ -57,7 +57,7 @@ and returns only rows below it." The page already allowed a lag as the fallback.
 > | `GET /shares/{shareId}` | One share's current key details, version number, latest flag, predecessor and youth facts |
 > | `GET /shares/{shareId}/payload` | The working copy (the text as it arrived when there is none), without envelope metadata (no legacy CP query service returns the message envelope). `ETag`: SHA-256 over the exact bytes returned. Identity and `enrichmentApplied` in `Results-Store-*` headers. `If-None-Match` gives `304` |
 > | `GET /hearings/{hearingId}/days/{hearingDay}/shares` | Every version of one day, in `sharedTime` order; `404` when the day has none |
-> | `GET /shares/{shareId}/payload/arrived` | The text as hearing sent it, before enrichment, without envelope metadata. `ETag`: SHA-256 over the exact bytes returned (not the stored checksum, which includes the metadata) |
+> | `GET /shares/{shareId}/payload/arrived` | The text as hearing sent it, before enrichment (no application results added), without envelope metadata, written back as JSON by the store. `ETag`: SHA-256 over the exact bytes returned (not the stored checksum, which includes the metadata). The same `Results-Store-*` headers as the payload, with the form always `arrived-text`; `If-None-Match` gives `304`. Its own action and rule |
 
 Add under the table:
 
@@ -160,8 +160,8 @@ Still open, as a risk: the production PostgreSQL version and whether it uses syn
   document is published as the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
   hmcts/api-cp-crime-results-store (Azure Artifacts `hmcts-lib`, anonymous read), with a generated Spring
   interface and models; a client can be generated from `openapi/openapi-spec.yml` in it. Build against a
-  release, not a draft: the first release is made after phase D (the service builds today on the draft
-  `rs-69080b1`).
+  release, not a draft: the one release, `0.2.0`, is made after phase D and covers all five operations,
+  the arrived text included (the service builds today on the draft `rs-a33c5ec`).
 - **S7.** The groups are "System Users" and "Second Line Support"; probation's system user needs "System
   Users".
 - **S8.** `ETag` = `"<SHA-256 hex over the exact bytes served>"`, strong and quoted: DV-19 can compare
@@ -169,8 +169,9 @@ Still open, as a risk: the production PostgreSQL version and whether it uses syn
   (above); the wire key is `shareId` from the store.
 - **S8 (`ETag`).** It is never the stored checksum: no served body includes `_metadata`, and the stored
   checksum is over the text with it.
-- **S10.** The arrived text on `GET /shares/{shareId}/payload/arrived` (phase D), before enrichment and
-  without envelope metadata.
+- **S10.** The arrived text on `GET /shares/{shareId}/payload/arrived` (built in phase D), before
+  enrichment and without envelope metadata; `ETag` over the bytes served, never the stored checksum;
+  `Results-Store-Payload-Form: arrived-text`; `304` on `If-None-Match`.
 - **S12.** The store exposes no envelope metadata; whether a message carried a user id is not served. To
   be settled when the probation design is finalised.
 - **S6.** Retention is still open (the page's open question 1).

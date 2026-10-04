@@ -21,8 +21,9 @@ line points here, and this file stays as the record of the change.
   The two share one per-request marker, so a request is counted once; `page.items` and `payload.bytes` by
   `ShareReadService` when the answer is built. The overrun counter fires after the store transaction's
   commit has returned.
-- `outcome=not_modified` exists for `payload` and `arrived_payload` only; every other
-  (endpoint, outcome) pair is registered.
+- `outcome=not_modified` exists for `payload` and `arrived_payload` only (`ReadOutcome.appliesTo`); every
+  other (endpoint, outcome) pair is registered. `arrived_payload` is registered up front like the others,
+  so its six series read zero before the first arrived-text request.
 - **Outcome from status.** Every status the controllers or the advice can send maps to one outcome:
 
   | Status | `outcome` |
@@ -41,7 +42,7 @@ line points here, and this file stays as the record of the change.
 
 | Name | Tags (allowed values) | Moves when | FR |
 |---|---|---|---|
-| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (phase D); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request on a matched route, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above); a request refused before its handler is chosen (a `406`) is counted once by `api/ReadApiExceptionHandler` instead, by the same table | FR-055 |
+| `resultsstore.read.requests` | `endpoint` = `pull` \| `search` \| `share` \| `payload` \| `day_versions` \| `arrived_payload` (the arrived text, phase D; registered with the others when the observer is built); `outcome` = `ok` \| `not_modified` \| `bad_request` \| `not_found` \| `unavailable` \| `failed` | once per request on a matched route, when the request completes (`api/ReadMetricsInterceptor`: endpoint from the matched route, outcome from the status, by the table above); a request refused before its handler is chosen (a `406`) is counted once by `api/ReadApiExceptionHandler` instead, by the same table | FR-055 |
 | `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` \| `connector_rejected` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter), by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`), or by the HTTP connector before the service sees it (`400 bad_request` from the host's error report, `api/ProblemErrorReportValve`: an encoded slash or backslash, a NUL, a malformed escape, a character outside the standard set; counted as `connector_rejected` once the report's body has been written). These requests are not audited, so this counter is their only record in this service. Every refusal is counted after its body is written; a body that cannot be written (the client has gone) is not counted | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN = yes, E4). The threshold is the effective lag, 90 s by default | FR-020 |
 

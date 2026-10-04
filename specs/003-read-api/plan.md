@@ -35,9 +35,10 @@ fixed marker instead of the payload (D-AUDIT option 4, E1). Detail: [research.md
 matching (`PathPatternParser.defaultInstance`, `RequestPath`); `cp-auth-rules-filter` 1.0.7 and
 `cp-audit-filter-springboot` 1.0.5 (already dependencies); Jackson 3 (`tools.jackson`) for responses;
 Micrometer. One new dependency, the contract jar (research R23): `apiSpec`
-`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-69080b1`** (api commit `69080b1`,
-which already carries the payload body of R23 C3; it supersedes the first draft `rs-2c5bc08`) until the
-release `0.2.0` (after phase D), in an `apiSpec` configuration that `implementation` extends, with
+`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-a33c5ec`** (api commit `a33c5ec`,
+which carries the payload body of R23 C3 and the arrived-text operation; it supersedes `rs-69080b1`, used by
+phases A to C, and the first draft `rs-2c5bc08`) until the one release `0.2.0` at the end of 003, covering
+all five operations, in an `apiSpec` configuration that `implementation` extends, with
 `gradle/apispec-validation.gradle` applied. It resolves from the Azure Artifacts `hmcts-lib` repository
 already in `gradle/repositories.gradle`, read anonymously (no credentials):
 
@@ -213,7 +214,7 @@ docker/wiremock/mappings/identity-stub.json # ~ lower priority default (T012)
 docker/wiremock/mappings/identity-no-group.json  # + header-matched caller in neither group (T012)
 scripts/container-smoke.sh                  # ~ HTTP checks (T012)
 build.gradle                                # ~ apiSpec configuration and dependency; apispec-validation applied (T009)
-gradle/libs.versions.toml                   # ~ api-cp-crime-results-store: rs-<sha7> draft, then 0.2.0 (T012), 0.3.0 (T013)
+gradle/libs.versions.toml                   # ~ api-cp-crime-results-store: rs-<sha7> drafts (T009, T013), then 0.2.0 once, after phase D
 .github/workflows/ci-released.yml           # ~ validate-api-spec-version job (T009)
 
 src/test/java/uk/gov/hmcts/cp/resultsstore/
@@ -275,13 +276,13 @@ schema, ports and service of phase B; phase D needs everything (D-RAW accepted, 
 | T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source), `OpenApiContractDriftTest` | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default); the `apiSpec` dependency on `rs-69080b1` (supersedes `rs-2c5bc08`), `apispec-validation.gradle` applied, the `validate-api-spec-version` job in `ci-released.yml` | FR-017, FR-018, FR-045, FR-056, FR-063; SC-008 |
 | T010 | api repo first: the payload body as `byte[]` (pull request, `rs-<sha7>` draft, pin); then `ShareParametersTest`, `ShareParametersInterceptorTest`, `InstantFormatTest`, `ShareResponseMapperTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ContentNegotiationTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | `SharesController implements SharesApi`, the mapper to the generated models, `PayloadResponses`, the parameter interceptor, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053, FR-063 |
 | T011 | `ReadApiIT`, `AuditIT`, `NoPayloadInLogsIT`, `PayloadBodyFreeAuditPayloadGenerationServiceTest` | fixes found; D-AUDIT option 4 (E1) | US1–US7; FR-012, FR-022–FR-030, FR-039, FR-051, FR-052; SC-003–SC-006, SC-011 |
-| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred. The api repo Release `v0.2.0` and the bump from the draft follow phase D (orchestrator ruling) | FR-057–FR-060, FR-063; SC-012, SC-013 |
+| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred. The api repo's one Release `v0.2.0` (all five operations) and the bump from the draft follow phase D (orchestrator ruling) | FR-057–FR-060, FR-063; SC-012, SC-013 |
 
 ### Phase D: arrived text (D-RAW accepted, E2)
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T013 | api repo first: the arrived operation (pull request, `rs-<sha7>` draft, pin); then rules, OpenAPI, drift and route tests gain the route (red); `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT` arrived cases | the route end to end, served without `_metadata`, `ETag` over the served bytes; Release `v0.3.0` and the bump | FR-001 (arrived route), FR-041, FR-046 (arrived action), FR-063; US8; SC-014 |
+| T013 | api repo first: the arrived operation (pull request, `rs-<sha7>` draft, pin); then rules, OpenAPI, drift and route tests gain the route (red); `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT` arrived cases | the route end to end, served without `_metadata`, `ETag` over the served bytes; the pin moved to the draft `rs-a33c5ec` (no release here: the one Release `v0.2.0`, covering all five operations, and the bump follow phase D) | FR-001 (arrived route), FR-041, FR-046 (arrived action), FR-063; US8; SC-014 |
 
 Rules for every task: a unit test per class; an IT on Testcontainers Postgres, embedded Artemis or
 WireMock for every persistence, messaging and HTTP path; latches or Awaitility, never sleeps; no payload
@@ -330,8 +331,8 @@ text in assertion or log output; one commit per task, red run quoted before gree
     production PostgreSQL version and whether it uses synchronous replication (D-PG-VERSION / HA, E11:
     a recorded risk, not a decision; PostgreSQL 17's `transaction_timeout` is a later tightening).
 15. Phase C builds on a draft contract (`rs-<sha7>`); each later `team/rs` commit publishes a new draft
-    while phase C runs. The service pins one exact draft, and T012 moves it to the release `0.2.0`
-    before anything is released; `validateApiSpecVersions` refuses a release that still names a draft.
+    while 003 runs. The service pins one exact draft (`rs-a33c5ec` from T013), and after phase D the
+    orchestrator moves it to the one release `0.2.0` before anything is released; `validateApiSpecVersions` refuses a release that still names a draft.
 
 ## Complexity Tracking
 

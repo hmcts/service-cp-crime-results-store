@@ -8,8 +8,9 @@ distribution, court register, support staff). This is the document to review for
 **Machine-readable form**: the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
 [hmcts/api-cp-crime-results-store](https://github.com/hmcts/api-cp-crime-results-store) (Azure Artifacts
 `hmcts-lib`, anonymous read): the spec at `openapi/openapi-spec.yml`, a generated Spring interface
-(`SharesApi`) and models. Endpoints 1 to 5 are built against the draft `rs-69080b1`; the first release
-(`0.2.0`, or `0.3.0` with the arrived text) is made after phase D. Build a client against a release. The
+(`SharesApi`) and models. All six endpoints (five generated operations) are built against the draft
+`rs-a33c5ec`; the first release, `0.2.0`, is made once, at the end of spec 003, and covers all five
+operations, the arrived text included. Build a client against a release. The
 store's own `src/main/resources/results-store-openapi.yaml` is kept identical to it by a build-time test.
 Where this document and the spec disagree, this document is corrected.
 
@@ -27,7 +28,7 @@ The words MUST, MUST NOT, SHOULD and MAY are used in their usual sense. "The sto
 | 3 | `GET /results-store/v1/shares/{shareId}` | One share's current key details, chain and youth facts | `results-store.get-share` |
 | 4 | `GET /results-store/v1/shares/{shareId}/payload` | The payload the store holds for one share, without the envelope metadata, with an `ETag` | `results-store.get-share-payload` |
 | 5 | `GET /results-store/v1/hearings/{hearingId}/days/{hearingDay}/shares` | Every version of one hearing day, in `sharedTime` order | `results-store.list-hearing-day-shares` |
-| 6 | `GET /results-store/v1/shares/{shareId}/payload/arrived` | The text as hearing sent it, before enrichment, without the envelope metadata. Delivered in phase D of spec 003 | `results-store.get-share-arrived-payload` |
+| 6 | `GET /results-store/v1/shares/{shareId}/payload/arrived` | The text as hearing sent it, before enrichment, without the envelope metadata (phase D of spec 003) | `results-store.get-share-arrived-payload` |
 
 Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 
@@ -340,16 +341,29 @@ upgrade, compare content, not bytes.
 
 ### 4.6 The arrived text: `GET /results-store/v1/shares/{shareId}/payload/arrived`
 
-Delivered in phase D of spec 003, after the other endpoints.
+Built in phase D of spec 003 (operation `getShareArrivedPayload`; action
+`results-store.get-share-arrived-payload`, with its own allow rule admitting "System Users" and "Second
+Line Support" on this method and path).
 
-- Body: the message as hearing sent it, **before** enrichment, **without `_metadata`**, as
-  `application/json`. The store parses the text, removes `_metadata` and writes it back as JSON, so it
-  is not byte-identical to what hearing sent: key order and values are hearing's; spacing and escape
-  forms are the store's.
-- `ETag`: `"<64 lower-case hex>"`, the SHA-256 of exactly the bytes of this body. It is **not** the
-  store's checksum of the arrived message (that is over the text with `_metadata`).
-- Headers as section 4.4, with `Results-Store-Payload-Form: arrived-text`.
-- Conditional fetch, stability promise and errors as section 4.4. Its own action and allow rule.
+- Body: the message as hearing sent it, **before** enrichment (no court-application results added),
+  **without `_metadata`**, as `application/json` (no charset parameter; UTF-8). The store reads the text
+  it keeps as it arrived, parses it, removes the top-level `_metadata` member and writes it back as
+  compact JSON, so it is not byte-identical to what hearing sent: key order, values and decimal forms are
+  hearing's; spacing and escape forms are the store's. It is served whatever the working copy holds.
+- `ETag`: `"<64 lower-case hex>"`, strong and quoted, the SHA-256 of exactly the bytes of this body. It is
+  **not** the store's checksum of the arrived message (that is over the text with `_metadata`), and it is
+  not the `/payload` `ETag` of the same share when the working copy differs.
+- Headers as section 4.4, with `Results-Store-Payload-Form: arrived-text` always.
+  `Results-Store-Enrichment-Applied` is the share's own fact as stored (whether the working copy was
+  enriched at intake), not a statement about this body, which never carries application results.
+  `Cache-Control: no-store`; `Content-Length` the byte count.
+- Conditional fetch (`If-None-Match` alone, in a list, weak or `*`: `304` with the `ETag`), stability
+  promise and errors (`400 invalid_share_id`, `404 share_not_found`, and the section 6 list) as section
+  4.4. A stored text that cannot be parsed (never expected: intake stores only texts it could read) is
+  `500 internal_error`, and the text is never returned or logged.
+- Audited as section 2.4, with the fixed marker in place of the body; counted in
+  `resultsstore.read.requests` and `resultsstore.read.duration` under `endpoint=arrived_payload`, and in
+  `resultsstore.read.payload.bytes`.
 
 ---
 

@@ -703,8 +703,9 @@ The service takes it the way `service-cp-crime-hearing-results-validator` takes
 - **Versions.** A push to the api repo's `main` publishes the draft `0.2.0-<sha7>`; a push to `team/rs`
   publishes `rs-<sha7>`; a GitHub Release `vX.Y.Z` publishes `X.Y.Z`. The first drafts, from api commit
   `2c5bc08` (2026-10-04): `0.2.0-2c5bc08` (main) and `rs-2c5bc08` (`team/rs`). The payload change of C3
-  followed as api commit `69080b1` (`rs-69080b1`), and this service pins `rs-69080b1` (T009) until the
-  release `0.2.0`, which is made after phase D.
+  followed as api commit `69080b1` (`rs-69080b1`, pinned by T009 for phases A to C), and the arrived-text
+  operation as api commit `a33c5ec` (`rs-a33c5ec`, pinned by T013). The service stays on `rs-a33c5ec` until
+  the one release `0.2.0`, made after phase D and covering all five operations.
 
 The rulings (C1 to C5; lettered so they do not clash with the research numbers):
 

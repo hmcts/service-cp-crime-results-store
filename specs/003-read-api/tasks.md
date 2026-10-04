@@ -969,10 +969,10 @@ pins the audit behaviour; the smoke proves it in the compose stack.
   - specs/003-read-api/contracts/*.md and quickstart.md checked against what was built and corrected; specs/003-read-api/page-notes.md reconciled; specs/003-read-api/plan.md constitution reference 2.2.0; specs/003-read-api/spec.md status set to Implemented (phases A to C);
   - `/speckit-analyze` (read-only) over spec.md, plan.md and tasks.md with the constitution, research, data-model and contracts as context; every CRITICAL and HIGH finding resolved, MEDIUM fixed or listed below with a reason; the result recorded under this task; `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` exits 0;
   - the Deferred list below, completed with anything the phases left open;
-  - the contract release (research R23 C4), last, once the smoke and the documents are done: a GitHub Release `v0.2.0` of hmcts/api-cp-crime-results-store from the api `main` commit that `team/rs` was fast-forwarded to for phase C; its ci-released run publishes `0.2.0`; gradle/libs.versions.toml bumped from the `rs-<sha7>` draft to `0.2.0`; `./gradlew validateApiSpecVersions` passes (quoted); `OpenApiContractDriftTest` green against the released jar. Phase D's arrived route is not in `0.2.0`; it is released as `0.3.0` by T013.
+  - the contract release (research R23 C4), last, once the smoke and the documents are done: a GitHub Release `v0.2.0` of hmcts/api-cp-crime-results-store from the api `main` commit that `team/rs` was fast-forwarded to for phase C; its ci-released run publishes `0.2.0`; gradle/libs.versions.toml bumped from the `rs-<sha7>` draft to `0.2.0`; `./gradlew validateApiSpecVersions` passes (quoted); `OpenApiContractDriftTest` green against the released jar. Corrected by T013 (orchestrator ruling): there is ONE api release, `v0.2.0`, at the end of 003, covering all five operations (the arrived route of phase D included); there is no `0.3.0`. The release and the bump are the orchestrator's step after phase D, not part of T012 or T013.
   - Covers: FR-012 and FR-039 (the contract text checked against what was built), FR-021 (document half), FR-022–FR-025 and FR-040 (likewise), FR-057, FR-058, FR-059, FR-060; FR-063 (the release and the bump) is deferred to after phase D by the orchestrator's ruling (see
     Deferred); SC-012, SC-013.
-  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the gate green. Amended by the orchestrator's ruling: the release `0.2.0`, the bump from `rs-69080b1` and
+  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the gate green. Amended by the orchestrator's ruling: the one release `0.2.0` (all five operations), the bump from the draft (`rs-a33c5ec` since T013) and
     `validateApiSpecVersions` passing follow phase D (Deferred), so they are not part of this task's tick.
   - Deferred (not in 003):
     - push notifications to consumers (outbox, Service Bus); pull is the only feed;
@@ -988,9 +988,10 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     - deploy values in `cpp-aks-deploy` (audit transport hosts and credentials, the gateway route to `/results-store/v1`) and the Azure Monitor alert rules for `resultsstore.intake.visibility.overrun` and `read.requests{outcome=unavailable}`;
     - consumer client code in YOT and probation (they build to contracts/read-api.md);
     - a youth-raised feed for spec 004's held `FALSE`→`TRUE` changes (D-YOUTH-RAISE);
-    - the api repo's GitHub Release `v0.2.0` (with phase D's route, `0.3.0`) and the bump of
-      gradle/libs.versions.toml from the draft `rs-69080b1` to a release: after phase D (orchestrator ruling;
-      not done in T012). Until then a service release is refused by `validate-api-spec-version`;
+    - the api repo's one GitHub Release `v0.2.0` (all five operations, phase D's arrived route included; no
+      `0.3.0`) and the bump of gradle/libs.versions.toml from the draft (`rs-a33c5ec` since T013) to `0.2.0`:
+      after phase D, the orchestrator's step (not done in T012 or T013). Until then a service release is
+      refused by `validate-api-spec-version`;
     - D-PG-VERSION / HA: the production PostgreSQL version and synchronous replication stay a recorded risk
       (E11; research R4);
     - Flyway's own unpooled connection has no `socketTimeout` (the pool's `data-source-properties` do not
@@ -1087,10 +1088,103 @@ rule. Its own phase so phases A to C never wait on it. Depends on phase C.
 **Independent test**: `ReadApiIT` serves the arrived text without `_metadata`, with `ETag` equal to the
 SHA-256 of the body and not equal to `payload_sha256`.
 
-- [ ] T013 [US8] Api repo first (research R23 C4): in hmcts/api-cp-crime-results-store, a pull request adding `GET /results-store/v1/shares/{shareId}/payload/arrived` (operation `getShareArrivedPayload`, tag `shares`, the payload operation's parameters, headers and `type: string`, `format: binary` `200` body; contracts/read-api.md §4.6), with a CHANGELOG line and an `OpenApiObjectsTest` case that it returns `ResponseEntity<byte[]>`; merged and fast-forwarded to `team/rs`; its `rs-<sha7>` draft published; gradle/libs.versions.toml pinned to that draft (the drift test is red until the service's document follows, and `OpenApiContractTest.every_sharesapi_operation_should_be_overridden` is red until the controller does). Then test first, contract first within the service: `ResultsStoreRulesTest`, `OpenApiDocumentTest`, `ApiRouteTest`, `OpenApiContractTest` and `OpenApiContractDriftTest` gain the route and action through their parameterised sources (red until the contract changes); then src/main/resources/results-store-openapi.yaml (the same operation, so the drift test passes), src/main/resources/acl/results-store-rules.drl (`results-store.get-share-arrived-payload`), src/main/java/uk/gov/hmcts/cp/resultsstore/filters/ApiRoute.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ReadEndpoint.java (+ `ARRIVED_PAYLOAD`); then test first `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT`, `MicrometerReadObserverTest` cases below; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareQueries.java (+ `arrivedText`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareQueries.java (identity columns and `p.payload_text`; `payload_sha256` not read), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareReadService.java (strips with T005's `EnvelopeMetadata`, hashes the served bytes), src/main/java/uk/gov/hmcts/cp/resultsstore/api/SharesController.java (overrides the generated `getShareArrivedPayload`, through `PayloadResponses`), src/main/java/uk/gov/hmcts/cp/resultsstore/api/ShareParametersInterceptor.java (covers the route), src/main/java/uk/gov/hmcts/cp/resultsstore/filters/PayloadBodyFreeAuditPayloadGenerationService.java (covers the route); last, a GitHub Release `v0.3.0` of the api repo and gradle/libs.versions.toml bumped to `0.3.0` (`validateApiSpecVersions` passes); no constitution change (T012 wrote the Principle II clause in 2.2.0); specs/003-read-api/contracts/read-api.md §4.6 checked against what was built
+- [X] T013 [US8] Api repo first (research R23 C4): in hmcts/api-cp-crime-results-store, a pull request adding `GET /results-store/v1/shares/{shareId}/payload/arrived` (operation `getShareArrivedPayload`, tag `shares`, the payload operation's parameters, headers and `type: string`, `format: binary` `200` body; contracts/read-api.md §4.6), with a CHANGELOG line and an `OpenApiObjectsTest` case that it returns `ResponseEntity<byte[]>`; merged and fast-forwarded to `team/rs`; its `rs-<sha7>` draft published; gradle/libs.versions.toml pinned to that draft (the drift test is red until the service's document follows, and `OpenApiContractTest.every_sharesapi_operation_should_be_overridden` is red until the controller does). Then test first, contract first within the service: `ResultsStoreRulesTest`, `OpenApiDocumentTest`, `ApiRouteTest`, `OpenApiContractTest` and `OpenApiContractDriftTest` gain the route and action through their parameterised sources (red until the contract changes); then src/main/resources/results-store-openapi.yaml (the same operation, so the drift test passes), src/main/resources/acl/results-store-rules.drl (`results-store.get-share-arrived-payload`), src/main/java/uk/gov/hmcts/cp/resultsstore/filters/ApiRoute.java, src/main/java/uk/gov/hmcts/cp/resultsstore/domain/ReadEndpoint.java (+ `ARRIVED_PAYLOAD`); then test first `JdbcShareQueriesIT`, `ShareReadServiceTest`, `SharePayloadControllerTest`, `ReadApiIT`, `AuditIT`, `MicrometerReadObserverTest` cases below; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareQueries.java (+ `arrivedText`), src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareQueries.java (identity columns and `p.payload_text`; `payload_sha256` not read), src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareReadService.java (strips with T005's `EnvelopeMetadata`, hashes the served bytes), src/main/java/uk/gov/hmcts/cp/resultsstore/api/SharesController.java (overrides the generated `getShareArrivedPayload`, through `PayloadResponses`), src/main/java/uk/gov/hmcts/cp/resultsstore/api/ShareParametersInterceptor.java (covers the route), src/main/java/uk/gov/hmcts/cp/resultsstore/filters/PayloadBodyFreeAuditPayloadGenerationService.java (covers the route); no release here (corrected by the orchestrator's ruling: ONE api release `v0.2.0` at the end of 003 covering all five operations, then the bump from the draft, both the orchestrator's step after this phase; there is no `0.3.0`); no constitution change (T012 wrote the Principle II clause in 2.2.0); specs/003-read-api/contracts/read-api.md §4.6 checked against what was built
   - Cases: `JdbcShareQueriesIT.arrived_text_should_return_payload_text_with_the_identity_columns`; `ShareReadServiceTest.arrived_body_should_have_no_metadata_and_its_etag_should_be_the_sha256_of_the_served_bytes`; `ShareReadServiceTest.arrived_etag_should_never_equal_payload_sha256`; `SharePayloadControllerTest.arrived_body_should_be_byte_identical_to_the_service_bytes_with_form_arrived_text`; `ReadApiIT.arrived_should_serve_both_groups_and_refuse_a_caller_in_neither`; `ReadApiIT.arrived_body_parsed_should_equal_the_published_message_without_metadata` (no application results added); `ReadApiIT.arrived_if_none_match_should_give_304`; `AuditIT.arrived_response_event_should_carry_the_marker`; `MicrometerReadObserverTest`: `arrived_payload` registered with `not_modified`.
   - Covers: FR-001 (arrived route), FR-038 (arrived query), FR-041, FR-046 (arrived action), FR-049 (its rule), FR-063 (the route published api repo first); US8; SC-014.
-  - Done when: the api pull request merged, its draft and then `0.3.0` published (run URLs recorded under the task); every named test class green; the service on `0.3.0` with `validateApiSpecVersions` passing; the gate green; the smoke still `PASS`.
+  - Done when (as corrected by the orchestrator's ruling): the api operation merged and its draft `rs-a33c5ec` published, the service pinned to it; every named test class green; the gate green; the smoke `PASS` with the arrived checks. The release `0.2.0` and `validateApiSpecVersions` passing follow phase D (Deferred under T012).
+  - Api repo (done before this phase, orchestrator's note): hmcts/api-cp-crime-results-store carries
+    `getShareArrivedPayload` (`default ResponseEntity<byte[]> getShareArrivedPayload(UUID shareId, @Nullable
+    String ifNoneMatch)` at `PATH_GET_SHARE_ARRIVED_PAYLOAD`, produces `application/json` and
+    `application/problem+json`; CHANGELOG line), published as the draft `rs-a33c5ec` (resolved from
+    `hmcts-lib` without credentials). gradle/libs.versions.toml pinned from `rs-69080b1` to `rs-a33c5ec`; the
+    two jars' specs differ only by the arrived path (and `info.version` / the `servers` default).
+  - Built: `ApiRoute.GET_SHARE_ARRIVED_PAYLOAD` (`/results-store/v1/shares/{shareId}/payload/arrived`,
+    `results-store.get-share-arrived-payload`, `ReadEndpoint.ARRIVED_PAYLOAD`, tag `arrived_payload`);
+    `ReadOutcome.appliesTo` admits `not_modified` for `payload` and `arrived_payload`, so
+    `MicrometerReadObserver` registers the six `arrived_payload` series up front; the DRL rule (both groups,
+    `attributes["method"] == "GET"`, `attributes["path"] matches "/results-store/v1/shares/[^/]+/payload/arrived"`);
+    results-store-openapi.yaml gains the jar's path block (descriptions rewrapped as folded scalars, the
+    same parsed strings; `OpenApiContractDriftTest` green); `ShareQueries.arrivedText` /
+    `JdbcShareQueries.ARRIVED_SQL` (identity columns and `p.payload_text AS body`; neither `payload_sha256` nor
+    `payload_json` read; the row mapper shared with the payload query); `ShareReadService.arrivedPayload`
+    (`EnvelopeMetadata.strip` always, then the shared `served` step: UTF-8 bytes, quoted SHA-256 `ETag`,
+    `payload.bytes` recorded; unreadable text is `UnreadablePayloadException`, so `500 internal_error` by
+    the advice, never the text); `SharesController.getShareArrivedPayload` through `PayloadResponses.answer`
+    (Spring's `If-None-Match` from the `ETag`, `*` answered there; `Cache-Control: no-store`;
+    `Results-Store-Enrichment-Applied` as stored; `Results-Store-Payload-Form: arrived-text`);
+    `PayloadBodyFreeAuditPayloadGenerationService` replaces the body for both payload actions (keyed on the
+    derived action). `ShareParametersInterceptor` and `ActionHeaderFilter` needed no change: they work over
+    `ApiRoute`, and the route takes no query parameter (`unknown_parameter`) and a canonical `shareId`.
+    scripts/container-smoke.sh gains the arrived checks (200; `sha256sum` equals the unquoted `ETag`; the
+    `ETag` is not `payload_sha256`; no `_metadata`; its hearing; its first application without the results
+    added at intake; `Content-Type`; `Results-Store-Payload-Form` `arrived-text`;
+    `Results-Store-Enrichment-Applied` `true`; `Cache-Control`; `If-None-Match` `304`; a Second Line Support
+    caller `200`; the metric line `resultsstore_read_requests_total{endpoint="arrived_payload",outcome=
+    "not_modified"} 1.0`). A missing header now fails its check instead of stopping the script.
+  - Least-behaviour choices: the arrived body is served whatever the working copy holds (always
+    `payload_text`); `Results-Store-Enrichment-Applied` carries the share's stored flag (the orchestrator's
+    note), though this body never holds application results; a stored text that does not parse gives
+    `500 internal_error` as the `/payload` fallback does.
+  - RED, contract half (seam: `ReadEndpoint.ARRIVED_PAYLOAD` only; jar pinned to `rs-a33c5ec`; run per class,
+    `failFast`): `ReadOutcomeTest` → `not_modified_should_apply_to_the_two_payload_endpoints_only(ReadEndpoint)
+    > [6] endpoint = ARRIVED_PAYLOAD FAILED` `expected: true but was: false`; `MicrometerReadObserverTest` →
+    `arrived_payload_should_be_registered_with_not_modified() FAILED` `Expecting actual: ["bad_request", "ok",
+    "not_found", "unavailable", "failed"] to contain exactly in any order: [… "not_modified" …] but could not
+    find the following elements: ["not_modified"]`; `ApiRouteTest` → `every_route_should_name_its_endpoint_tag()
+    FAILED` `could not find the following elements: [ARRIVED_PAYLOAD]`; `ResultsStoreRulesTest` →
+    `the_arrived_payload_action_should_be_allowed_on_its_own_path_for_both_groups_only() FAILED` `Expecting
+    value to be true but was false`; `OpenApiDocumentTest` → `the_arrived_operation_should_declare_the_etag_
+    and_results_store_headers_with_the_arrived_form() FAILED` (`Expecting actual: {…} to contain key:
+    "/results-store/v1/shares/{shareId}/payload/arrived"`); `OpenApiContractTest` →
+    `every_controller_mapping_should_be_described() FAILED`, `every_sharesapi_operation_should_be_overridden()
+    FAILED` `[getShareArrivedPayload] expected: …SharesController but was: …SharesApi`,
+    `every_described_route_should_have_a_controller_mapping() FAILED`; `OpenApiContractDriftTest` →
+    `the_paths_should_be_identical() FAILED` `[paths that differ] Expecting empty but was: ["paths
+    /results-store/v1/shares/{shareId}/payload/arrived"]`.
+  - RED, service half (seams: `ShareQueries.arrivedText`, `JdbcShareQueries.arrivedText` answering empty,
+    `ShareReadService.arrivedPayload` serving the text unstripped; the controller not yet overriding the
+    generated default, which answers `501`): `JdbcShareQueriesIT` → `arrived_text_should_return_payload_text_
+    with_the_identity_columns() FAILED` `[present] Expecting Optional to contain a value but it was empty.`;
+    `ShareReadServiceTest` → `arrived_etag_should_never_equal_payload_sha256() FAILED` `Expecting actual:
+    ""7028dbbf…a59b"" not to be equal to: ""7028dbbf…a59b""`, `an_unreadable_arrived_text_should_be_internal_
+    error_never_the_text() FAILED` `Expecting code to raise a throwable.`; `SharePayloadControllerTest` →
+    `an_unreadable_arrived_text_should_be_500_internal_error_with_the_bounded_body() FAILED` `expected: 500
+    but was: 501`; `PayloadBodyFreeAuditPayloadGenerationServiceTest` → `the_payload_routes_should_be_
+    replaced_by_the_marker(ApiRoute) > [2] route = GET_SHARE_ARRIVED_PAYLOAD FAILED` `Expecting value to be
+    true but was false`; `ReadApiIT` → `arrived_body_parsed_should_equal_the_published_message_without_
+    metadata() FAILED` `[status] expected: 200 but was: 501`; `AuditIT` → `arrived_response_event_should_
+    carry_the_marker() FAILED` `expected: 200 but was: 501`. `ShareParametersInterceptorTest`'s new
+    parameterised case (`a_share_route_should_refuse_a_bad_share_id_and_any_query_parameter`, the three
+    share-id routes) and `JdbcShareQueriesTest.the_arrived_constant_should_read_payload_text_and_never_
+    payload_sha256_or_payload_json` were green on their first run: coverage through the route table and a
+    guard on the constant, with no production change of their own.
+  - RED, smoke (the extended script run on the build at `099c0fc`, `flock … scripts/container-smoke.sh`,
+    exit 1): `FAIL: arrived: 200: expected '200', found '404'`; `FAIL: arrived: SHA-256 of the body equals the
+    unquoted ETag: expected '', found '502e0c46…d578'`; `FAIL: arrived: the ETag is not the stored checksum:
+    expected 'true', found 'false'`; `FAIL: arrived: the hearing it holds: … found 'null'`; `FAIL: arrived: its
+    first application without the results added at intake: expected 'true', found 'false'`; `FAIL: arrived:
+    Content-Type: expected 'application/json', found 'application/problem+json'`; `FAIL: arrived:
+    Results-Store-Payload-Form: expected 'arrived-text', found ''` (and `-Enrichment-Applied`,
+    `Cache-Control`); `FAIL: arrived: If-None-Match gives 304: expected '304', found '404'`; `FAIL: arrived for
+    a Second Line Support caller: 200: … found '404'`; `FAIL: metric line missing: resultsstore_read_requests_
+    total{endpoint="arrived_payload",outcome="not_modified"} 1.0` (and `route_not_found` 1.0: the arrived
+    calls were 404s); `FAIL: 13 read API check(s) failed`. (The first run of the extension stopped at the
+    first missing `ETag` under `pipefail`; fixed before this run.)
+  - GREEN (per class, 0 failures): `ReadEndpointTest` 1, `ReadOutcomeTest` 22, `MicrometerReadObserverTest` 7,
+    `ApiRouteTest` 35, `ResultsStoreRulesTest` 40, `OpenApiDocumentTest` 7, `OpenApiContractTest` 10,
+    `OpenApiContractDriftTest` 6, `SharesControllerTest` 13, `JdbcShareQueriesTest` 9, `JdbcShareQueriesIT` 38,
+    `ShareReadServiceTest` 35, `SharePayloadControllerTest` 17, `ContentNegotiationTest` 58,
+    `PayloadBodyFreeAuditPayloadGenerationServiceTest` 8, `ShareParametersInterceptorTest` 9,
+    `ActionHeaderFilterTest` 123, `ReadApiIT` 72, `AuditIT` 11, `AuthzIT` 32. The smoke prints `PASS: intake
+    stored the share enriched and the read API served it to admitted callers only`, every check `ok`, exit 0.
+    The gate green: 1968 tests, 0 failed, 0 skipped; JaCoCo report line 0.9974, branch 0.9738.
+  - Documents: contracts/read-api.md (the header: built against `rs-a33c5ec`, one release `0.2.0` covering
+    all five operations; §1 row 6; §4.6 final, as built); contracts/metrics.md (`arrived_payload` registered
+    up front, `not_modified` for both payload endpoints); contracts/configuration.md (the draft `rs-a33c5ec`,
+    the one release); page-notes.md (the arrived row, S10, G2, status); plan.md, research.md R23 (the pin and
+    the one release); spec.md status (phases A to D); this task, T012's release text and *Phase dependencies*
+    corrected to one release `v0.2.0` at the end of 003 (no `0.3.0`). Earlier tasks' records that name
+    `rs-69080b1` (T009, T010, T012) are left as the history of what those tasks pinned.
 
 ---
 
@@ -1103,7 +1197,8 @@ SHA-256 of the body and not equal to `payload_sha256`.
 - Phase B needs from phase A: `ApiRoute`, `ReadEndpoint`, `RouteRefusal` (T001), `ProblemReason` (T002).
 - Phase C needs from phase B: V5 (T004), the read types and ports (T005), `JdbcShareQueries` (T006),
   `ShareReadService` (T007), and the overrun threshold seam and the new intake defaults (T008).
-- Phase D needs phase C complete, including the `0.2.0` contract release of T012.
+- Phase D needs phase C complete. The one contract release, `0.2.0` (all five operations), follows phase D
+  (orchestrator ruling; T012's Deferred).
 - Every contract change (T010's payload body, T013's arrived route) is made in hmcts/api-cp-crime-results-store
   first and taken as a `rs-<sha7>` draft; the service never releases on a draft (`validateApiSpecVersions`,
   research R23 C4).
