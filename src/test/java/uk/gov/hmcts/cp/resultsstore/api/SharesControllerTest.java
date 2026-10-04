@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -233,5 +234,19 @@ class SharesControllerTest {
         assertThat(bad).isEqualTo(ProblemDetail.builder().type(ProblemDetail.TypeEnum.ABOUT_BLANK)
                 .title("Bad Request").status(400).reason(ProblemDetail.ReasonEnum.INVALID_CURSOR).build());
         assertThat(badResponse.getContentType()).isEqualTo("application/problem+json");
+    }
+
+    /**
+     * The controller's own guard, without the interceptor that refuses the value first in every slice: a value
+     * the interceptor let through still never reaches the service.
+     */
+    @Test
+    void the_controller_should_refuse_a_bad_day_youth_seen_itself_without_calling_the_service() {
+        final SharesController controller = new SharesController(service);
+
+        assertThatThrownBy(() -> controller.pullOrSearchShares(0L, 100, "maybe", null, null, null, null, null, null,
+                null)).isInstanceOfSatisfying(BadParameterException.class,
+                        refusal -> assertThat(refusal.reason()).isEqualTo(ProblemReason.INVALID_DAY_YOUTH_SEEN));
+        verifyNoInteractions(service);
     }
 }
