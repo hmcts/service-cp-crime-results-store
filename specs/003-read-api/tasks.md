@@ -788,7 +788,9 @@ pins the audit behaviour; the smoke proves it in the compose stack.
   - Api half: already made before this phase, as api commit `69080b1` ("feat(spec): serve the share payload as
     exact bytes", on `team/rs`), published as the draft `rs-69080b1` (Azure Artifacts `hmcts-lib`; resolved
     anonymously by T009). The service was pinned to it, and its own document followed, in T009, so the drift
-    test is green from T009 on. No api pull request was opened by this phase; the run URL is the api repo's.
+    test is green from T009 on. No api pull request was opened by this phase; the run URL is the api repo's: `rs-69080b1` was published by
+    the `team/rs` push run https://github.com/hmcts/api-cp-crime-results-store/actions/runs/37161902049 (Build
+    and Publish (DRAFT CANDIDATE VERSION), success; the `main` run for the same commit is 37161898371).
   - Built: `api/ShareParameters` (the strict rules on the raw query and the path variables, single-exit
     `Optional` chain: path variables, unknown, repeated, conflicting, missing, then each value in the order of
     the contract's tables; the query decoded with `filters/QueryParameterNames.decode`, now public, so a
@@ -943,8 +945,10 @@ pins the audit behaviour; the smoke proves it in the compose stack.
   - `/speckit-analyze` (read-only) over spec.md, plan.md and tasks.md with the constitution, research, data-model and contracts as context; every CRITICAL and HIGH finding resolved, MEDIUM fixed or listed below with a reason; the result recorded under this task; `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` exits 0;
   - the Deferred list below, completed with anything the phases left open;
   - the contract release (research R23 C4), last, once the smoke and the documents are done: a GitHub Release `v0.2.0` of hmcts/api-cp-crime-results-store from the api `main` commit that `team/rs` was fast-forwarded to for phase C; its ci-released run publishes `0.2.0`; gradle/libs.versions.toml bumped from the `rs-<sha7>` draft to `0.2.0`; `./gradlew validateApiSpecVersions` passes (quoted); `OpenApiContractDriftTest` green against the released jar. Phase D's arrived route is not in `0.2.0`; it is released as `0.3.0` by T013.
-  - Covers: FR-012 and FR-039 (the contract text checked against what was built), FR-021 (document half), FR-022–FR-025 and FR-040 (likewise), FR-057, FR-058, FR-059, FR-060, FR-063 (the release and the bump); SC-012, SC-013.
-  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the service builds on the released `0.2.0` with `validateApiSpecVersions` passing; the gate green.
+  - Covers: FR-012 and FR-039 (the contract text checked against what was built), FR-021 (document half), FR-022–FR-025 and FR-040 (likewise), FR-057, FR-058, FR-059, FR-060; FR-063 (the release and the bump) is deferred to after phase D by the orchestrator's ruling (see
+    Deferred); SC-012, SC-013.
+  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the gate green. Amended by the orchestrator's ruling: the release `0.2.0`, the bump from `rs-69080b1` and
+    `validateApiSpecVersions` passing follow phase D (Deferred), so they are not part of this task's tick.
   - Deferred (not in 003):
     - push notifications to consumers (outbox, Service Bus); pull is the only feed;
     - views by defendant, courtroom or prosecutor, and the `share_defendant(defendant_id)` index;
@@ -1039,6 +1043,14 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     built, `startup.sh` run): `startup.sh : Running docker java jarfile /app/aaa-stale.jar`. GREEN: the same
     image `startup.sh : ERROR - 2 jarfiles found in /app, expected one. Unable to start application`, exit 1;
     with one jar it runs it; the smoke prints `PASS`, every check `ok`, exit 0.
+  - Gate round 1 (documents only; spec-validator and qa/Codex LOWs): CLAUDE.md *Authorisation Rule*,
+    `.claude/agents/software-engineer.md` (Default-deny bullet) and `.claude/agents/spec-validator.md`
+    (checklist item 4) now say what constitution 2.2.0 VII says (both groups admitted on read rules, matched on
+    method and path; the derived action; every request that reaches an endpoint audited, refusals counted;
+    the payload audit marker); the constitution's Sync Impact Report records that change instead of "no change
+    needed". T012's *Covers* and *Done when* now state that the `0.2.0` release, the bump and
+    `validateApiSpecVersions` follow phase D (the orchestrator's ruling), so the tick matches the text; T010
+    records the api repo's publish run for `rs-69080b1`.
 
 ---
 

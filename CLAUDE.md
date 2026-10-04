@@ -63,7 +63,10 @@ Principle IX). The broker never gates readiness.
 Default deny. Every new endpoint adds, in the same change: its mapping in `ActionHeaderFilter`,
 its own allow rule in `acl/results-store-rules.drl` naming the groups it admits, and its entry in
 `results-store-openapi.yaml`. `/operations/**` is for "Second Line Support" only and never returns
-a payload. Read-API rules admit "System Users". Audit runs on the audit library's default settings.
+a payload. Read-API rules admit "System Users" and "Second Line Support" and match method and path; the
+action is derived from method and path, never taken from the caller. Every request that reaches an endpoint
+is audited and every refused one is counted (`resultsstore.read.refused`); the payload endpoints' audit
+body is the fixed marker `{"payloadOmitted":true}` (constitution 2.2.0, Principle VII).
 
 ## Build & Test
 ```bash

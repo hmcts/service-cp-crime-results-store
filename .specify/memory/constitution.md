@@ -32,7 +32,10 @@ Templates checked (2.2.0):
   ✅ .claude/rules/design_rules.md            - pull safety (the visibility
                                                 lag), security and audit
                                                 wording, the read API table
-  ✅ .claude/agents/*, CLAUDE.md              - checked; no change needed
+  ✅ .claude/agents/*, CLAUDE.md              - read-API groups, derived
+                                                action and audit wording
+                                                aligned with VII (gate
+                                                round 1 of T012)
   ✅ specs/001-share-intake, specs/002-enrichment - "Amended by spec 003"
                                                 notes (indexes in V5, intake
                                                 timeout defaults, served bytes

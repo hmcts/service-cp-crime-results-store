@@ -54,9 +54,9 @@ The design is on Confluence ([Results Store Service](https://hmcts.atlassian.net
 ### 4. Authorisation and audit
 - Every endpoint has an `ActionHeaderFilter` mapping and its own allow rule naming the groups admitted. An action with no rule, a rule naming no group, or any default-allow is a HIGH finding.
 - `deny-when-no-rules: true`; a caller-supplied `CPP-ACTION` is never trusted for a mapped path; an unmapped path is refused.
-- Every read-API action's rule admits "System Users"; no youth scoping.
+- Every read-API action's rule admits "System Users" and "Second Line Support" and matches its method and path; no youth scoping.
 - `/operations/**` admits "Second Line Support" only.
-- Audit covers every endpoint, on the audit library's default settings.
+- Every request that reaches an endpoint is audited; a request refused by a filter, by the connector or by authorisation is counted in `resultsstore.read.refused`; the payload endpoints' audit body is the fixed marker `{"payloadOmitted":true}`, never payload bytes.
 
 ### 5. Telemetry
 - No personal data or payload content in logs, metric labels, failure reasons or audit events (Principle XI).
