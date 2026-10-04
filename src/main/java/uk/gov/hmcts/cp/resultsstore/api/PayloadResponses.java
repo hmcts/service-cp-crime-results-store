@@ -39,8 +39,8 @@ public final class PayloadResponses {
     }
 
     /**
-     * The answer to a payload request: {@code 304} with the {@code ETag} alone when {@code If-None-Match} is
-     * {@code *} (the share exists, so its current representation matches; Spring's own check honours {@code *}
+     * The answer to a payload request: {@code 304} with the {@code ETag} and {@code Cache-Control: no-store} when
+     * {@code If-None-Match} is {@code *} (the share exists, so its current representation matches; Spring's own check honours {@code *}
      * only for unsafe methods), else {@link #served}, from whose {@code ETag} Spring answers any other
      * {@code If-None-Match} (research R11).
      *
@@ -50,7 +50,8 @@ public final class PayloadResponses {
      */
     public static ResponseEntity<byte[]> answer(final ServedPayload payload, final String ifNoneMatch) {
         return anyIsStar(ifNoneMatch)
-                ? ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(payload.etag()).build()
+                ? ResponseEntity.status(HttpStatus.NOT_MODIFIED).eTag(payload.etag())
+                        .cacheControl(CacheControl.noStore()).build()
                 : served(payload);
     }
 

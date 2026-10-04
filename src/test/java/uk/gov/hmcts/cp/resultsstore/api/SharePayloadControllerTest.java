@@ -142,6 +142,8 @@ class SharePayloadControllerTest {
 
         assertThat(response.getStatus()).isEqualTo(304);
         assertThat(response.getContentAsByteArray()).isEmpty();
+        // Every 304, Spring's or the star's, tells a cache not to keep it.
+        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
     }
 
     @Test
