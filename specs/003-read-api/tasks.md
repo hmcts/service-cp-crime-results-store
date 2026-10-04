@@ -919,7 +919,7 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     on a real container), intake timeouts 2 s / 1 s / 500 ms / 1 s (lag 5 s) and a 1 s read statement timeout (the
     `503` case holds `LOCK TABLE hearing_share IN ACCESS EXCLUSIVE MODE` on another connection). Extra assertions:
     the court-filtered pull from an older cursor presents the fixed share (filters at read time, reconciliation);
-    the `ETag` is not the stored `payload_sha256`. `NoPayloadInLogsIT.serving_a_payload_should_log_no_payload_
+    the `ETag` is not, in general, the stored `payload_sha256`. `NoPayloadInLogsIT.serving_a_payload_should_log_no_payload_
     marker_at_any_level` serves both forms (working copy, and arrived text for a `\u0000` share) with root at
     DEBUG.
   - RED (seams: the override passing every response through unchanged; its bean not registered). Run without
@@ -1118,7 +1118,7 @@ SHA-256 of the body and not, in general, equal to `payload_sha256`.
     derived action). `ShareParametersInterceptor` and `ActionHeaderFilter` needed no change: they work over
     `ApiRoute`, and the route takes no query parameter (`unknown_parameter`) and a canonical `shareId`.
     scripts/container-smoke.sh gains the arrived checks (200; `sha256sum` equals the unquoted `ETag`; the
-    `ETag` is not `payload_sha256`; no `_metadata`; its hearing; its first application without the results
+    `ETag` is not, in general, `payload_sha256`; no `_metadata`; its hearing; its first application without the results
     added at intake; `Content-Type`; `Results-Store-Payload-Form` `arrived-text`;
     `Results-Store-Enrichment-Applied` `true`; `Cache-Control`; `If-None-Match` `304`; a Second Line Support
     caller `200`; the metric line `resultsstore_read_requests_total{endpoint="arrived_payload",outcome=
