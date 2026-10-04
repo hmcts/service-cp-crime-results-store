@@ -21,11 +21,13 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.mock.http.MockHttpInputMessage;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
+import org.springframework.web.bind.MissingPathVariableException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -144,6 +146,61 @@ class ReadApiExceptionHandlerTest {
             assertThat(log.events()).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
                     "Read request failed: java.lang.IllegalStateException",
                     "Read request failed: " + EnvelopeMetadata.UnreadablePayloadException.class.getName());
+        }
+    }
+
+    static Stream<Exception> springServerErrors() throws NoSuchMethodException {
+        final MethodParameter parameter = new MethodParameter(SharesApi.class.getMethod("getShare", UUID.class), 0);
+        return Stream.of(new HttpMessageNotWritableException(SECRET),
+                new MissingPathVariableException(SECRET, parameter));
+    }
+
+    @ParameterizedTest
+    @MethodSource("springServerErrors")
+    void a_spring_mvc_5xx_should_be_logged_by_class_with_the_share_id_and_without_its_message(
+            final Exception exception) throws Exception {
+        final String shareId = "6f1c2a3b-0d4e-5f60-8a7b-9c0d1e2f3a4b";
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("shareId", shareId));
+        try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
+            assertProblem(handler.handleException(exception, new ServletWebRequest(request)), 500, "internal_error");
+
+            assertThat(log.events()).singleElement().satisfies(event -> {
+                assertThat(event.getFormattedMessage())
+                        .isEqualTo("Read request failed: " + exception.getClass().getName());
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getMDCPropertyMap()).containsEntry("shareId", shareId);
+            });
+        }
+    }
+
+    @Test
+    void a_spring_mvc_4xx_should_not_be_logged() throws Exception {
+        try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
+            handler.handleException(new MissingServletRequestParameterException(SECRET, "String"),
+                    new ServletWebRequest(request));
+
+            assertThat(log.events()).isEmpty();
+        }
+    }
+
+    @Test
+    void a_500_on_a_route_naming_no_share_should_be_logged_without_a_share_id() {
+        try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
+            assertProblem(handler.internalError(new IllegalStateException(SECRET), request), 500, "internal_error");
+
+            assertThat(log.events()).singleElement()
+                    .satisfies(event -> assertThat(event.getMDCPropertyMap()).doesNotContainKey("shareId"));
+        }
+    }
+
+    @Test
+    void a_share_id_that_is_not_a_string_should_not_reach_the_logging_context() {
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("shareId", 42));
+        try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
+            handler.internalError(new IllegalStateException(SECRET), request);
+
+            assertThat(log.events()).singleElement()
+                    .satisfies(event -> assertThat(event.getMDCPropertyMap()).doesNotContainKey("shareId"));
         }
     }
 

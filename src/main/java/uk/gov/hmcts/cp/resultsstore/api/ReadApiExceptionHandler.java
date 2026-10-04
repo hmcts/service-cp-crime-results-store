@@ -16,6 +16,7 @@ import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.ServletWebRequest;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.HandlerMapping;
@@ -105,19 +106,35 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
         return problem(ProblemReason.STORE_UNAVAILABLE, headers);
     }
 
-    @ExceptionHandler({EnvelopeMetadata.UnreadablePayloadException.class, RuntimeException.class})
+    /**
+     * Anything else, {@link EnvelopeMetadata.UnreadablePayloadException} included: {@code 500 internal_error}.
+     *
+     * @param exception the failure
+     * @param request   the request, for the {@code shareId} its path names
+     * @return the response
+     */
+    @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Object> internalError(final RuntimeException exception, final HttpServletRequest request) {
-        final String shareId = shareId(request);
-        try (MDC.MDCCloseable ignored = shareId == null ? null : MDC.putCloseable(SHARE_ID, shareId)) {
-            LOG.error("Read request failed: {}", exception.getClass().getName());
-        }
+        logFailure(exception, request);
         return problem(ProblemReason.INTERNAL_ERROR, new HttpHeaders());
     }
 
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(final Exception exception, final Object body,
             final HttpHeaders headers, final HttpStatusCode statusCode, final WebRequest request) {
+        if (statusCode.is5xxServerError()) {
+            // Spring's own 5xx (a response it could not write, a missing path variable) is a failure like any other.
+            logFailure(exception, request instanceof ServletWebRequest servlet ? servlet.getRequest() : null);
+        }
         return problem(reason(exception, statusCode), headers);
+    }
+
+    /** Logs a failure by its class, with the canonical {@code shareId} in the logging context when there is one. */
+    private static void logFailure(final Exception exception, final HttpServletRequest request) {
+        final String shareId = request == null ? null : shareId(request);
+        try (MDC.MDCCloseable ignored = shareId == null ? null : MDC.putCloseable(SHARE_ID, shareId)) {
+            LOG.error("Read request failed: {}", exception.getClass().getName());
+        }
     }
 
     /** The reason for one of Spring MVC's own exceptions. */
