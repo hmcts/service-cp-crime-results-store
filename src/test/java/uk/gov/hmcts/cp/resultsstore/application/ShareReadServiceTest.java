@@ -245,6 +245,24 @@ class ShareReadServiceTest {
         assertThat(last.nextCursor()).isNull();
     }
 
+    /** A page ending on a share from before 1970 still gets a cursor the next request accepts (Codex R1). */
+    @Test
+    void a_page_ending_before_the_epoch_should_get_a_next_cursor_that_decodes() {
+        final List<ShareView> three = views(Instant.parse("1969-12-31T23:59:00Z"), 1, 2, 3);
+        when(queries.search(any())).thenReturn(three);
+        final Instant from = Instant.parse("1969-12-31T00:00:00Z");
+
+        final SearchPage page = service().search(new SearchRequest(COURT, null, null, from, from.plusSeconds(86_400),
+                null, null, 2, null));
+        service().search(new SearchRequest(COURT, null, null, from, from.plusSeconds(86_400), null, null, 2,
+                page.nextCursor()));
+
+        final ArgumentCaptor<SearchQuery> query = ArgumentCaptor.forClass(SearchQuery.class);
+        verify(queries, org.mockito.Mockito.times(2)).search(query.capture());
+        assertThat(query.getAllValues().get(1).after())
+                .isEqualTo(SearchCursor.after(three.get(1).sharedTime(), three.get(1).shareId()));
+    }
+
     @Test
     void a_cursor_should_reach_the_query_decoded() {
         when(queries.search(any())).thenReturn(List.of());
@@ -448,10 +466,14 @@ class ShareReadServiceTest {
     }
 
     private static List<ShareView> views(final long... seqs) {
+        return views(Instant.parse("2026-10-02T09:00:00Z"), seqs);
+    }
+
+    private static List<ShareView> views(final Instant base, final long... seqs) {
         final List<ShareView> views = new ArrayList<>();
         for (final long seq : seqs) {
             views.add(new ShareView(UUID.randomUUID(), UUID.randomUUID(), LocalDate.parse("2026-10-02"),
-                    Instant.parse("2026-10-02T09:00:00Z").plusSeconds(seq), seq, Instant.parse("2026-10-02T09:00:01Z"),
+                    base.plusSeconds(seq), seq, Instant.parse("2026-10-02T09:00:01Z"),
                     LocalDate.parse("2026-10-02"), LocalDate.parse("2026-10-02"),
                     new KeyDetails(COURT, null, "2577", "MAGISTRATES", false, false, null, false), false, false, true,
                     null, false, false, ProjectionStatus.OK, 1, Instant.parse("2026-10-02T09:00:01Z"), 1));

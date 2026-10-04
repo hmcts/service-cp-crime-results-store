@@ -19,7 +19,8 @@ import java.util.regex.Pattern;
  * {@code v1|<microseconds>|<shareId>}, at most {@value #MAX_LENGTH} characters, and is decoded strictly:
  * a text is a cursor only if it is exactly what {@link #encode()} writes for the position it decodes to.
  *
- * @param sharedAtMicros the last item's {@code shared_at}, epoch microseconds, not negative
+ * @param sharedAtMicros the last item's {@code shared_at}, epoch microseconds, negative before 1970 (intake
+ *                       accepts four-digit years from 0000)
  * @param shareId        the last item's share id
  */
 public record SearchCursor(long sharedAtMicros, UUID shareId) {
@@ -27,18 +28,18 @@ public record SearchCursor(long sharedAtMicros, UUID shareId) {
     /** The longest cursor text accepted. */
     public static final int MAX_LENGTH = 128;
 
-    /** Version 1: the prefix, the microseconds without sign or leading zero, a canonical lower-case UUID. */
+    /**
+     * Version 1: the prefix, the microseconds as {@link Long#toString(long)} writes them (a minus sign before
+     * 1970, no plus sign, no leading zero, no {@code -0}), a canonical lower-case UUID.
+     */
     private static final Pattern PLAIN = Pattern.compile(
-            "^v1\\|(0|[1-9][0-9]{0,18})\\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$");
+            "^v1\\|(0|-?[1-9][0-9]{0,18})\\|([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$");
 
     private static final Pattern BASE64URL = Pattern.compile("^[A-Za-z0-9_-]+$");
 
-    /** Checks that the position is complete and not before the epoch. */
+    /** Checks that the position is complete. */
     public SearchCursor {
         Objects.requireNonNull(shareId, "shareId");
-        if (sharedAtMicros < 0) {
-            throw new IllegalArgumentException("sharedAtMicros must not be negative");
-        }
     }
 
     /**
@@ -102,7 +103,7 @@ public record SearchCursor(long sharedAtMicros, UUID shareId) {
         try {
             position = Optional.of(new SearchCursor(Long.parseLong(parts.group(1)), UUID.fromString(parts.group(2))));
         } catch (final NumberFormatException overflow) {
-            // A recorded outcome: nineteen digits above Long.MAX_VALUE are not a position.
+            // A recorded outcome: nineteen digits beyond the long range are not a position.
             position = Optional.empty();
         }
         return position;

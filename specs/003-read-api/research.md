@@ -349,7 +349,8 @@ share and for days at both clock changes.
 
 `dayYouthSeen` accepts `notFalse`, `true` and `false`; `latestOnly` adds `is_latest`. Order: `shared_at`,
 then `share_id`, ascending, in both forms. Keyset paging on those two values; the cursor is base64url
-without padding of `v1|<shared_at epoch microseconds>|<shareId>`, at most 128 characters, decoded
+without padding of `v1|<shared_at epoch microseconds>|<shareId>` (signed: negative before 1970, as
+`Long.toString` writes it), at most 128 characters, decoded
 strictly (each part checked; a different version prefix is invalid). `{ items, nextCursor }`, with
 `nextCursor` null when the `limit + 1` read shows no further row. No visibility lag.
 

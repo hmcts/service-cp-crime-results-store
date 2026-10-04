@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -92,14 +93,19 @@ class SearchCursorTest {
         "v1|1759482900123456|1-1-1-1-1",
         "v1|1759482900123456|3F0C6A6E-5B1D-4C39-9D43-0E5F2C4B7A11",
         "v1|1759482900123456|not-a-uuid",
-        "v1|-1|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|-0|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|--1|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|-01|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|- 1|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|9223372036854775808|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
+        "v1|-9223372036854775809|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
         "v1|+1759482900123456|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
         "v1|01759482900123456|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
         "v1|99999999999999999999|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
         "v1||3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11",
         "v1|17594829001234.56|3f0c6a6e-5b1d-4c39-9d43-0e5f2c4b7a11"
     })
-    void a_cursor_with_another_version_prefix_extra_part_bad_uuid_or_negative_microseconds_should_be_invalid(
+    void a_cursor_with_another_version_prefix_extra_part_bad_uuid_or_non_canonical_or_overflowing_microseconds_should_be_invalid(
             final String plain) {
         assertThat(SearchCursor.decode(base64(plain))).isEmpty();
     }
@@ -115,6 +121,33 @@ class SearchCursorTest {
         final String text = Base64.getUrlEncoder().withoutPadding().encodeToString(new byte[] {(byte) 0xC3, 0x28});
 
         assertThat(SearchCursor.decode(text)).isEmpty();
+    }
+
+    /** Intake accepts four-digit years before 1970, so a search page can end on a pre-epoch share (Codex R1). */
+    @ParameterizedTest(name = "[{index}] {0}")
+    @ValueSource(strings = {"1969-12-31T23:59:59.999999Z", "1900-06-01T10:00:00.5Z", "0000-01-01T00:00:00Z"})
+    void a_shared_time_before_the_epoch_should_round_trip_with_a_minus_sign(final String sharedAt) {
+        final SearchCursor cursor = SearchCursor.after(Instant.parse(sharedAt), SHARE_ID);
+
+        assertThat(cursor.sharedAtMicros()).isNegative();
+        assertThat(cursor.sharedAt()).isEqualTo(Instant.parse(sharedAt));
+        assertThat(cursor.encode()).isEqualTo(base64("v1|" + cursor.sharedAtMicros() + "|" + SHARE_ID));
+        assertThat(SearchCursor.decode(cursor.encode())).contains(cursor);
+    }
+
+    @Test
+    void the_long_range_ends_should_decode_and_one_beyond_should_not() {
+        assertThat(SearchCursor.decode(base64("v1|9223372036854775807|" + SHARE_ID)))
+                .contains(new SearchCursor(Long.MAX_VALUE, SHARE_ID));
+        assertThat(SearchCursor.decode(base64("v1|-9223372036854775808|" + SHARE_ID)))
+                .contains(new SearchCursor(Long.MIN_VALUE, SHARE_ID));
+        assertThat(new SearchCursor(Long.MIN_VALUE, SHARE_ID).encode()).hasSizeLessThanOrEqualTo(SearchCursor.MAX_LENGTH);
+    }
+
+    @Test
+    void a_cursor_without_a_share_id_should_not_be_built() {
+        assertThatThrownBy(() -> new SearchCursor(0, null)).isInstanceOf(NullPointerException.class)
+                .hasMessage("shareId");
     }
 
     @Test

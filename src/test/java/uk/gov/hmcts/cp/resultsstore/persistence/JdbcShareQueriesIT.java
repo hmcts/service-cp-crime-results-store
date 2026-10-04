@@ -464,6 +464,21 @@ class JdbcShareQueriesIT {
             }
         }
 
+        /** Intake accepts shares from before 1970; their cursors carry negative microseconds (gate round 1). */
+        @Test
+        void search_keyset_pages_should_cross_the_epoch() {
+            for (final String instant : List.of("1969-12-31T12:00:00Z", "1969-12-31T23:59:59.999999Z",
+                    "1969-12-31T23:59:59.999999Z", "1970-01-01T00:00:00Z", "1970-01-01T00:00:00.000001Z")) {
+                insert(row().court(COURT_A).sharedAt(instant));
+            }
+            final SearchQuery timeForm = new SearchQuery(COURT_A, Instant.parse("1969-12-31T00:00:00Z"),
+                    Instant.parse("1970-01-02T00:00:00Z"), DayYouthFilter.ANY, false, null, 100);
+
+            final List<UUID> all = ids(queries.search(timeForm));
+            assertThat(all).hasSize(5).doesNotHaveDuplicates();
+            assertThat(pageByOne(timeForm)).containsExactlyElementsOf(all);
+        }
+
         @Test
         void search_latest_only_should_return_only_is_latest() {
             final RowSpec latest = row().court(COURT_A).sharedAt("2026-10-03T12:00:00Z").latest();
