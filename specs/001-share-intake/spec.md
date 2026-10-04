@@ -15,6 +15,7 @@
 
 - Progression enrichment (*Adding finalised application results*): spec 002. In 001 the payload is stored exactly as it arrived.
 - The read API (pull, search, latest, payload fetch) and the search indexes consumers need: spec 003.
+  *Amended by spec 003*: the indexes are in migration `V5__read_api.sql` (specs/003-read-api/data-model.md).
 - The operations API, including the operator action that marks rows for re-extraction and dead-letter replay tooling: spec 004.
 - Retention and purge. `expires_at` exists but is left empty.
 - Legacy data migration.
@@ -184,6 +185,7 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 - **FR-013**: Everything that makes a share stored MUST happen in one transaction: *lock the hearing day (insert the `hearing_day_head` row if it is the first share of that day)*; insert the share; insert the payload; write the key details and defendant rows; update the youth flags; move the latest pointer; mark the receipt `STORED` with the share id. *All or nothing.*
 - **FR-014**: The share MUST be inserted with a unique key on `hearingId`, `hearingDay` and `sharedTime` and *ON CONFLICT DO NOTHING*. If nothing was inserted, the store MUST mark the receipt `DUPLICATE` with the **existing** share's id (looked up by the three values), commit and acknowledge. *There is no separate idempotency table.* No payload comparison is made and no anomaly is recorded.
 - **FR-015**: The payload MUST be stored as the exact text that arrived, with its size in bytes, and a parsed copy. If the text contains `\u0000`, the parsed copy MUST be left empty and a counter MUST go up. Nothing in 001 reads the parsed copy.
+  *Amended by spec 003*: the read API serves the working copy (the parsed copy as spec 002 made it) without `_metadata`, and the text, likewise without it, when the working copy is empty (specs/003-read-api FR-033).
   - *Amended by spec 002* (see [spec 002, *Changes to spec 001*](../002-enrichment/spec.md#changes-to-spec-001)): the parsed copy is no longer unread. It holds the enriched working copy, is permanent, and is the copy key details are read from. The text stays exactly as it arrived.
 - **FR-016**: The share MUST hold `payload_sha256`: the SHA-256 of the stored text in UTF-8, as 64 hex characters.
   - *Amended by spec 002* (see [spec 002, *Changes to spec 001*](../002-enrichment/spec.md#changes-to-spec-001)): unchanged in meaning; `payload_sha256` is over the arrived text, never the enriched working copy.
@@ -219,6 +221,7 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 - **FR-034**: For each row, the sweep MUST take the hearing-day lock, then lock the share row and check it is still `FAILED` before working on it.
 - **FR-035**: The sweep MUST retry a row when its extraction version is older than the current one, or when its reason is an unexpected error and fewer than 3 attempts have been made.
 - **FR-036**: The sweep MUST read the stored payload text, never the parsed copy. On success it MUST fill the key-detail columns and defendant rows, set `OK`, and recompute the youth flags under the lock (FR-026 to FR-028).
+  *Amended by spec 003*: a share the sweep fixes keeps its `storedSeq`; a pull behind it does not present it again, and a consumer re-reads the share (specs/003-read-api FR-022, FR-023).
   - *Amended by spec 002* (see [spec 002, *Changes to spec 001*](../002-enrichment/spec.md#changes-to-spec-001)): the sweep reads the parsed copy (`payload_json`), and the text only when the parsed copy is empty.
 - **FR-037**: A failure on one row MUST be counted and MUST NOT stop the sweep. The sweep MUST run on its own scheduler. It MUST be correct when several pods run it at once, without a distributed lock.
 
@@ -283,4 +286,4 @@ Settled implementation choices from the approved plan, stated so they are visibl
 - A `DUPLICATE` receipt points at the existing share's id, looked up by identity.
 - Metrics go through an intake observer port; the outcome-to-tag mapping lives outside the config package so coverage measures it.
 - The constitution is at 2.0.0 (the first commit on this branch) before implementation starts.
-- Consumer search indexes are left to spec 003.
+- Consumer search indexes are left to spec 003. *Amended by spec 003*: added in `V5__read_api.sql`.

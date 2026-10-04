@@ -53,7 +53,7 @@ line points here, and this file stays as the record of the change.
 | Name | Records | FR |
 |---|---|---|
 | `resultsstore.read.page.items` | items returned per pull or search page; shows consumers' backlog and use of `limit` | FR-055 |
-| `resultsstore.read.payload.bytes` | bytes served per `200` from `/payload` (and `/payload/arrived`); sizes the bandwidth and the audit exposure | FR-055 |
+| `resultsstore.read.payload.bytes` | bytes of each payload read for `/payload` (and `/payload/arrived`): recorded when the service reads and hashes the body, so a `304` Spring decides afterwards is recorded too; sizes the bandwidth and the audit exposure | FR-055 |
 
 ## Not counted by 003
 

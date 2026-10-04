@@ -24,4 +24,6 @@ Rules added by 002:
 4. Rows stored before 002 are never re-enriched or rewritten.
 5. Forward constraint for spec 003 (FR-041): the read API serves `payload_json` (as `jsonb::text`, or
    `payload_text` when `payload_json` is NULL), with an `ETag` over the exact bytes written to the
-   response. `payload_sha256` is never offered as the served body's checksum.
+   response. `payload_sha256` is never offered as the served body's checksum. *Amended by spec 003*
+   (E8): the served bytes are the working copy without `_metadata`, or the text with `_metadata` removed
+   when the working copy is empty.

@@ -1,8 +1,13 @@
 {
-  "priority": 10,
+  "priority": 1,
   "request": {
     "method": "GET",
-    "urlPath": "/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions"
+    "urlPath": "/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions",
+    "headers": {
+      "CJSCPPUID": {
+        "equalTo": "22222222-2222-4222-8222-222222222222"
+      }
+    }
   },
   "response": {
     "status": 200,
@@ -13,7 +18,7 @@
       "groups": [
         {
           "groupId": "grp-1",
-          "groupName": "System Users",
+          "groupName": "Second Line Support",
           "prosecutingAuthority": null
         }
       ],

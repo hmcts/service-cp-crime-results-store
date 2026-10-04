@@ -103,14 +103,24 @@ happening ends on the broker's dead-letter queue, after its own redelivery attem
 | Endpoint | Purpose |
 |---|---|
 | `GET /shares?storedAfterSeq=&limit=&dayYouthSeen=notFalse&courtCentreId=` | Pull: shares stored after a sequence number, in stored order, key details only |
-| `GET /shares?courtCentreId=&sharedDayFrom=&sharedDayTo=&dayYouthSeen=&latestOnly=` | Search |
+| `GET /shares?courtCentreId=&sharedDayFrom=&sharedDayTo=` or `…&sharedFrom=&sharedTo=` (+ `dayYouthSeen`, `latestOnly`, `limit`, `cursor`) | Search: one court over London days (day form) or a `sharedTime` range (time form), keyset paged |
 | `GET /shares/{shareId}` | One share's key details, version, latest, predecessor, youth facts |
-| `GET /shares/{shareId}/payload` | The working copy (`payload_json`), or `payload_text` when the working copy is empty; `ETag` over the exact bytes served, never `payload_sha256` |
+| `GET /shares/{shareId}/payload` | The working copy (`payload_json`) without `_metadata`, or `payload_text` without `_metadata` when the working copy is empty; `ETag` over the exact bytes served, never `payload_sha256` |
+| `GET /shares/{shareId}/payload/arrived` | The text as it arrived (`payload_text`), before enrichment, without `_metadata` (spec 003 phase D) |
 | `GET /hearings/{hearingId}/days/{hearingDay}/shares` | Every version of one day, in `sharedTime` order |
 
-**Pull safety:** never return a row while a lower-numbered row is still being written. Each pull
-asks PostgreSQL for the lowest sequence number an open write holds and returns only rows below it.
-Push (store-then-notify through an outbox) is designed for but not in phase 1.
+No response carries the message envelope's metadata (`_metadata`) or a value taken from it.
+
+**Pull safety: the visibility lag.** A pull returns only shares at or below the visibility bound:
+the highest `stored_seq` among shares stored at least the lag ago, both times from the database
+clock, worked out in the same statement as the page. Every store transaction ends within the lag
+(transaction + 2 × statement + idle-in-transaction timeouts, all enforced by PostgreSQL or by Spring
+before a statement), so every share at or below the bound has committed or gone. The default lag is
+**90 seconds** (60 + 2 × 10 + 10 at the intake defaults); the service refuses to start with a lag
+below that sum or above 10 minutes, and intake counts `resultsstore.intake.visibility.overrun` when
+a store transaction outlives it (specs/003-read-api research R4, R6, R7). The pull's
+`nextStoredAfterSeq` moves over ranges its filters skip, and `visibleUpTo` tells a consumer what
+has been presented. Push (store-then-notify through an outbox) is designed for but not in phase 1.
 
 ## Operations API (phase 1, `/operations/**`)
 
@@ -125,11 +135,21 @@ already stored. Messages that are not shares never go there.
 
 - `CJSCPPUID` identifies the caller; groups come from usersgroups. The gateway strips and sets it;
   Istio and network policy let only the gateway reach the API (outside this repo).
-- `ActionHeaderFilter` derives the action from path and method for **every** request and refuses
-  a path it cannot map. A test checks every route against the mapping.
-- One drools rule per action; `deny-when-no-rules`. Every read-API rule admits "System Users";
-  finer-grained rules only when a need appears.
-- Audit by `cp-audit-filter-springboot` with the library's default settings.
+- `ActionHeaderFilter` derives the action from method and path for **every** request: a caller's
+  `CPP-ACTION` and any vendor media type in `Content-Type` or `Accept` are overridden, an unmapped
+  path is refused `404 route_not_found` and a served path with another method `405`. A test checks
+  every route against the mapping.
+- One drools rule per action; `deny-when-no-rules`. Every read-API rule admits "System Users" and
+  "Second Line Support" and matches its route's method and path; finer-grained rules only when a
+  need appears.
+- Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; the payload
+  endpoints' response body is replaced in the audit event by `{"payloadOmitted":true}`. A request
+  refused before it reaches the audit filter is counted in `resultsstore.read.refused` with a
+  bounded reason: `route_not_found`, `method_not_allowed` (our filters, before authorisation),
+  `unsupported_content_type` (after it), `unauthenticated`, `forbidden` (authorisation) and
+  `connector_rejected` (the HTTP connector, before the service sees the request).
+- Every refusal and error is the four-field problem body (`type`, `title`, `status`, `reason`);
+  no body ever echoes a caller's value, a path or an exception message.
 - The payload table holds special-category and youth personal data; index tables hold ids and
   flags only. Retention placeholder 13 months (`expires_at`, nightly purge), pending the DPIA.
 

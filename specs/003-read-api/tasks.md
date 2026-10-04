@@ -905,7 +905,7 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     `NoPayloadInLogsIT` 4, 0 failures; the gate green (1867 tests passed, 0 skipped; JaCoCo report line 0.9974,
     branch 0.9741).
 
-- [ ] T012 [US1] [US2] [US3] [US5] [US7] Smoke, compose and documents. Test first: extend scripts/container-smoke.sh so it fails on the pre-003 build, with the HTTP checks of spec FR-060 after the published share is stored (pull lists the `shareId` once the derived lag has passed; one share `200`; `/payload` `200` with `sha256sum` of the body equal to the unquoted `ETag` and `jq 'has("_metadata")'` false; `If-None-Match` `304`; day versions `200`; no `CJSCPPUID` `401`; the no-group `CJSCPPUID` `403`; `/results-store/v1/anything` `404` with reason `route_not_found` and no path in the body; a vendor `Accept` on pull still `200`; `resultsstore_read_requests_total` and `resultsstore_read_refused_total` present); and the review grep (RED: the hits before the edits) for `lowest sequence number`, `still-open write`, `library's default settings`, `include-payload-body`, `caller-supplied`, `carry no request or response bodies` across `specs/`, `.specify/memory/constitution.md` and `.claude/rules/design_rules.md`; then
+- [X] T012 [US1] [US2] [US3] [US5] [US7] Smoke, compose and documents. Test first: extend scripts/container-smoke.sh so it fails on the pre-003 build, with the HTTP checks of spec FR-060 after the published share is stored (pull lists the `shareId` once the derived lag has passed; one share `200`; `/payload` `200` with `sha256sum` of the body equal to the unquoted `ETag` and `jq 'has("_metadata")'` false; `If-None-Match` `304`; day versions `200`; no `CJSCPPUID` `401`; the no-group `CJSCPPUID` `403`; `/results-store/v1/anything` `404` with reason `route_not_found` and no path in the body; a vendor `Accept` on pull still `200`; `resultsstore_read_requests_total` and `resultsstore_read_refused_total` present); and the review grep (RED: the hits before the edits) for `lowest sequence number`, `still-open write`, `library's default settings`, `include-payload-body`, `caller-supplied`, `carry no request or response bodies` across `specs/`, `.specify/memory/constitution.md` and `.claude/rules/design_rules.md`; then
   - docker-compose.yml (app service: `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT`, `…_STATEMENTTIMEOUT`, `…_LOCKTIMEOUT`, `…_IDLEINTRANSACTIONTIMEOUT` through `${VAR:-default}` with short values (transaction 6 s, statement 2 s, lock 1 s, idle-in-transaction 1 s; derived lag 11 s), contracts/configuration.md *Compose*; `RESULTSSTORE_READ_PULL_VISIBILITYLAG` left unset), docker/wiremock/mappings/identity-stub.json (a low priority, so it is the default), docker/wiremock/mappings/identity-no-group.json (new: matched on `CJSCPPUID` `11111111-1111-4111-8111-111111111111`, priority 1, groups "Other Group");
   - .specify/memory/constitution.md: version 2.1.0 → 2.2.0 (MINOR), Principle VII reworded to research R20's text (the derived action; both groups and the method-and-path match; *every request that reaches an endpoint is audited; a request refused by a filter or by authorisation is counted*; the payload marker sentence, E1, E13); Principle II's read-API sentence reworded to *The read API serves the working copy without the message envelope's metadata (`_metadata`), and the text, likewise without it, when the working copy is empty* (E8), with the arrived-text clause *and, on its own endpoint, the text as it arrived, likewise without the envelope metadata* (E2), both in 2.2.0, so T013 touches no constitution; Sync Impact Report updated (modified principles, templates checked, follow-ups); **Last Amended** set;
   - `.claude/rules/design_rules.md`: the *Pull safety* paragraph replaced by the visibility bound, 90 s (research R4, R7); *Security*: the action derived for every request with vendor media types neutralised, rules admitting "System Users" and "Second Line Support" and matching method and path, the audit wording above; the read API table: the payload row says "without `_metadata`", search gains the time form, and the arrived row is added (E2, E6, E8);
@@ -929,7 +929,79 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     - `CREATE INDEX CONCURRENTLY` for V5 if it deploys after live capture starts;
     - deploy values in `cpp-aks-deploy` (audit transport hosts and credentials, the gateway route to `/results-store/v1`) and the Azure Monitor alert rules for `resultsstore.intake.visibility.overrun` and `read.requests{outcome=unavailable}`;
     - consumer client code in YOT and probation (they build to contracts/read-api.md);
-    - a youth-raised feed for spec 004's held `FALSE`→`TRUE` changes (D-YOUTH-RAISE).
+    - a youth-raised feed for spec 004's held `FALSE`→`TRUE` changes (D-YOUTH-RAISE);
+    - the api repo's GitHub Release `v0.2.0` (with phase D's route, `0.3.0`) and the bump of
+      gradle/libs.versions.toml from the draft `rs-69080b1` to a release: after phase D (orchestrator ruling;
+      not done in T012). Until then a service release is refused by `validate-api-spec-version`;
+    - D-PG-VERSION / HA: the production PostgreSQL version and synchronous replication stay a recorded risk
+      (E11; research R4);
+    - Flyway's own unpooled connection has no `socketTimeout` (the pool's `data-source-properties` do not
+      reach it), so a migration stalled on a dead database waits on TCP;
+    - `spring.flyway.init-sqls` interpolates the raw `RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT` environment
+      variable into SQL rather than a typed, checked property (a PostgreSQL duration, refused only by
+      PostgreSQL at start);
+    - the search cursor is strictly decoded but not signed: ruled acceptable (it holds only public facts and
+      moves only the caller's own paging position within the court it already may read; FR-029, R9);
+    - audit events (T011 findings, `cp-audit-filter-springboot` 1.0.5): the share routes' request event
+      carries no `shareId`, because the library resolves only inline path parameters and the contract declares
+      `shareId` by `$ref` (fix: inline the parameter in hmcts/api-cp-crime-results-store, or the library
+      resolving references); no event carries the derived action (the library names its record from
+      `Accept`/`Content-Type`, which the action filter reads as `application/json`). Both need a contract or
+      library change;
+    - the generated models carry no `@JsonPropertyOrder`, so Jackson 3 writes their members alphabetically
+      (problem bodies from the advice differ in order from the filters'); JSON order is not part of the
+      contract; the api repo's generator could add the order.
+  - Smoke and compose: `scripts/container-smoke.sh` gains the read API checks (pull lists the share once the
+    derived lag has passed, budget 45 s; `visibleUpTo` with six digits; one share for a System Users and a
+    Second Line Support caller; the payload's `sha256sum` equals the unquoted `ETag`, `jq 'has("_metadata")'`
+    false, its hearing, `Content-Type`, `Results-Store-Share-Id`, `-Enrichment-Applied`, `Cache-Control`;
+    `If-None-Match` `304`; the day's versions; `401`, `403`, `404 route_not_found` bounded bodies with no
+    path or id; a vendor `Accept` on pull `200` as `application/json`; the Prometheus lines
+    `resultsstore_read_requests_total{…}`, `resultsstore_read_refused_total{…}` for `route_not_found`,
+    `unauthenticated`, `forbidden`, and `resultsstore_intake_visibility_overrun_total 0.0`); `jq` joins curl
+    and coreutils as a host tool (preinstalled on GitHub's runners). docker-compose.yml: the four intake
+    timeouts (6 s, 2 s, 1 s, 1 s; derived lag 11 s) through `${VAR:-default}`, the lag left unset.
+    docker/wiremock/mappings: `identity-stub.json` priority 10 (the default "System Users"),
+    `identity-second-line.json` (`CJSCPPUID` `22222222-2222-4222-8222-222222222222`, "Second Line Support")
+    and `identity-no-group.json` (`11111111-1111-4111-8111-111111111111`, "Other Group"), priority 1.
+  - RED (the extended smoke on this branch before the compose and stub changes, `flock … scripts/container-
+    smoke.sh`, exit 1): `FAIL: pull lists the share after the lag: expected 'true', found 'false'` (90 s lag,
+    45 s budget); `FAIL: a caller in neither group: status: expected '403', found '200'` (and its reason, its
+    four fields and its echo checks); `FAIL: metric line missing: resultsstore_read_requests_total{endpoint=
+    "share",outcome="ok"} 2.0`; `FAIL: metric line missing: resultsstore_read_refused_total{reason=
+    "forbidden"} 1.0`; `FAIL: 7 read API check(s) failed`. (The build before phase A has no read API at all,
+    so every HTTP check fails there; this run is the sharper red.) Review grep (RED, 15 hits before the
+    edits): constitution 4, design_rules 2, page-notes 4, research 3, plan 1, tasks 1.
+  - GREEN: the smoke prints `PASS: intake stored the share enriched and the read API served it to admitted
+    callers only`, every check `ok` (58), exit 0; the gate green (1867 tests passed, 0 skipped; JaCoCo report
+    line 0.9974, branch 0.9741). Review grep after the edits: the remaining hits are the
+    constitution's Sync Impact Report record of 2.0.0 (historical), page-notes' quoted *Today* text, research
+    R14/R20's quotations of the old wording, plan.md's Complexity Tracking row (resolved by 2.2.0) and this
+    task's own text; none is current wording.
+  - Documents: constitution 2.2.0 (II and VII as above, the orchestrator's VII wording "a request refused by
+    a filter, by the connector or by authorisation is counted"; Sync Impact Report; Last Amended 2026-10-04);
+    `.claude/rules/design_rules.md` (pull safety = the lag, 90 s; security and audit wording with every refusal
+    reason incl. `connector_rejected`; the read API table: payload without `_metadata`, the search time form,
+    the arrived row); specs/001 (spec.md *Out of scope*, *Assumptions*, FR-015, FR-036 notes; data-model.md;
+    contracts/metrics.md *Not in 001*; contracts/configuration.md timeouts and backstop); specs/002 (FR-041,
+    contracts/schema.md rule 5, page-notes.md §3); specs/003 contracts (read-api.md: the draft and release,
+    the audit paragraph as built incl. the connector, `If-None-Match: *`, member order not fixed;
+    configuration.md: rule exceptions are `IllegalArgumentException`, the read timeout's whole seconds and why
+    the read template is no bean, the release after phase D, the compose identity stubs; metrics.md:
+    `payload.bytes` is recorded per payload read, a `304` included), quickstart.md (catalogue key), page-notes
+    (status, audit as built, release after phase D), plan.md (constitution 2.2.0; release after phase D),
+    spec.md (status Implemented, phases A to C; FR-057 names the connector).
+  - `/speckit-analyze` (by hand, hooks disabled; spec, plan and tasks against constitution 2.2.0, research,
+    data-model and contracts). CRITICAL: none (II and VII now read as built). HIGH: none open; resolved in
+    this task: FR-057's audit wording lacked the connector the constitution and FR-051 name (spec edited);
+    contracts/read-api.md §2.4 said the audit record holds the action, which the library does not write
+    (contract edited, gap in Deferred). MEDIUM, kept with a reason: T012's own text still lists the contract
+    release, now ruled to follow phase D (recorded in Deferred, not rewritten); T011's audit case name differs
+    from the cases built (recorded under T011); spec 004's documents still carry 110 s and the old timeouts
+    (corrected when 004 is rebased, Notes). LOW: none recorded.
+    `.specify/scripts/bash/check-prerequisites.sh --require-tasks --include-tasks --json` exit 0
+    (`{"FEATURE_DIR":".../specs/003-read-api","AVAILABLE_DOCS":["research.md","data-model.md","contracts/",
+    "quickstart.md","tasks.md"]}`).
 
 ---
 

@@ -124,7 +124,7 @@ The contract lives in hmcts/api-cp-crime-results-store (research R23). The order
    gh run list -R hmcts/api-cp-crime-results-store   # the draft run publishes rs-<sha7>
    ```
 
-2. Pin the draft in this repository's `gradle/libs.versions.toml` (`api-cp-crime-results-store = "rs-<sha7>"`),
+2. Pin the draft in this repository's `gradle/libs.versions.toml` (`api-results-store = "rs-<sha7>"`),
    make the same change to `src/main/resources/results-store-openapi.yaml`, and build: the drift test and the
    controller tests tell you what is left.
 3. When the service change is in, publish a GitHub Release `vX.Y.Z` of the api repository and bump the

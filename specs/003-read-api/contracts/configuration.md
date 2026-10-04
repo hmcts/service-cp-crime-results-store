@@ -14,7 +14,7 @@ Build settings, not runtime properties. Set in `gradle/libs.versions.toml` and `
 |---|---|---|---|
 | Coordinates | `uk.gov.hmcts.cp:api-cp-crime-results-store` | `gradle/libs.versions.toml` `[libraries]`, alias `api-results-store`; `apiSpec libs.api.results.store` in `build.gradle` | the `apiSpec` configuration; `implementation.extendsFrom apiSpec` |
 | Version while phase C is built | `rs-69080b1` (draft from the api repo's `team/rs`, commit `69080b1`, which already serves the payload as `byte[]`; it superseded the first draft `rs-2c5bc08`) | `gradle/libs.versions.toml` `[versions]` | an exact draft, never a range |
-| Version released | `0.2.0` (T012); `0.3.0` with the arrived route (T013) | the same | strict `X.Y.Z`: `./gradlew validateApiSpecVersions` (`gradle/apispec-validation.gradle`) fails on anything else, and the `validate-api-spec-version` job runs it before `ci-release` in `.github/workflows/ci-released.yml` |
+| Version released | after phase D (orchestrator ruling: the api repo's Release `v0.2.0` and the bump from `rs-69080b1` happen after phase D) | the same | strict `X.Y.Z`: `./gradlew validateApiSpecVersions` (`gradle/apispec-validation.gradle`) fails on anything else, and the `validate-api-spec-version` job runs it before `ci-release` in `.github/workflows/ci-released.yml` |
 | Repository | Azure Artifacts `hmcts-lib`, `https://pkgs.dev.azure.com/hmcts/Artifacts/_packaging/hmcts-lib/maven/v1` | `gradle/repositories.gradle` (already there) | read anonymously; no credentials. Also published to GitHub Packages, not used for reading |
 | Audit filter's document | `audit.http.openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}` | `application.yaml` | **unchanged**. The service's own `src/main/resources/results-store-openapi.yaml` stays the one document the glob finds; the jar carries its spec only at `openapi/openapi-spec.yml`. `OpenApiContractDriftTest` keeps the two equal (paths, components, tags; not `info` or `servers`) |
 
@@ -105,14 +105,18 @@ resultsstore:
   positive; a lag, when set, is positive.
 - `ReadApiConfig` checks the rules that span settings, and builds the beans:
   - the effective lag is the set value, or the derived sum when unset;
-  - effective lag < sum → `IllegalStateException` naming `resultsstore.read.pull.visibility-lag` and the
+  - effective lag < sum → `IllegalArgumentException` (as every other settings rule) naming `resultsstore.read.pull.visibility-lag` and the
     sum's three properties (`Rules.atLeast(name, value, boundName, bound)`, a new four-argument
     overload beside the existing three-argument one);
-  - effective lag > 10 min → `IllegalStateException`. When the lag is unset (so the derived sum is what
+  - effective lag > 10 min → `IllegalArgumentException`. When the lag is unset (so the derived sum is what
     is too long), the message names `resultsstore.intake.store.transaction-timeout`;
   - statement timeout ≥ the socket timeout → `IllegalStateException`, the same rule as
     `IntakeConfig`'s for the intake statement timeout.
 - Messages name properties, never values from the environment.
+- The read statement timeout is applied as the read `JdbcTemplate`'s query timeout, in whole seconds rounded
+  up (`1500ms` runs as 2 s; never 0, which would be no timeout). The read template is built inside the
+  `JdbcShareQueries` bean, not exposed as a bean: a second `JdbcTemplate` bean would make Boot's own back off
+  and put the read timeout under intake's `JdbcClient`.
 
 ### The lag is checked per pod: rollout order (D-READONLY-PODS = no, E10)
 
@@ -158,6 +162,11 @@ profile is not active: `IllegalStateException` naming `authz.http.enabled`. The 
 |---|---|---|
 | `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT`, `…_STATEMENTTIMEOUT`, `…_LOCKTIMEOUT`, `…_IDLEINTRANSACTIONTIMEOUT` | short values through `${VAR:-default}`: transaction 6 s, statement 2 s, lock 1 s, idle-in-transaction 1 s (lock ≤ statement holds) | so the smoke's derived lag is 6 + 2 × 2 + 1 = 11 s, not 90 s; the pool backstop follows the 2 s statement timeout |
 | `RESULTSSTORE_READ_PULL_VISIBILITYLAG` | left unset | the smoke checks the derived default |
+
+The usersgroups stub (`docker/wiremock/mappings`) answers any caller as "System Users"
+(`identity-stub.json`, priority 10), except two matched on `CJSCPPUID` (priority 1): `2222…` in "Second Line
+Support" (`identity-second-line.json`) and `1111…` in "Other Group" (`identity-no-group.json`, refused
+`403`). The smoke (`scripts/container-smoke.sh`) uses all three.
 
 ## Constants that are deliberately not settings
 

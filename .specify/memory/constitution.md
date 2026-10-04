@@ -1,6 +1,53 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.1.0 → 2.2.0 (2026-10-04, spec 003 read API)
+Bump rationale: MINOR. Materially wider guidance, no rule reversed.
+                Principle VII: the action is derived for every request
+                with caller CPP-ACTION and vendor media types overridden
+                and unmapped paths refused; read rules admit "System Users"
+                and "Second Line Support" and match method and path; the
+                audit sentence becomes "every request that reaches an
+                endpoint is audited; a request refused by a filter, by the
+                connector or by authorisation is counted", with the payload
+                endpoints' audit marker (decisions E1, E13). Principle II:
+                the read API serves no envelope metadata (_metadata), and
+                the arrived text has its own endpoint (E8, E2), written now
+                so phase D of spec 003 changes no constitution.
+
+Principles changed in 2.2.0:
+  II.   The Payload Is the Source of Truth - the read API serves the working
+        copy without _metadata, the text likewise when the working copy is
+        empty, and the arrived text likewise on its own endpoint
+  VII.  Default-Deny Authorisation - derived action for every request;
+        vendor media types overridden; unmapped paths refused; both groups
+        admitted on read rules matching method and path; audit of requests
+        that reach an endpoint, refusals counted; payload audit marker
+Principles unchanged: I, III, IV, V, VI, VIII, IX, X, XI, XII.
+
+Templates checked (2.2.0):
+  ✅ .specify/templates/plan-template.md      - no change needed
+  ✅ .specify/templates/spec-template.md      - no change needed
+  ✅ .specify/templates/tasks-template.md     - no change needed
+  ✅ .claude/rules/design_rules.md            - pull safety (the visibility
+                                                lag), security and audit
+                                                wording, the read API table
+  ✅ .claude/agents/*, CLAUDE.md              - checked; no change needed
+  ✅ specs/001-share-intake, specs/002-enrichment - "Amended by spec 003"
+                                                notes (indexes in V5, intake
+                                                timeout defaults, served bytes
+                                                without _metadata)
+
+Follow-up TODOs (2.2.0):
+  - Design page wording (read API, pull safety, audit): forward notes in
+    specs/003-read-api/page-notes.md for the page owner.
+  - Delete the payload audit marker's override once the audit library offers
+    a body-exclusion switch (D-AUDIT option 2); this principle then keeps its
+    wording.
+  - Spec 004 bumps to 2.3.0 for its own Principle I change.
+
+Previous change, kept for the record:
+
 Version change: 2.0.0 → 2.1.0 (2026-10-03, spec 002 enrichment)
 Bump rationale: MINOR. Principle II gains the working-copy clause: the
                 arrived text (payload_text, with the checksum over it) and
@@ -147,8 +194,11 @@ which keeps content but not key order, spacing or duplicate keys.
 
 Every indexed column is read from the working copy (from the text when the
 working copy is empty), and can be rebuilt from it if the extraction rules
-change. The read API serves the working copy, and the text when the working
-copy is empty.
+change. The read API serves the working copy without the message envelope's
+metadata (`_metadata`), and the text, likewise without it, when the working
+copy is empty; and, on its own endpoint, the text as it arrived, likewise
+without the envelope metadata. No read-API response carries `_metadata` or a
+value taken from it.
 
 **Rationale**: if the columns can always be rebuilt from the payload, an
 extraction bug is a re-run, not a data loss. Keeping the text as it arrived
@@ -243,16 +293,23 @@ lost; the single transaction means no consumer sees a half-stored share.
 - Every endpoint adds its own allow rule in
   `src/main/resources/acl/results-store-rules.drl`, naming the groups it
   admits. No rule ever allows everything.
-- The action is worked out from the request's path and method by
-  `ActionHeaderFilter`. A caller-supplied `CPP-ACTION` header is never
-  trusted for a mapped path.
-- Every read-API action's rule admits the "System Users" group. There is no
+- The action is derived from method and path for every request, by
+  `ActionHeaderFilter`. A `CPP-ACTION` header or a vendor media type
+  (`application/vnd.…`) sent by the caller is overridden, so a caller can
+  never choose its action. A path under the service that cannot be mapped is
+  refused.
+- Every read-API action's rule admits the "System Users" and "Second Line
+  Support" groups and matches its route's method and path. There is no
   youth scoping; finer-grained rules are added only when a need appears.
 - `/operations/**` is for "Second Line Support" only, and never returns a
   payload. Support staff read payloads through the read API under its own
   rules.
-- Every request is audited by `cp-audit-filter-springboot`, with the
-  library's default settings.
+- Every request that reaches an endpoint is audited by
+  `cp-audit-filter-springboot`; a request refused by a filter, by the
+  connector or by authorisation is counted (`resultsstore.read.refused`).
+  The payload endpoints' response body is replaced in the audit event by a
+  fixed marker (`{"payloadOmitted":true}`), so no payload reaches the audit
+  store.
 
 **Rationale**: the store holds every defendant's results, including
 children's. An endpoint someone forgot to protect must fail closed.
@@ -419,4 +476,4 @@ match.
 - Reviewers block a merge that breaks a NON-NEGOTIABLE principle without a
   written waiver.
 
-**Version**: 2.1.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-03
+**Version**: 2.2.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-04

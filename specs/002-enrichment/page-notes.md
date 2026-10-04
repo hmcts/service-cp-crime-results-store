@@ -62,6 +62,10 @@ says whether application results were added at intake."
 (This is the constraint spec 003 builds to: serve `payload_json`, `ETag` over the bytes served,
 `payload_text` when `payload_json` is empty; spec 002 FR-041.)
 
+> *Amended by spec 003* (E8): the served bytes are the working copy **without the envelope metadata
+> (`_metadata`)**, or the text, likewise without it, when the working copy is empty; spec 003's
+> page-notes.md carries the wording for this row.
+
 ---
 
 ## 4. Intake: *Adding finalised application results*, the paragraph after the bullets

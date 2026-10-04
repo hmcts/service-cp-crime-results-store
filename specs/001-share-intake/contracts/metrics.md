@@ -42,6 +42,10 @@ other `DataAccessException` → `database`; anything else → `other`.
 Enrichment counters (spec 002); reconciliation findings, subscription health and dead-letter count
 (read from the broker and Azure Monitor, specs 003/004).
 
+*Amended by spec 003*: the read meters (`resultsstore.read.requests`, `.refused`, `.duration`,
+`.page.items`, `.payload.bytes`) and intake's `resultsstore.intake.visibility.overrun` are in
+[specs/003-read-api/contracts/metrics.md](../../003-read-api/contracts/metrics.md).
+
 ## Checks (T013)
 
 `MicrometerIntakeObserverTest` asserts every name and tag set against a `SimpleMeterRegistry`; an

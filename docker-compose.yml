@@ -23,6 +23,13 @@ services:
       # usersgroups is the WireMock stub below, so cp-auth-rules-filter runs as deployed.
       CP_BASE_URL: http://wiremock:8080
       RESULTS_STORE_SYSTEM_USER_ID: 00000000-0000-0000-0000-000000000000
+      # Short intake timeouts, so the read API's derived visibility lag is 6 + 2 x 2 + 1 = 11 s rather
+      # than 90 s (specs/003-read-api contracts/configuration.md, Compose); lock <= statement holds. The
+      # lag itself is left unset, so the smoke checks the derived default.
+      RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT: ${RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT:-6s}
+      RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT: ${RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT:-2s}
+      RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT: ${RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT:-1s}
+      RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT: ${RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT:-1s}
     depends_on:
       # Flyway migrates on startup, so the database has to be there first. The broker does not
       # gate startup; the listener container reconnects on its own.
@@ -68,7 +75,9 @@ services:
       retries: 12
       start_period: 20s
 
-  # Stands in for usersgroups (docker/wiremock/mappings/identity-stub.json).
+  # Stands in for usersgroups (docker/wiremock/mappings): any caller is in "System Users"
+  # (identity-stub.json, the lowest priority), except two matched on CJSCPPUID: one in "Second Line
+  # Support" (identity-second-line.json) and one in "Other Group" (identity-no-group.json, refused 403).
   wiremock:
     image: wiremock/wiremock:3.13.2
     ports:

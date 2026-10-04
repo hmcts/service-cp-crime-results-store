@@ -22,6 +22,13 @@ Durations use Spring's format (`10s`, `5m`).
 The three `store.*` timeouts are applied per transaction with `set_config(…, true)` (research
 R2). They also bound each sweep row's transaction.
 
+> *Amended by spec 003* ([configuration](../../003-read-api/contracts/configuration.md), FR-061,
+> FR-062): the defaults are now `statement-timeout` **10s** (was 20s) and `lock-timeout` **5s** (was
+> 10s), so the read API's 90-second visibility lag holds (transaction + 2 × statement +
+> idle-in-transaction). Every pooled connection also starts with `SET statement_timeout` equal to
+> `statement-timeout` (the pool backstop, `config/StatementTimeoutBackstop`); Flyway migrates on its own
+> connection with the limit lifted. The table above keeps the 001 values as written.
+
 ## `resultsstore.sweep.*` (`SweepProperties`)
 
 | Property | Default | Environment variable | Rule |

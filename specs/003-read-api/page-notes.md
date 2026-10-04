@@ -2,11 +2,11 @@
 
 **For**: the owner of the Results Store design page (CRA 321061800), and the YOT and probation teams who
 build to the read API.
-**From**: spec 003 (read API); constitution 2.2.0 once T012 lands (Principles II and VII).
+**From**: spec 003 (read API); constitution 2.2.0 (Principles II and VII).
 **Status**: notes only. The page has not been edited. Each note gives the section, the wording on the
 page today where this repository records it, and paste-ready wording. Every decision behind them was
-taken with Sachin on 2026-10-03 (spec.md *Decisions taken with Sachin*). T012 reconciles these notes with
-what was built.
+taken with Sachin on 2026-10-03 (spec.md *Decisions taken with Sachin*). Reconciled with what was built
+(phases A to C) by T012 on 2026-10-04.
 
 In one line: the read API is six `GET` endpoints under `/results-store/v1` (the sixth, the arrived text,
 in phase D). No response carries the message envelope's metadata (`_metadata`).
@@ -83,8 +83,8 @@ from path and method for **every** request and refuses a path it cannot map … 
 > - One allow rule per action, `deny-when-no-rules`. Every read-API rule admits "System Users" and
 >   "Second Line Support", and also matches the route's method and path.
 > - Every request that reaches an endpoint is audited by `cp-audit-filter-springboot`; a request refused
->   by a filter or by authorisation is counted. The payload endpoints' audit record holds a fixed marker
->   instead of the payload.
+>   by a filter, by the HTTP connector or by authorisation is counted. The payload endpoints' audit record
+>   holds a fixed marker (`{"payloadOmitted":true}`) instead of the payload.
 
 ---
 
@@ -97,6 +97,11 @@ from path and method for **every** request and refuses a path it cannot map … 
 the audit event. The store replaces the payload endpoints' body with a fixed marker in the audit event
 (D-AUDIT option 4) and asks the library owners for an exclusion switch; list pages are audited with
 their bodies (ids and flags). The DPIA records both.*
+
+As built (spec 003 T011), an audit event carries the caller, the correlation id, the query parameters,
+the path parameters the OpenAPI document declares inline, and the body; not the action, and not the
+`shareId` of the share routes (declared by reference). Both are recorded for a later contract or library
+change (tasks.md, Deferred).
 
 The youth-scoped read action in the appendix stays superseded: constitution VII has no youth scoping.
 
@@ -155,7 +160,8 @@ Still open, as a risk: the production PostgreSQL version and whether it uses syn
   document is published as the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
   hmcts/api-cp-crime-results-store (Azure Artifacts `hmcts-lib`, anonymous read), with a generated Spring
   interface and models; a client can be generated from `openapi/openapi-spec.yml` in it. Build against a
-  release (`0.2.0`; `0.3.0` adds the arrived text), not a draft.
+  release, not a draft: the first release is made after phase D (the service builds today on the draft
+  `rs-69080b1`).
 - **S7.** The groups are "System Users" and "Second Line Support"; probation's system user needs "System
   Users".
 - **S8.** `ETag` = `"<SHA-256 hex over the exact bytes served>"`, strong and quoted: DV-19 can compare

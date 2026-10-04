@@ -8,7 +8,8 @@ distribution, court register, support staff). This is the document to review for
 **Machine-readable form**: the jar `uk.gov.hmcts.cp:api-cp-crime-results-store` from
 [hmcts/api-cp-crime-results-store](https://github.com/hmcts/api-cp-crime-results-store) (Azure Artifacts
 `hmcts-lib`, anonymous read): the spec at `openapi/openapi-spec.yml`, a generated Spring interface
-(`SharesApi`) and models. Release `0.2.0` holds endpoints 1 to 5; `0.3.0` adds the arrived text. The
+(`SharesApi`) and models. Endpoints 1 to 5 are built against the draft `rs-69080b1`; the first release
+(`0.2.0`, or `0.3.0` with the arrived text) is made after phase D. Build a client against a release. The
 store's own `src/main/resources/results-store-openapi.yaml` is kept identical to it by a build-time test.
 Where this document and the spec disagree, this document is corrected.
 
@@ -83,11 +84,14 @@ Every route is `GET` only. Nothing else is served under `/results-store/v1`.
 
 ### 2.4 Audit
 
-Every request that reaches an endpoint is audited by the estate's audit library, with your user id and
-the action. A request refused by the store's filters (`404 route_not_found` and `405` before
-authorisation, `415` after it) or by authorisation (`401`, `403`) never reaches the audit filter: it is
-counted, not audited. The payload endpoints' audit record holds a fixed marker in place of the payload
-body (D-AUDIT option 4); the store has asked the audit library's owners for a switch that does the same.
+Every request that reaches an endpoint is audited by the estate's audit library, with your user id. A
+request refused by the store's filters (`404 route_not_found` and `405` before authorisation, `415` after
+it), by authorisation (`401`, `403`) or by the HTTP connector (`400 bad_request`) never reaches the audit
+filter: it is counted, not audited. The payload endpoints' audit record holds a fixed marker
+(`{"payloadOmitted":true}`) in place of the payload body (D-AUDIT option 4); the store has asked the audit
+library's owners for a switch that does the same. (What the library records, as built: the caller, your
+`CPPCLIENTCORRELATIONID`, the query parameters, the path parameters the document declares inline, and the
+body; not the action.)
 
 ---
 
@@ -313,7 +317,7 @@ without its quotes. The `ETag` is **not** the store's checksum of the arrived me
 over the text with `_metadata`, which the store never serves.
 
 **Conditional fetch.** Send `If-None-Match` with an `ETag` you hold (alone, in a list, weak `W/"…"`, or
-`*`). If it matches: `304 Not Modified`, the `ETag` header, no body. Only the `ETag` is promised on a
+`*`; `*` matches any share that exists). If it matches: `304 Not Modified`, the `ETag` header, no body. Only the `ETag` is promised on a
 `304`. Otherwise `200` as above.
 
 **Stability promise.** For a given share the body and its `ETag` stay the same while the store's
@@ -421,7 +425,8 @@ Every `4xx` and `5xx` from the store has this body and nothing else:
 { "type": "about:blank", "title": "Bad Request", "status": 400, "reason": "limit_out_of_range" }
 ```
 
-`title` is the HTTP reason phrase. The body never holds your input, a path, an exception message or any
+`title` is the HTTP reason phrase. The order of the members is not fixed (JSON objects are unordered;
+parse the body). The body never holds your input, a path, an exception message or any
 payload content. `Content-Type` is `application/problem+json`, except `401` and `403`, which come as
 `application/json`. A `401` or `403` has this same JSON body whatever `Accept` you send, `text/html`
 included: there is no HTML error page. Branch on `status` and `reason`. A request the HTTP connector

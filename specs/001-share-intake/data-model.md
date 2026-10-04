@@ -15,6 +15,10 @@ Consumer search indexes (court centre, shared day, defendant id and so on) are *
 here; spec 003 adds them with the read API. The only indexes in 001 serve the write path, the
 sweep and R1.
 
+> *Amended by spec 003* ([data-model](../003-read-api/data-model.md)): the consumer indexes are added by
+> `V5__read_api.sql` (the youth feed, the court feed and the court search index), with the trigger that sets
+> `stored_at` after `stored_seq` is taken. V1 to V4 are unchanged.
+
 > *Amended by spec 002* ([data-model](../002-enrichment/data-model.md)): `payload_json` is no longer an unread parsed copy but the working copy (the arrived text parsed, plus finalised application results added at intake, without the three amendment fields), permanent and the source of every indexed column and of the sweep's re-extraction; `payload_text` and `payload_sha256` stay exactly as received. The V3 inline comments below are kept as written.
 
 ## Entity overview

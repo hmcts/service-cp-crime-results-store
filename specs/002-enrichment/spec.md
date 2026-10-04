@@ -261,6 +261,7 @@ Support staff see how many applications were looked up and with what outcome, ho
 
 - **FR-040**: Nothing in 002 serves a payload. Spec 003 MUST follow FR-041.
 - **FR-041**: The read API MUST serve `payload_json`, with the `ETag` computed over the exact bytes served; and MUST serve `payload_text` when `payload_json` is empty.
+  *Amended by spec 003* (E8): the served bytes are the working copy **without `_metadata`** (`(payload_json - '_metadata')::text`), or `payload_text` parsed with `_metadata` removed when the working copy is empty; the `ETag` is over exactly those bytes (specs/003-read-api FR-033, FR-034).
 
 ### Changes to spec 001
 

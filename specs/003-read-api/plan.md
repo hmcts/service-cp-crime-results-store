@@ -78,7 +78,7 @@ with Sachin (2026-10-03)*. The production PostgreSQL version stays a risk (D-PG-
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Constitution 2.1.0. T012 amends it to 2.2.0 (MINOR; research R20); the check below holds against both.
+Constitution 2.2.0 (amended from 2.1.0 by T012, MINOR; research R20); the check below holds against both.
 
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|
@@ -275,7 +275,7 @@ schema, ports and service of phase B; phase D needs everything (D-RAW accepted, 
 | T009 | `ConfigurationValidationTest`, `ReadApiConfigTest`, `IntakeConfigTest`, `SweepSchedulingConfigTest` (stub data source), `OpenApiContractDriftTest` | `ReadApiProperties`, `ReadApiConfig`, `Rules` overload, `application.yaml`; overrun threshold from the effective lag (90 s by default); the `apiSpec` dependency on `rs-69080b1` (supersedes `rs-2c5bc08`), `apispec-validation.gradle` applied, the `validate-api-spec-version` job in `ci-released.yml` | FR-017, FR-018, FR-045, FR-056, FR-063; SC-008 |
 | T010 | api repo first: the payload body as `byte[]` (pull request, `rs-<sha7>` draft, pin); then `ShareParametersTest`, `ShareParametersInterceptorTest`, `InstantFormatTest`, `ShareResponseMapperTest`, `SharesControllerTest`, `SharePayloadControllerTest`, `HearingDaySharesControllerTest`, `ContentNegotiationTest`, `ReadApiExceptionHandlerTest`, `ReadMetricsInterceptorTest`, `OpenApiContractTest` | `SharesController implements SharesApi`, the mapper to the generated models, `PayloadResponses`, the parameter interceptor, advice, metrics interceptor, `304` | FR-002–FR-008, FR-031–FR-037, FR-042–FR-044, FR-053, FR-063 |
 | T011 | `ReadApiIT`, `AuditIT`, `NoPayloadInLogsIT`, `PayloadBodyFreeAuditPayloadGenerationServiceTest` | fixes found; D-AUDIT option 4 (E1) | US1–US7; FR-012, FR-022–FR-030, FR-039, FR-051, FR-052; SC-003–SC-006, SC-011 |
-| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred; Release `v0.2.0` of the api repo and the bump from the draft | FR-057–FR-060, FR-063; SC-012, SC-013 |
+| T012 | smoke HTTP checks first (red on the old build); review grep for the old pull-safety and audit wording | compose and WireMock changes; documents: constitution 2.2.0, design rules, spec 001 pointers, contracts reconciled, page-notes, `/speckit-analyze`, Deferred. The api repo Release `v0.2.0` and the bump from the draft follow phase D (orchestrator ruling) | FR-057–FR-060, FR-063; SC-012, SC-013 |
 
 ### Phase D: arrived text (D-RAW accepted, E2)
 
