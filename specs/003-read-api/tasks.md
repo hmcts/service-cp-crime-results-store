@@ -972,7 +972,7 @@ pins the audit behaviour; the smoke proves it in the compose stack.
   - the contract release (research R23 C4), last, once the smoke and the documents are done: a GitHub Release `v0.2.0` of hmcts/api-cp-crime-results-store from the api `main` commit that `team/rs` was fast-forwarded to for phase C; its ci-released run publishes `0.2.0`; gradle/libs.versions.toml bumped from the `rs-<sha7>` draft to `0.2.0`; `./gradlew validateApiSpecVersions` passes (quoted); `OpenApiContractDriftTest` green against the released jar. Corrected by T013 (orchestrator ruling): there is ONE api release, `v0.2.0`, at the end of 003, covering all five operations (the arrived route of phase D included); there is no `0.3.0`. The release and the bump are the orchestrator's step after phase D, not part of T012 or T013.
   - Covers: FR-012 and FR-039 (the contract text checked against what was built), FR-021 (document half), FR-022–FR-025 and FR-040 (likewise), FR-057, FR-058, FR-059, FR-060; FR-063 (the release and the bump) is deferred to after phase D by the orchestrator's ruling (see
     Deferred); SC-012, SC-013.
-  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the gate green. Amended by the orchestrator's ruling: the one release `0.2.0` (all five operations), the bump from the draft (`rs-a33c5ec` since T013) and
+  - Done when: `scripts/container-smoke.sh` prints `PASS` with every check `ok` (the RED run quoted: the HTTP checks fail on the build before phase A); the review grep shows no hit that is not reworded or marked historical; `/speckit-analyze` reports no CRITICAL or HIGH finding; the gate green. Amended by the orchestrator's ruling: the one release `0.2.0` (all five operations), the bump from the draft (`rs-f9d870c` since the phase D close-out; `rs-a33c5ec` from T013) and
     `validateApiSpecVersions` passing follow phase D (Deferred), so they are not part of this task's tick.
   - Deferred (not in 003):
     - push notifications to consumers (outbox, Service Bus); pull is the only feed;
@@ -989,7 +989,8 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     - consumer client code in YOT and probation (they build to contracts/read-api.md);
     - a youth-raised feed for spec 004's held `FALSE`→`TRUE` changes (D-YOUTH-RAISE);
     - the api repo's one GitHub Release `v0.2.0` (all five operations, phase D's arrived route included; no
-      `0.3.0`) and the bump of gradle/libs.versions.toml from the draft (`rs-a33c5ec` since T013) to `0.2.0`:
+      `0.3.0`) and the bump of gradle/libs.versions.toml from the draft (`rs-f9d870c` since the phase D close-out;
+      `rs-a33c5ec` from T013) to `0.2.0`:
       after phase D, the orchestrator's step (not done in T012 or T013). Until then a service release is
       refused by `validate-api-spec-version`;
     - D-PG-VERSION / HA: the production PostgreSQL version and synchronous replication stay a recorded risk

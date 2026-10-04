@@ -223,12 +223,13 @@ paths:
       summary: The text of one share as it arrived, before enrichment, without the envelope metadata
       description: >-
         Action results-store.get-share-arrived-payload. The message as hearing sent it, before any
-        court-application results were added, without the message envelope's `_metadata` member. The
-        store parses the text, removes `_metadata` and writes it back as JSON, so it is not
-        byte-identical to what hearing sent: key order and values are hearing's; spacing and escape
-        forms are the store's. The ETag is the SHA-256 of exactly the bytes of this body; it is not
-        the store's checksum of the arrived message, which is over the text with `_metadata`. Send
-        If-None-Match with an ETag you hold for a 304.
+        court-application results were added, without the message envelope's `_metadata` member. The store
+        parses the text, removes `_metadata` and writes it back as JSON, so it is not byte-identical to what
+        hearing sent: key order and values are hearing's; spacing and escape forms are the store's. The ETag
+        is the SHA-256 of exactly the bytes of this body. It is not offered as, nor to be compared with, the
+        store's stored checksum of the arrived message, which is over the text as it arrived; the two
+        coincide only for a compact message that held no `_metadata`. Send If-None-Match with an ETag you
+        hold for a 304.
       parameters:
         - $ref: '#/components/parameters/ShareId'
         - name: If-None-Match

@@ -161,7 +161,7 @@ Still open, as a risk: the production PostgreSQL version and whether it uses syn
   hmcts/api-cp-crime-results-store (Azure Artifacts `hmcts-lib`, anonymous read), with a generated Spring
   interface and models; a client can be generated from `openapi/openapi-spec.yml` in it. Build against a
   release, not a draft: the one release, `0.2.0`, is made after phase D and covers all five operations,
-  the arrived text included (the service builds today on the draft `rs-a33c5ec`).
+  the arrived text included (the service builds today on the draft `rs-f9d870c`).
 - **S7.** The groups are "System Users" and "Second Line Support"; probation's system user needs "System
   Users".
 - **S8.** `ETag` = `"<SHA-256 hex over the exact bytes served>"`, strong and quoted: DV-19 can compare

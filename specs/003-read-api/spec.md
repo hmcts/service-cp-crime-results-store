@@ -164,7 +164,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 
 **Acceptance Scenarios**:
 
-1. **Given** a stored share, **Then** the body is `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text, and the `ETag` is the quoted SHA-256 of those bytes. `payload_sha256` is never the `ETag` (it is over the text with `_metadata`).
+1. **Given** a stored share, **Then** the body is `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text, and the `ETag` is the quoted SHA-256 of those bytes. The `ETag` is not, in general, `payload_sha256` (that is over the text as it arrived); the two coincide only for a compact message that held no `_metadata`.
 2. **Given** a caller in neither admitted group, **Then** `403`; the endpoint has its own action and rule.
 
 ### Edge Cases
@@ -257,7 +257,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 
 **Arrived text (phase D; D-RAW accepted, E2)**
 
-- **FR-041**: `GET /shares/{shareId}/payload/arrived` MUST return `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text: the text as it arrived, without the envelope metadata. It MUST have its own action and allow rule. Its `ETag` MUST be the quoted lower-case SHA-256 hex of exactly the bytes served; `payload_sha256` MUST never be its `ETag` (that checksum is over the text with `_metadata`). It MUST carry the same headers as FR-035 with `Results-Store-Payload-Form: arrived-text`, and FR-036 and FR-037 apply to it.
+- **FR-041**: `GET /shares/{shareId}/payload/arrived` MUST return `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text: the text as it arrived, without the envelope metadata. It MUST have its own action and allow rule. Its `ETag` MUST be the quoted lower-case SHA-256 hex of exactly the bytes served; It is not offered as, nor to be compared with, `payload_sha256` (that checksum is over the text as it arrived); the two coincide only for a compact message that held no `_metadata`. It MUST carry the same headers as FR-035 with `Results-Store-Payload-Form: arrived-text`, and FR-036 and FR-037 apply to it.
 
 **Errors**
 
@@ -354,7 +354,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 - **SC-011**: The audit test pins the D-AUDIT behaviour (option 4): the payload response event holds `{"payloadOmitted":true}` and no body byte; a `304` publishes no response event; a `415` publishes nothing.
 - **SC-012**: The container smoke check passes every FR-060 case, with the 001 and 002 cases still passing.
 - **SC-013**: The build gate passes: line coverage at least 0.88, branch coverage at least 0.85, PMD clean on main and test.
-- **SC-014** (phase D): in 100 % of the cases the arrived-text body, parsed, equals the published message with its `_metadata` member removed; the body has no `_metadata` key; and the SHA-256 of the body equals the unquoted `ETag`, which is never `payload_sha256`.
+- **SC-014** (phase D): in 100 % of the cases the arrived-text body, parsed, equals the published message with its `_metadata` member removed; the body has no `_metadata` key; and the SHA-256 of the body equals the unquoted `ETag`, which is not, in general, `payload_sha256` (the two coincide only for a compact message that held no `_metadata`).
 - **SC-015**: In 100 % of the start-up cases (the default and a custom intake statement timeout), a pooled connection reports a `statement_timeout` equal to `resultsstore.intake.store.statement-timeout`, and the intake defaults are statement 10 s, lock 5 s, transaction 60 s and idle-in-transaction 10 s, giving a derived lag of 90 s.
 
 ## Decisions taken with Sachin (2026-10-03)
@@ -364,7 +364,7 @@ Every decision below is taken; nothing in 003 is pending. The only open item is 
 | Id | Question | Decision | Where it shows |
 |---|---|---|---|
 | E1 D-AUDIT | The audit library 1.0.5 copies whole response bodies into audit events and has no switch. What happens to payload bodies? | Option 4: replace the library's `AuditPayloadGenerationService` bean so the payload routes' response event holds `{"payloadOmitted":true}`. Option 2 in parallel: ask the library owners for a body-exclusion switch. Recorded in the DPIA. List responses keep their bodies | FR-052, FR-057; SC-011; T011, T012, T013 |
-| E2 D-RAW | Offer the arrived text on its own endpoint (probation S10)? | Yes, built as phase D, with its own action and rule. It serves the arrived text **without `_metadata`**, so its `ETag` is the SHA-256 over the bytes served, never `payload_sha256` | FR-001, FR-041, FR-046, FR-057; US8; SC-014; T012 (constitution II), T013 |
+| E2 D-RAW | Offer the arrived text on its own endpoint (probation S10)? | Yes, built as phase D, with its own action and rule. It serves the arrived text **without `_metadata`**, so its `ETag` is the SHA-256 over the bytes served, not, in general, `payload_sha256` (they coincide only for a compact message that held no `_metadata`) | FR-001, FR-041, FR-046, FR-057; US8; SC-014; T012 (constitution II), T013 |
 | E3 D-LAG-VALUE | The lag bound | **90 s** = transaction 60 + 2 × statement 10 + idle-in-transaction 10. Made provable by lowering the intake statement timeout 20 s → 10 s and the lock timeout 10 s → 5 s. Plus a pool-wide server-side `statement_timeout` from the same property (Hikari connection-init SQL). Client-side timeouts are never part of the bound | FR-017, FR-018, FR-021, FR-045, FR-061, FR-062; SC-015; T008, T009 |
 | E4 D-OVERRUN | Add the intake-side overrun counter, touching spec 001 code? | Yes: `resultsstore.intake.visibility.overrun` | FR-020; SC-009; T008 |
 | E5 D-COURT-FAILED | Should a court-filtered pull also return `FAILED` shares (court unknown)? | **No**: exact court matches only. The contract states that a share whose court is filled in later is not re-presented to a court-filtered pull; completeness needs the unfiltered pull or `dayYouthSeen=notFalse` | FR-012, FR-023, FR-054; T004, T006, T011 |

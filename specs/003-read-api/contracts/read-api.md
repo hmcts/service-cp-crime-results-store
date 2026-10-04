@@ -9,7 +9,7 @@ distribution, court register, support staff). This is the document to review for
 [hmcts/api-cp-crime-results-store](https://github.com/hmcts/api-cp-crime-results-store) (Azure Artifacts
 `hmcts-lib`, anonymous read): the spec at `openapi/openapi-spec.yml`, a generated Spring interface
 (`SharesApi`) and models. All six endpoints (five generated operations) are built against the draft
-`rs-a33c5ec`; the first release, `0.2.0`, is made once, at the end of spec 003, and covers all five
+`rs-f9d870c`; the first release, `0.2.0`, is made once, at the end of spec 003, and covers all five
 operations, the arrived text included. Build a client against a release. The
 store's own `src/main/resources/results-store-openapi.yaml` is kept identical to it by a build-time test.
 Where this document and the spec disagree, this document is corrected.

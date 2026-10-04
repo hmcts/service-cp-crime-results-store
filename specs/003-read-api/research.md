@@ -706,7 +706,8 @@ The service takes it the way `service-cp-crime-hearing-results-validator` takes
   publishes `rs-<sha7>`; a GitHub Release `vX.Y.Z` publishes `X.Y.Z`. The first drafts, from api commit
   `2c5bc08` (2026-10-04): `0.2.0-2c5bc08` (main) and `rs-2c5bc08` (`team/rs`). The payload change of C3
   followed as api commit `69080b1` (`rs-69080b1`, pinned by T009 for phases A to C), and the arrived-text
-  operation as api commit `a33c5ec` (`rs-a33c5ec`, pinned by T013). The service stays on `rs-a33c5ec` until
+  operation as api commit `a33c5ec` (`rs-a33c5ec`, pinned by T013), then the arrived `ETag` wording as api commit
+  `f9d870c` (`rs-f9d870c`, pinned at the phase D close-out). The service stays on `rs-f9d870c` until
   the one release `0.2.0`, made after phase D and covering all five operations.
 
 The rulings (C1 to C5; lettered so they do not clash with the research numbers):
