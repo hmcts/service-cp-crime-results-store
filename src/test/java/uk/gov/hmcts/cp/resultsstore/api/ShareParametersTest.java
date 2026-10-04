@@ -143,6 +143,8 @@ class ShareParametersTest {
             storedAfterSeq=0&dayYouthSeen= | INVALID_DAY_YOUTH_SEEN
             storedAfterSeq=0&courtCentreId=1-1-1-1-1 | INVALID_COURT_CENTRE_ID
             storedAfterSeq=0&courtCentreId=%7B2b3c4d5e-0000-4000-8000-000000000002%7D | INVALID_COURT_CENTRE_ID
+            storedAfterSeq=%zz | INVALID_STORED_AFTER_SEQ
+            storedAfterSeq | INVALID_STORED_AFTER_SEQ
             """)
         void a_pull_value_should_be_refused_with_its_own_reason(final String query, final ProblemReason reason) {
             assertThat(pull(query)).contains(reason);
@@ -151,6 +153,7 @@ class ShareParametersTest {
         @ParameterizedTest
         @CsvSource(delimiter = '|', textBlock = """
             courtCentreId=nope&sharedDayFrom=2026-10-01&sharedDayTo=2026-10-03 | INVALID_COURT_CENTRE_ID
+            courtCentreId=%zz&sharedDayFrom=2026-10-01&sharedDayTo=2026-10-03 | INVALID_COURT_CENTRE_ID
             courtCentreId=2b3c4d5e-0000-4000-8000-000000000002&sharedDayFrom=2026-10-1&sharedDayTo=2026-10-03 | INVALID_SHARED_DAY
             courtCentreId=2b3c4d5e-0000-4000-8000-000000000002&sharedDayFrom=2026-10-01&sharedDayTo=2026-02-30 | INVALID_SHARED_DAY
             courtCentreId=2b3c4d5e-0000-4000-8000-000000000002&sharedFrom=2026-10-01&sharedTo=2026-10-03T00:00:00Z | INVALID_SHARED_FROM
