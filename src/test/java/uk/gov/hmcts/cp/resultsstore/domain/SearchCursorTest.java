@@ -141,7 +141,8 @@ class SearchCursorTest {
                 .contains(new SearchCursor(Long.MAX_VALUE, SHARE_ID));
         assertThat(SearchCursor.decode(base64("v1|-9223372036854775808|" + SHARE_ID)))
                 .contains(new SearchCursor(Long.MIN_VALUE, SHARE_ID));
-        assertThat(new SearchCursor(Long.MIN_VALUE, SHARE_ID).encode()).hasSizeLessThanOrEqualTo(SearchCursor.MAX_LENGTH);
+        assertThat(new SearchCursor(Long.MIN_VALUE, SHARE_ID).encode())
+                .hasSizeLessThanOrEqualTo(SearchCursor.MAX_LENGTH);
     }
 
     @Test

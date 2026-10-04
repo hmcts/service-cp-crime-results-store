@@ -4,11 +4,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -167,7 +171,7 @@ class FlywayMigrationIT {
     void flyway_should_migrate_on_its_own_connection_with_the_lifted_statement_timeout() {
         // The pool's connections carry the 10 s backstop (FR-062); an index build on a large table could take
         // longer, so Flyway runs on its own unpooled connection with its init SQL lifting the limit.
-        final List<String> seen = new java.util.ArrayList<>();
+        final List<String> seen = new ArrayList<>();
         final Callback show = new Callback() {
             @Override
             public boolean supports(final Event event, final Context context) {
@@ -181,8 +185,8 @@ class FlywayMigrationIT {
 
             @Override
             public void handle(final Event event, final Context context) {
-                try (java.sql.Statement statement = context.getConnection().createStatement();
-                        java.sql.ResultSet value = statement.executeQuery("SHOW statement_timeout")) {
+                try (Statement statement = context.getConnection().createStatement();
+                        ResultSet value = statement.executeQuery("SHOW statement_timeout")) {
                     if (value.next()) {
                         seen.add(value.getString(1));
                     }
@@ -199,7 +203,7 @@ class FlywayMigrationIT {
         final String schema = "flyway_timeout_" + UUID.randomUUID().toString().replace("-", "");
 
         assertThat(migrations.getConfiguration().getDataSource()).as("Flyway's data source")
-                .isNotInstanceOf(com.zaxxer.hikari.HikariDataSource.class);
+                .isNotInstanceOf(HikariDataSource.class);
         assertThat(migrations.getConfiguration().getInitSql()).isEqualTo("SET statement_timeout = '0'");
         Flyway.configure().configuration(migrations.getConfiguration()).schemas(schema).defaultSchema(schema)
                 .createSchemas(true).callbacks(show).load().migrate();

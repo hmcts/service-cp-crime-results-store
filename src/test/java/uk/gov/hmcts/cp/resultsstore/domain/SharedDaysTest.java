@@ -2,13 +2,15 @@ package uk.gov.hmcts.cp.resultsstore.domain;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.Duration;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+@DisplayName("the shared days")
 class SharedDaysTest {
 
     @ParameterizedTest(name = "{0}")
