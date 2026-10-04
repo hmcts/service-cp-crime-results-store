@@ -1,8 +1,11 @@
 package uk.gov.hmcts.cp.resultsstore.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import java.util.Map;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.boot.webmvc.error.ErrorAttributes;
 import org.springframework.context.annotation.Bean;
@@ -15,6 +18,7 @@ import uk.gov.hmcts.cp.resultsstore.api.BoundedErrorAttributes;
 import uk.gov.hmcts.cp.resultsstore.api.BoundedErrorController;
 import uk.gov.hmcts.cp.resultsstore.application.RefusalObserver;
 import uk.gov.hmcts.cp.resultsstore.filters.ActionHeaderFilter;
+import uk.gov.hmcts.cp.resultsstore.filters.PayloadBodyFreeAuditPayloadGenerationService;
 import uk.gov.hmcts.cp.resultsstore.filters.UnsupportedContentTypeFilter;
 
 /**
@@ -109,6 +113,18 @@ public class ApiWebConfig {
     public BoundedErrorController errorController(final ErrorAttributes errorAttributes,
                                                   final RefusalObserver refusalObserver) {
         return new BoundedErrorController(errorAttributes, refusalObserver);
+    }
+
+    /**
+     * The audit library's event builder with the payload endpoints' response body replaced by a marker (D-AUDIT
+     * option 4, FR-052). Only with the audit transport on; the library's own builder backs off
+     * ({@code @ConditionalOnMissingBean}).
+     */
+    @Bean
+    @ConditionalOnProperty(name = "cp.audit.enabled", havingValue = "true")
+    public PayloadBodyFreeAuditPayloadGenerationService payloadBodyFreeAuditPayloadGenerationService(
+            @Qualifier("auditObjectMapper") final ObjectMapper auditObjectMapper) {
+        return new PayloadBodyFreeAuditPayloadGenerationService(auditObjectMapper);
     }
 
     /** Maps {@code /error}, every method, to the error controller, ahead of every other mapping. */

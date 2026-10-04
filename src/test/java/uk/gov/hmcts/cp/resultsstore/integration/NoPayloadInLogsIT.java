@@ -6,6 +6,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.awaitility.Awaitility.await;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 
+import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.classic.spi.IThrowableProxy;
@@ -209,6 +210,41 @@ class NoPayloadInLogsIT {
                 .filter(line -> everythingIn(line).contains(MARKER) || everythingIn(line).contains(SYSTEM_USER_ID))
                 .map(line -> line.getLoggerName() + " " + line.getLevel()).toList())
                 .as("loggers whose lines carry a progression body or the system user").isEmpty();
+    }
+
+    /**
+     * Serving a payload, in both forms (the working copy, and the arrived text when the working copy is empty),
+     * logs no payload content at any level: the root logger is at DEBUG while the payloads are fetched.
+     */
+    @Test
+    void serving_a_payload_should_log_no_payload_marker_at_any_level() throws Exception {
+        final List<UUID> shares = new ArrayList<>();
+        for (final String note : List.of(MARKER, MARKER + " a\\u0000b")) {
+            final String text = SampleShares.share(UUID.randomUUID(), DAY, "2026-10-02T19:00:00.000Z", "false", note);
+            final String messageId = "ID:serve-" + shares.size();
+            receiptStore.recordArrival(SampleShares.arrival(messageId, text));
+            shareStore.store(SampleShares.request(messageId, text));
+            shares.add(SampleShares.read(text).identity().shareId());
+        }
+        final Level level = root.getLevel();
+        root.setLevel(Level.DEBUG);
+        try {
+            for (final UUID shareId : shares) {
+                final String body = mockMvc.perform(get("/results-store/v1/shares/" + shareId + "/payload"))
+                        .andReturn().getResponse().getContentAsString();
+                assertThat(body.contains(MARKER)).as("the payload is served").isTrue();
+            }
+        } finally {
+            root.setLevel(level);
+        }
+
+        final List<ILoggingEvent> lines = captured();
+        assertThat(lines.stream().filter(line -> line.getLevel() == Level.DEBUG).count())
+                .as("lines at DEBUG").isPositive();
+        // Named by logger and level only, so a failure never prints the text it found.
+        assertThat(lines.stream().filter(line -> everythingIn(line).contains(MARKER))
+                .map(line -> line.getLoggerName() + " " + line.getLevel()).toList())
+                .as("loggers whose lines carry payload text").isEmpty();
     }
 
     @Test
