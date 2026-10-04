@@ -25,6 +25,7 @@ import org.springframework.http.converter.HttpMessageNotWritableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.mock.http.MockHttpInputMessage;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MissingPathVariableException;
@@ -212,6 +213,33 @@ class ReadApiExceptionHandlerTest {
 
             assertThat(log.events()).singleElement()
                     .satisfies(event -> assertThat(event.getMDCPropertyMap()).doesNotContainKey("shareId"));
+        }
+    }
+
+    @ParameterizedTest
+    @MethodSource("springExceptions")
+    void a_committed_response_should_be_left_as_it_is_and_the_failure_logged_by_class(final Exception exception)
+            throws Exception {
+        final String shareId = "6f1c2a3b-0d4e-5f60-8a7b-9c0d1e2f3a4b";
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("shareId", shareId));
+        final MockHttpServletResponse response = new MockHttpServletResponse();
+        response.setStatus(200);
+        response.setCommitted(true);
+        try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
+            final ResponseEntity<Object> answer = handler.handleException(exception,
+                    new ServletWebRequest(request, response));
+
+            assertThat(answer).isNull();
+            assertThat(response.getStatus()).isEqualTo(200);
+            assertThat(response.getContentAsByteArray()).isEmpty();
+            assertThat(response.getContentType()).isNull();
+            assertThat(log.events()).singleElement().satisfies(event -> {
+                assertThat(event.getFormattedMessage()).isEqualTo(
+                        "Read request failed after the response was committed: " + exception.getClass().getName());
+                assertThat(event.getFormattedMessage()).doesNotContain(SECRET);
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getMDCPropertyMap()).containsEntry("shareId", shareId);
+            });
         }
     }
 

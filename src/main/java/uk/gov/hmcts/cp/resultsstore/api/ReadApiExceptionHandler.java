@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.api;
 
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,6 +43,7 @@ import uk.gov.hmcts.cp.resultsstore.openapi.model.ProblemDetail;
  *       {@code Retry-After: 5}.</li>
  *   <li>Anything else, an unreadable stored text included: {@code 500 internal_error}, logged by exception class
  *       with the {@code shareId} in the logging context when the path names one; never the message.</li>
+ *   <li>One of Spring MVC's own exceptions once the response is committed: logged by class, nothing written.</li>
  * </ul>
  */
 @RestControllerAdvice
@@ -53,6 +55,10 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
     private static final Logger LOG = LoggerFactory.getLogger(ReadApiExceptionHandler.class);
 
     private static final String SHARE_ID = "shareId";
+
+    private static final String FAILURE = "Read request failed: {}";
+
+    private static final String COMMITTED_FAILURE = "Read request failed after the response was committed: {}";
 
     private static final MediaType PROBLEM_JSON = MediaType.APPLICATION_PROBLEM_JSON;
 
@@ -115,25 +121,42 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
      */
     @ExceptionHandler(RuntimeException.class)
     public ResponseEntity<Object> internalError(final RuntimeException exception, final HttpServletRequest request) {
-        logFailure(exception, request);
+        logFailure(FAILURE, exception, request);
         return problem(ProblemReason.INTERNAL_ERROR, new HttpHeaders());
     }
 
+    /**
+     * Spring MVC's own exceptions, as the four-field body. When the response is already committed nothing can be
+     * appended to it: the failure is logged by exception class and nothing is returned, as Spring's own handler
+     * does.
+     */
     @Override
     protected ResponseEntity<Object> handleExceptionInternal(final Exception exception, final Object body,
             final HttpHeaders headers, final HttpStatusCode statusCode, final WebRequest request) {
-        if (statusCode.is5xxServerError()) {
-            // Spring's own 5xx (a response it could not write, a missing path variable) is a failure like any other.
-            logFailure(exception, request instanceof ServletWebRequest servlet ? servlet.getRequest() : null);
+        final ServletWebRequest servlet = request instanceof ServletWebRequest servletRequest ? servletRequest : null;
+        final HttpServletRequest servletRequest = servlet == null ? null : servlet.getRequest();
+        final HttpServletResponse response = servlet == null ? null : servlet.getResponse();
+        final ResponseEntity<Object> answer;
+        if (response != null && response.isCommitted()) {
+            logFailure(COMMITTED_FAILURE, exception, servletRequest);
+            answer = null;
+        } else {
+            if (statusCode.is5xxServerError()) {
+                // Spring's own 5xx (a response it could not write, a missing path variable) is a failure like any
+                // other.
+                logFailure(FAILURE, exception, servletRequest);
+            }
+            answer = problem(reason(exception, statusCode), headers);
         }
-        return problem(reason(exception, statusCode), headers);
+        return answer;
     }
 
     /** Logs a failure by its class, with the canonical {@code shareId} in the logging context when there is one. */
-    private static void logFailure(final Exception exception, final HttpServletRequest request) {
+    private static void logFailure(final String message, final Exception exception,
+            final HttpServletRequest request) {
         final String shareId = request == null ? null : shareId(request);
         try (MDC.MDCCloseable ignored = shareId == null ? null : MDC.putCloseable(SHARE_ID, shareId)) {
-            LOG.error("Read request failed: {}", exception.getClass().getName());
+            LOG.error(message, exception.getClass().getName());
         }
     }
 
