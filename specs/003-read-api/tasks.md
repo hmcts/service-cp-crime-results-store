@@ -1185,6 +1185,23 @@ SHA-256 of the body and not equal to `payload_sha256`.
     the one release); spec.md status (phases A to D); this task, T012's release text and *Phase dependencies*
     corrected to one release `v0.2.0` at the end of 003 (no `0.3.0`). Earlier tasks' records that name
     `rs-69080b1` (T009, T010, T012) are left as the history of what those tasks pinned.
+  - Gate round 1 remediation (tests and wording only; no production behaviour changed, so every new
+    assertion was green on its first run and none has a RED run): `NoPayloadInLogsIT.serving_a_payload_
+    should_log_no_payload_marker_at_any_level` now fetches `/payload/arrived` as well as `/payload` for each
+    stored share, an enriched one among them (marker in the note and in the added result, so the two bodies
+    differ), and a share whose stored text is not JSON: `500`, the marker not in the body, the advice's line
+    naming `EnvelopeMetadata$UnreadablePayloadException` only, and no captured line at any level holding the
+    marker. `ReadApiIT.an_arrived_text_that_does_not_parse_should_give_500_internal_error_and_never_the_text`
+    drives that path through `JdbcShareQueries`, the advice and the filters (bounded `internal_error`, no
+    `Results-Store-*` header, no `ETag`, `requests{endpoint=arrived_payload,outcome=failed}` +1);
+    `ReadApiIT.arrived_if_none_match_should_give_304` also pins `resultsstore.read.duration{endpoint=
+    arrived_payload}` (+4, one per call, 304s included) and `resultsstore.read.payload.bytes`;
+    `AuditIT.the_share_routes_request_event_should_not_carry_a_share_id_declared_by_reference` is
+    parameterised over the share, payload and arrived routes. GREEN: `NoPayloadInLogsIT` 4, `ReadApiIT` 73,
+    `AuditIT` 13, 0 failures. Wording: the arrived `ETag` is "not, in general" the stored checksum (a
+    compact message without `_metadata` hashes the same, since intake does not require `_metadata`):
+    `ShareReadService#arrivedPayload` Javadoc, contracts/read-api.md §4.4 and §4.6, research.md R23. The
+    OpenAPI description is the contract jar's text and is left as it is (`OpenApiContractDriftTest`).
 
 ---
 

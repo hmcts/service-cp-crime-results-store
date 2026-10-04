@@ -181,8 +181,9 @@ public class ShareReadService {
 
     /**
      * The text as it arrived (FR-041; phase D): {@code payload_text} with {@code _metadata} removed here, before
-     * any application results were added; the {@code ETag} is over exactly the bytes returned, so it never equals
-     * the stored checksum, which is over the text with {@code _metadata}.
+     * any application results were added; the {@code ETag} is over exactly the bytes returned. It is not, in
+     * general, the stored checksum: that is over the text as it arrived, and the bytes served differ whenever the
+     * text held {@code _metadata} or was not compact JSON.
      *
      * @param shareId the share
      * @return the bytes, their {@code ETag} and the share's facts, in the arrived-text form

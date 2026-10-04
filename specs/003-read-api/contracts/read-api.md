@@ -315,8 +315,8 @@ headers below are the store's own facts about the share, not envelope data.
 | `Content-Length` | the body's byte count. No `Content-Encoding`; no chunked transfer |
 
 **Checking the body.** Compute SHA-256 over the bytes you received and compare it with the `ETag`
-without its quotes. The `ETag` is **not** the store's checksum of the arrived message: that checksum is
-over the text with `_metadata`, which the store never serves.
+without its quotes. Do not compare it with the store's checksum of the arrived message: that checksum is
+over the text as it arrived (with `_metadata`, when the message held one), which the store never serves.
 
 **Conditional fetch.** Send `If-None-Match` with an `ETag` you hold (alone, in a list, weak `W/"…"`, or
 `*`; `*` matches any share that exists). If it matches: `304 Not Modified`, the `ETag` header, no body. Only the `ETag` is promised on a
@@ -351,8 +351,10 @@ Line Support" on this method and path).
   compact JSON, so it is not byte-identical to what hearing sent: key order, values and decimal forms are
   hearing's; spacing and escape forms are the store's. It is served whatever the working copy holds.
 - `ETag`: `"<64 lower-case hex>"`, strong and quoted, the SHA-256 of exactly the bytes of this body. It is
-  **not** the store's checksum of the arrived message (that is over the text with `_metadata`), and it is
-  not the `/payload` `ETag` of the same share when the working copy differs.
+  not, in general, the store's checksum of the arrived message: that is over the text as it arrived, and the
+  bytes served differ whenever the text held `_metadata` or was not compact JSON. (Intake does not require
+  `_metadata`, so a compact message without it hashes the same; do not rely on either outcome.) It is not
+  the `/payload` `ETag` of the same share when the working copy differs.
 - Headers as section 4.4, with `Results-Store-Payload-Form: arrived-text` always.
   `Results-Store-Enrichment-Applied` is the share's own fact as stored (whether the working copy was
   enriched at intake), not a statement about this body, which never carries application results.

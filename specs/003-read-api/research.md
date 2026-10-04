@@ -621,8 +621,10 @@ no 003 controller does.
 `results-store.get-share-arrived-payload` and rule. The body is `payload_text` parsed with Jackson 3,
 `_metadata` removed and written back as JSON text (`domain/EnvelopeMetadata`, the same code as the
 `/payload` fallback): the text as it arrived, without the envelope metadata. No application results are
-added. The `ETag` is the quoted SHA-256 of the bytes served. It is **not** `payload_sha256`: that checksum
-is over the text with `_metadata`, so it never equals a hash of this body; a test asserts they differ.
+added. The `ETag` is the quoted SHA-256 of the bytes served. It is not, in general, `payload_sha256`: that
+checksum is over the text as it arrived, and the bytes served differ from it whenever the text held
+`_metadata` or was not compact JSON (a compact message with no `_metadata` would hash the same, since intake
+does not require `_metadata`); a test asserts they differ for a message that held `_metadata`.
 Same identity headers, with `Results-Store-Payload-Form: arrived-text`; `304` as for `/payload`. Audit
 option 4 covers this route too. Constitution II gains the endpoint in 2.2.0, written by T012 (R20); T013
 touches no constitution.
