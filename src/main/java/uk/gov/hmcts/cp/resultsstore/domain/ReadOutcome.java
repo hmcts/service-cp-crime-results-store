@@ -21,6 +21,42 @@ public enum ReadOutcome {
     /** Any {@code 5xx} but {@code 503}. */
     FAILED;
 
+    private static final int NOT_MODIFIED_STATUS = 304;
+
+    private static final int CLIENT_ERRORS_FROM = 400;
+
+    private static final int NOT_FOUND_STATUS = 404;
+
+    private static final int SERVER_ERRORS_FROM = 500;
+
+    private static final int UNAVAILABLE_STATUS = 503;
+
+    /**
+     * The outcome a response status stands for (contracts/metrics.md, *Outcome from status*).
+     *
+     * @param status the response's status
+     * @return {@code 304} {@link #NOT_MODIFIED}; {@code 404} {@link #NOT_FOUND}; any other {@code 4xx}
+     *         {@link #BAD_REQUEST}; {@code 503} {@link #UNAVAILABLE}; any other {@code 5xx} {@link #FAILED};
+     *         anything else {@link #OK}
+     */
+    public static ReadOutcome forStatus(final int status) {
+        final ReadOutcome outcome;
+        if (status == NOT_MODIFIED_STATUS) {
+            outcome = NOT_MODIFIED;
+        } else if (status == NOT_FOUND_STATUS) {
+            outcome = NOT_FOUND;
+        } else if (status == UNAVAILABLE_STATUS) {
+            outcome = UNAVAILABLE;
+        } else if (status >= SERVER_ERRORS_FROM) {
+            outcome = FAILED;
+        } else if (status >= CLIENT_ERRORS_FROM) {
+            outcome = BAD_REQUEST;
+        } else {
+            outcome = OK;
+        }
+        return outcome;
+    }
+
     /** The {@code outcome} tag. */
     public String tag() {
         return name().toLowerCase(Locale.ROOT);

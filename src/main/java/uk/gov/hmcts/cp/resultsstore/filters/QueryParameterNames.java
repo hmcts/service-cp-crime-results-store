@@ -40,8 +40,13 @@ public final class QueryParameterNames {
                 .anyMatch(decoded -> decoded.filter(name::equals).isPresent());
     }
 
-    /** The decoded name, or empty when an escape is malformed. */
-    private static Optional<String> decode(final String raw) {
+    /**
+     * Decodes a raw query name or value as the container does.
+     *
+     * @param raw the text as sent
+     * @return the decoded text, or empty when an escape is malformed
+     */
+    public static Optional<String> decode(final String raw) {
         final ByteArrayOutputStream bytes = new ByteArrayOutputStream(raw.length());
         boolean wellFormed = true;
         int index = 0;

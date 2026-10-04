@@ -6,6 +6,7 @@ import java.util.Arrays;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 
 @DisplayName("read outcome tags")
@@ -28,5 +29,15 @@ class ReadOutcomeTest {
     @EnumSource(value = ReadOutcome.class, names = "NOT_MODIFIED", mode = EnumSource.Mode.EXCLUDE)
     void every_other_outcome_should_apply_to_every_endpoint(final ReadOutcome outcome) {
         assertThat(ReadEndpoint.values()).allSatisfy(endpoint -> assertThat(outcome.appliesTo(endpoint)).isTrue());
+    }
+
+    /** contracts/metrics.md, *Outcome from status*. */
+    @ParameterizedTest
+    @CsvSource({
+        "200, OK", "304, NOT_MODIFIED", "400, BAD_REQUEST", "405, BAD_REQUEST", "406, BAD_REQUEST",
+        "415, BAD_REQUEST", "404, NOT_FOUND", "503, UNAVAILABLE", "500, FAILED", "502, FAILED"
+    })
+    void status_should_map_to_outcome(final int status, final ReadOutcome outcome) {
+        assertThat(ReadOutcome.forStatus(status)).isEqualTo(outcome);
     }
 }
