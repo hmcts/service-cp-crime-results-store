@@ -127,8 +127,9 @@ paths:
         Action results-store.get-share-payload. The working copy (the message as hearing sent it, with any
         finalised court-application results from progression added at intake), or the text as it arrived
         when the database could not hold a working copy, in both cases without the message envelope's
-        `_metadata` member. The ETag is the SHA-256 of exactly the bytes of this body; it is not the store's
-        checksum of the arrived message. Send If-None-Match with an ETag you hold for a 304.
+        `_metadata` member. The ETag is the SHA-256 of exactly the bytes of this body. It is not offered as,
+        nor to be compared with, the store's stored checksum of the arrived message, which is over the text
+        as it arrived. Send If-None-Match with an ETag you hold for a 304.
       parameters:
         - $ref: '#/components/parameters/ShareId'
         - name: If-None-Match

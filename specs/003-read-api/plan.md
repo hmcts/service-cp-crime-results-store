@@ -35,10 +35,10 @@ fixed marker instead of the payload (D-AUDIT option 4, E1). Detail: [research.md
 matching (`PathPatternParser.defaultInstance`, `RequestPath`); `cp-auth-rules-filter` 1.0.7 and
 `cp-audit-filter-springboot` 1.0.5 (already dependencies); Jackson 3 (`tools.jackson`) for responses;
 Micrometer. One new dependency, the contract jar (research R23): `apiSpec`
-`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the draft **`rs-f9d870c`** (api commit `f9d870c`,
-which carries the payload body of R23 C3, the arrived-text operation and its final `ETag` wording; it
-supersedes `rs-a33c5ec`, pinned by T013, `rs-69080b1`, used by phases A to C, and the first draft `rs-2c5bc08`) until the one release `0.2.0` at the end of 003, covering
-all five operations, in an `apiSpec` configuration that `implementation` extends, with
+`uk.gov.hmcts.cp:api-cp-crime-results-store`, pinned to the release **`0.2.0`** (api Release `v0.2.0`,
+2026-10-04, the one release at the end of 003, covering all five operations: the payload body of R23 C3,
+the arrived-text operation and its final `ETag` wording; while 003 was built the service used the drafts
+`rs-2c5bc08`, `rs-69080b1` (phases A to C), `rs-a33c5ec` (T013) and `rs-f9d870c` (the phase D close-out)), in an `apiSpec` configuration that `implementation` extends, with
 `gradle/apispec-validation.gradle` applied. It resolves from the Azure Artifacts `hmcts-lib` repository
 already in `gradle/repositories.gradle`, read anonymously (no credentials):
 
@@ -331,8 +331,8 @@ text in assertion or log output; one commit per task, red run quoted before gree
     production PostgreSQL version and whether it uses synchronous replication (D-PG-VERSION / HA, E11:
     a recorded risk, not a decision; PostgreSQL 17's `transaction_timeout` is a later tightening).
 15. Phase C builds on a draft contract (`rs-<sha7>`); each later `team/rs` commit publishes a new draft
-    while 003 runs. The service pins one exact draft (`rs-f9d870c`, the phase D close-out, after `rs-a33c5ec` from T013), and after phase D the
-    orchestrator moves it to the one release `0.2.0` before anything is released; `validateApiSpecVersions` refuses a release that still names a draft.
+    while 003 runs. The service pinned one exact draft (`rs-f9d870c`, the phase D close-out, after `rs-a33c5ec` from T013), and after phase D it
+    moved to the one release `0.2.0` (done 2026-10-04) before anything is released; `validateApiSpecVersions` refuses a release that still names a draft.
 
 ## Complexity Tracking
 

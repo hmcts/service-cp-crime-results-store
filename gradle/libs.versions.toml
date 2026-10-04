@@ -6,10 +6,10 @@
 [versions]
 cp-auth-rules-filter = "1.0.7"
 cp-audit-filter-springboot = "1.0.5"
-# The read API's contract (hmcts/api-cp-crime-results-store; specs/003-read-api research R23): a draft
-# from the api repo's team/rs branch while 003 is built. A release of this service needs a fixed X.Y.Z
-# (./gradlew validateApiSpecVersions, run by ci-released.yml).
-api-results-store = "rs-f9d870c"
+# The read API's contract (hmcts/api-cp-crime-results-store; specs/003-read-api research R23): the
+# release 0.2.0 (drafts from the api repo's team/rs branch were used while 003 was built). A release of
+# this service needs a fixed X.Y.Z (./gradlew validateApiSpecVersions, run by ci-released.yml).
+api-results-store = "0.2.0"
 
 [libraries]
 cp-auth-rules-filter = { module = "uk.gov.hmcts.cp:cp-auth-rules-filter", version.ref = "cp-auth-rules-filter" }

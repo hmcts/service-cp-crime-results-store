@@ -2,7 +2,7 @@
 
 **Feature Branch**: `003-read-api`
 **Created**: 2026-10-03
-**Status**: Implemented (phases A to D; the one contract release `0.2.0` and the bump from the draft follow, outside the tasks)
+**Status**: Implemented (phases A to D, 2026-10-04)
 **Input**: User description: "Read API: the internal REST API under /results-store/v1 that consumers use to pull, search and fetch stored shares and their payloads"
 
 **Sources**: the Results Store design page (CRA 321061800), sections *Read API*, *How the store makes pull safe*, *Security* and *Observability*; the design review of spec 003 and its critique, with the orchestrator's rulings on both (2026-10-03, sections A, B and D), which win where they differ from the design; the decisions taken with Sachin on 2026-10-03 (rulings section E), which win over everything else; the fact-finding reports on the store's read side (this repository at `c21a901`) and on YOT as the first consumer (YOT's payload port, its retry policy, its redesign's needs) with probation's asks S6 to S12 and gate G2; specs 001 (*Share intake*) and 002 (*Enrichment*), in particular 002 FR-040 and FR-041. Quotes in *italics* are the design page's or the rulings' wording.
