@@ -19,6 +19,15 @@ spring:
   flyway:
     # Migrates on startup, so the application needs the database to start.
     enabled: true
+    # Flyway's own connection, not one from the pool: with a user set, Boot gives Flyway an unpooled
+    # data source derived from spring.datasource. Every pooled connection carries the intake statement
+    # timeout as a backstop (config/StatementTimeoutBackstop); an index build on a large table can take
+    # longer, so Flyway lifts the limit on its connection, and the lifted value never reaches the pool.
+    user: ${spring.datasource.username}
+    password: ${spring.datasource.password:}
+    init-sqls:
+      # A PostgreSQL duration, not a Spring one: 0 (no limit, the default) or, for example, 30min.
+      - SET statement_timeout = '${RESULTSSTORE_FLYWAY_STATEMENTTIMEOUT:0}'
 
   # The Artemis connection behind the `public.event` subscription. Bindings only: the broker URL and
   # credentials come from Key Vault in deployed environments, and docker-compose sets them locally.
@@ -37,6 +46,21 @@ spring:
 
 server:
   port: ${SERVER_PORT:8082}
+  # The HTTP connector's URI policy, explicit so nobody loosens it by accident (contracts/read-api.md §2.2, §6):
+  # no unencoded character beyond the standard set is accepted in a path or a query, and percent escapes
+  # decode as UTF-8. An encoded slash (%2F) and a backslash are rejected, and TRACE is let through so
+  # the action filter refuses it 405 method_not_allowed: Boot has no property for those, so
+  # config/TomcatEdgeCustomizer sets them. A request the connector rejects is answered
+  # 400 with the four-field problem body (api/ProblemErrorReportValve) and never reaches the service.
+  tomcat:
+    uri-encoding: UTF-8
+    relaxed-path-chars: []
+    relaxed-query-chars: []
+  error:
+    # The service's own /error page (api/BoundedErrorController) answers every Accept with the four-field
+    # JSON body; the white-label HTML page stays off as a second guard.
+    whitelabel:
+      enabled: false
 
 resultsstore:
   publicevents:
@@ -49,6 +73,57 @@ resultsstore:
     subscription: resultsstore-service.sdg
     # Applied by the broker, so only hearing-resulted events reach this service.
     selector: "CPPNAME = 'public.events.hearing.hearing-resulted'"
+  # Intake (contracts/configuration.md). Checked at start; a bad value stops the service.
+  intake:
+    redelivery-pause:
+      # Before a failed message goes back to the broker: min(2^deliveryCount s, cap). The broker
+      # redelivers at once, so this keeps a short outage from using up its redeliveries.
+      enabled: ${RESULTSSTORE_INTAKE_REDELIVERYPAUSE_ENABLED:true}
+      cap: ${RESULTSSTORE_INTAKE_REDELIVERYPAUSE_CAP:30s}
+    # The receipt's own short transaction.
+    receipt-timeout: ${RESULTSSTORE_INTAKE_RECEIPTTIMEOUT:10s}
+    store:
+      # The outer bound of the store transaction; at least each timeout below.
+      transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT:60s}
+      # Set per store transaction with set_config(..., true), so they never leak to the next borrower.
+      # At most the statement timeout. 5s since spec 003 (was 10s).
+      lock-timeout: ${RESULTSSTORE_INTAKE_STORE_LOCKTIMEOUT:5s}
+      # Below the socket timeout above, so a long statement ends as a database error. 10s since spec 003
+      # (was 20s), so the pull's 90 s visibility lag holds: lag >= transaction + 2 x statement +
+      # idle-in-transaction (specs/003-read-api research R4). Every pooled connection also starts with
+      # this statement_timeout (config/StatementTimeoutBackstop), as a backstop for any statement.
+      statement-timeout: ${RESULTSSTORE_INTAKE_STORE_STATEMENTTIMEOUT:10s}
+      idle-in-transaction-timeout: ${RESULTSSTORE_INTAKE_STORE_IDLEINTRANSACTIONTIMEOUT:10s}
+  # The extraction sweep, which retries shares whose key details could not be read.
+  sweep:
+    enabled: ${RESULTSSTORE_SWEEP_ENABLED:true}
+    initial-delay: ${RESULTSSTORE_SWEEP_INITIALDELAY:1m}
+    fixed-delay: ${RESULTSSTORE_SWEEP_FIXEDDELAY:5m}
+    batch-size: ${RESULTSSTORE_SWEEP_BATCHSIZE:100}
+    # Counts the intake's attempt.
+    max-attempts: ${RESULTSSTORE_SWEEP_MAXATTEMPTS:3}
+  # The read API (specs/003-read-api/contracts/configuration.md). Checked at start; a bad value stops the
+  # service.
+  read:
+    pull:
+      # Unset: derived from resultsstore.intake.store.* (transaction + 2 x statement +
+      # idle-in-transaction, 90 s at their defaults). Set it only to make it longer; at most 10 minutes.
+      # Every pod must share the intake values.
+      visibility-lag: ${RESULTSSTORE_READ_PULL_VISIBILITYLAG:}
+    # The read queries' JDBC query timeout (a client-side cancel); below the socket timeout above.
+    statement-timeout: ${RESULTSSTORE_READ_STATEMENTTIMEOUT:5s}
+  # Enrichment from progression (specs/002-enrichment/contracts/configuration.md).
+  enrichment:
+    enabled: ${RESULTSSTORE_ENRICHMENT_ENABLED:true}
+  progression:
+    # The stack's internal mesh host, set per environment. No default: a missing value must stop the
+    # service, not send the call to this service's own port.
+    base-url: ${CP_BASE_URL:}
+    # The store's own system user ("System Users"), from Key Vault. Never defaulted, never logged.
+    system-user-id: ${RESULTS_STORE_SYSTEM_USER_ID:}
+    connect-timeout: ${RESULTSSTORE_PROGRESSION_CONNECTTIMEOUT:5s}
+    # Per socket read, and also the deadline for the whole response.
+    read-timeout: ${RESULTSSTORE_PROGRESSION_READTIMEOUT:10s}
 
 # cp-auth-rules-filter. On by default; the `test` profile turns it off where a suite does not
 # exercise it. The library reads the literal string `true`.
@@ -82,8 +157,6 @@ audit:
     # Resolved as a suffix glob over the whole classpath, so the name must be unique to this service:
     # `openapi.yaml` would also match any `*openapi.yaml` a dependency ships.
     openapi-rest-spec: ${HTTP_AUDIT_OPENAPI_SPEC:results-store-openapi.yaml}
-    # The library default is true; response bodies must not reach the audit topic.
-    include-payload-body: false
 
 # The audit transport. False by default because the library switches itself on when it is on the
 # classpath and then requires `cp.audit.hosts` and `cp.audit.port`, which a local run does not
@@ -108,6 +181,10 @@ management:
       probes:
         enabled: true   # enables liveness / readiness groups
       group:
+        liveness:
+          # The sweep's schedule goes DOWN once an Error has ended it; only a restart brings the
+          # sweep back, so liveness (not readiness) carries it. UP when the sweep is switched off.
+          include: livenessState,sweepSchedule
         readiness:
           # The store gates readiness. The broker never does: a pod cannot heal a broker by
           # restarting, and a broker blip must not take every replica out of service.

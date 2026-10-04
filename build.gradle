@@ -20,12 +20,21 @@ apply {
   from("$rootDir/gradle/pmd.gradle")
   from("$rootDir/gradle/test.gradle")
   from("$rootDir/gradle/jar.gradle")
+  from("$rootDir/gradle/apispec-validation.gradle")
 }
 
-// CVE-2026-68497 (jackson-databind, unbounded numeric parsing): Spring Boot 4.1.1 manages
-// 3.1.5 and 2.21.5, and the image scan refuses both. Remove once a Boot release manages these.
-ext['jackson-bom.version'] = '3.1.6'
-ext['jackson-2-bom.version'] = '2.21.6'
+// The read API's contract jar (specs/003-read-api research R23): the generated SharesApi and models
+// are compiled against, and validateApiSpecVersions checks this configuration's version is a release.
+configurations {
+  apiSpec
+  implementation.extendsFrom apiSpec
+}
+
+// CVE-2026-68497 (jackson-databind, unbounded numeric parsing), then CVE-2026-89407, -89425,
+// -91776 and -91777 (fixed in 3.1.7 / 2.21.7): Spring Boot 4.1.1 manages 3.1.5 and 2.21.5, and
+// the image scan refuses those. Remove once a Boot release manages these versions or later.
+ext['jackson-bom.version'] = '3.1.7'
+ext['jackson-2-bom.version'] = '2.21.7'
 
 // We MUST keep all dependencies in the build.gradle to allow dependabot to provide version updates
 // Sadly, dependabot does not track dependencies in the apply-from files
@@ -40,6 +49,10 @@ dependencies {
 
   // Spring boot core
   implementation 'org.springframework.boot:spring-boot-starter-web'
+
+  // Transport for the progression lookup (spec 002 FR-009): automatic retries and redirects can be
+  // switched off per client, which HttpURLConnection cannot do. Version via the Boot BOM.
+  implementation 'org.apache.httpcomponents.client5:httpclient5'
   testImplementation "org.springframework.boot:spring-boot-starter-webmvc-test"
   testImplementation('org.springframework.boot:spring-boot-starter-test') {
     exclude group: 'junit', module: 'junit'
@@ -50,6 +63,9 @@ dependencies {
   // and HTTP audit. Versions in gradle/libs.versions.toml, which dependabot also reads.
   implementation libs.cp.auth.rules.filter
   implementation libs.cp.audit.filter.springboot
+
+  // --- The read API's contract: generated interface, models and openapi/openapi-spec.yml ---
+  apiSpec libs.api.results.store
 
   // --- Persistence: the store (JdbcClient + Flyway) ---
   implementation 'org.springframework.boot:spring-boot-starter-jdbc'
@@ -64,6 +80,9 @@ dependencies {
   // --- Observability / Actuator / OTEL / Prometheus ---
   implementation 'org.springframework.boot:spring-boot-starter-actuator'
   implementation 'org.springframework.boot:spring-boot-starter-opentelemetry'
+  // The /actuator/prometheus endpoint exists only with this registry (research R16); version via the
+  // Boot BOM. Export to Azure Monitor stays with the OpenTelemetry starter above.
+  implementation 'io.micrometer:micrometer-registry-prometheus'
 
   // Security: pin transitive tomcat-embed-core to patched version (CVE-2026-41293, -43512, et al.)
   // Brought in transitively via spring-boot-starter-web; >=11.0.0-M1,<11.0.22 are vulnerable
@@ -81,6 +100,11 @@ dependencies {
   // usersgroups stub for the authorisation IT. The standalone, shaded artefact: the plain one drags
   // Jetty and Jackson 2 onto the test classpath beside the Jackson 3 stack this service runs on.
   testImplementation 'org.wiremock:wiremock-standalone:3.13.2'
+
+  // Parses results-store-openapi.yaml in OpenApiDocumentTest as the audit library parses it at
+  // runtime. The audit starter already brings this version onto the runtime classpath; declared here
+  // so the test can compile against it.
+  testImplementation 'io.swagger.parser.v3:swagger-parser:2.1.20'
 }
 
 // Keep legacy javax.jms off the classpath beside Spring Boot 4's jakarta.jms. artemis-jms-client is

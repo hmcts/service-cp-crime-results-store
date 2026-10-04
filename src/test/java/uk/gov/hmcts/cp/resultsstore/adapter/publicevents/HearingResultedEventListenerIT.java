@@ -3,70 +3,71 @@ package uk.gov.hmcts.cp.resultsstore.adapter.publicevents;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
-import jakarta.jms.JMSContext;
-import jakarta.jms.JMSException;
-import jakarta.jms.TextMessage;
-import jakarta.jms.Topic;
 import java.time.Duration;
 import java.util.List;
 import java.util.UUID;
-import org.apache.activemq.artemis.api.core.SimpleString;
-import org.apache.activemq.artemis.core.config.impl.ConfigurationImpl;
 import org.apache.activemq.artemis.core.server.Queue;
-import org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;
-import org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.util.TestSocketUtils;
-import uk.gov.hmcts.cp.resultsstore.support.CapturedLog;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.support.TransactionTemplate;
+import uk.gov.hmcts.cp.resultsstore.domain.ShareId;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
+import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
+import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
+import uk.gov.hmcts.cp.resultsstore.support.PostgresTestSupport;
 
 /**
  * The shared durable subscription against a real (embedded) Artemis broker, with the committed
- * topic, subscription name and selector.
+ * topic, subscription name and selector, delivering to intake: each message selected reaches its
+ * receipt on Testcontainers Postgres, through the real store and observer.
  */
-@SpringBootTest(properties = "resultsstore.publicevents.enabled=true")
+@SpringBootTest(properties = {"resultsstore.publicevents.enabled=true", "resultsstore.intake.receipt-timeout=7s",
+    "resultsstore.intake.store.transaction-timeout=50s"})
 @ActiveProfiles("test")
 class HearingResultedEventListenerIT {
 
-    private static final String TOPIC = "public.event";
-
-    private static final String SUBSCRIPTION = "resultsstore-service.sdg";
+    private static final String SUBSCRIPTION = EmbeddedBrokerSupport.SUBSCRIPTION;
 
     private static final String HEARING_RESULTED = "public.events.hearing.hearing-resulted";
 
     private static final Duration WITHIN = Duration.ofSeconds(30);
 
-    private static final String BROKER_URL = "tcp://localhost:" + TestSocketUtils.findAvailableTcpPort();
+    /** How long a settled receipt must stay at one attempt to show no redelivery followed. */
+    private static final Duration SETTLE = Duration.ofSeconds(2);
 
     /** Started once for the JVM: the Spring context outlives this class and closes its listener later. */
-    private static EmbeddedActiveMQ broker;
+    private static EmbeddedBrokerSupport broker;
 
-    private CapturedLog log;
+    @Autowired
+    private JdbcClient jdbc;
+
+    @Autowired
+    private JdbcReceiptStore receiptStore;
+
+    @Autowired
+    private JdbcShareStore shareStore;
 
     @DynamicPropertySource
-    static void pointAtTheEmbeddedBroker(final DynamicPropertyRegistry registry) throws Exception {
+    static void pointAtTheEmbeddedBrokerAndTheStore(final DynamicPropertyRegistry registry) throws Exception {
         startTheBroker();
-        registry.add("spring.artemis.broker-url", () -> BROKER_URL);
+        registry.add("spring.artemis.broker-url", broker::url);
+        PostgresTestSupport.register(registry);
     }
 
     @BeforeEach
     void awaitTheSubscription() {
-        log = CapturedLog.forClass(HearingResultedEventListener.class);
         await().atMost(WITHIN).until(() -> !subscriptionsOnTheTopic().isEmpty());
     }
 
-    @AfterEach
-    void detachTheLog() {
-        log.close();
-    }
-
     @Test
-    void subscription_should_be_shared_durable_and_named() throws Exception {
+    void subscription_should_be_shared_durable_and_named() {
         assertThat(subscriptionsOnTheTopic())
                 .singleElement()
                 .satisfies(queue -> {
@@ -78,15 +79,40 @@ class HearingResultedEventListenerIT {
     }
 
     @Test
-    void hearing_resulted_event_should_be_received() {
+    void hearing_resulted_event_should_reach_its_receipt_and_the_store() {
         final String hearingId = UUID.randomUUID().toString();
 
         publish(HEARING_RESULTED, envelope(hearingId));
 
-        await().atMost(WITHIN).until(() -> log.messages().stream().anyMatch(m -> m.contains(hearingId)));
-        assertThat(log.messages()).anyMatch(m -> m.contains("hearingId=" + hearingId)
-                && m.contains("hearingDay=2026-09-30")
-                && m.contains("sharedTime=2026-09-30T15:04:05.000Z"));
+        await().atMost(WITHIN).until(() -> "STORED".equals(status(hearingId)));
+        final UUID expectedShareId = ShareId.from(hearingId, "2026-09-30", "2026-09-30T15:04:05.000Z");
+        assertThat(jdbc.sql("SELECT share_id FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId)).query(UUID.class).single())
+                .isEqualTo(expectedShareId);
+        assertThat(jdbc.sql("SELECT count(*) FROM hearing_share WHERE share_id = :shareId")
+                .param("shareId", expectedShareId).query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test
+    void delivery_that_intake_finishes_should_be_acknowledged_once_and_not_redelivered() {
+        final String hearingId = UUID.randomUUID().toString();
+
+        publish(HEARING_RESULTED, envelope(hearingId));
+
+        await().atMost(WITHIN).until(() -> receipts(hearingId) == 1);
+        final Queue subscription = subscriptionsOnTheTopic().getFirst();
+        // The commit of the transacted session is the acknowledgement: nothing waits or is in delivery.
+        await().atMost(WITHIN).until(() -> subscription.getMessageCount() == 0
+                && subscription.getDeliveringCount() == 0);
+        // A rolled-back delivery would come straight back (no pause in tests) and raise the attempts.
+        await().during(SETTLE).atMost(SETTLE.plus(WITHIN)).until(() -> attempts(hearingId) == 1);
+    }
+
+    @Test
+    void receipt_transaction_should_time_out_at_the_configured_receipt_timeout() {
+        assertThat(ReflectionTestUtils.getField(receiptStore, "receiptTransaction"))
+                .isInstanceOfSatisfying(TransactionTemplate.class,
+                        template -> assertThat(template.getTimeout()).isEqualTo(7));
     }
 
     @Test
@@ -98,8 +124,37 @@ class HearingResultedEventListenerIT {
         publish("public.progression.events.hearing-resulted", envelope(filtered));
         publish(HEARING_RESULTED, envelope(delivered));
 
-        await().atMost(WITHIN).until(() -> log.messages().stream().anyMatch(m -> m.contains(delivered)));
-        assertThat(log.messages()).noneMatch(m -> m.contains(filtered));
+        await().atMost(WITHIN).until(() -> receipts(delivered) == 1);
+        assertThat(receipts(filtered)).isZero();
+    }
+
+    @Test
+    void store_transaction_should_time_out_at_the_configured_transaction_timeout() {
+        assertThat(ReflectionTestUtils.getField(shareStore, "storeTransaction"))
+                .isInstanceOfSatisfying(TransactionTemplate.class,
+                        template -> assertThat(template.getTimeout()).isEqualTo(50));
+    }
+
+    private String status(final String hearingId) {
+        return jdbc.sql("SELECT status FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(String.class)
+                .optional()
+                .orElse(null);
+    }
+
+    private int attempts(final String hearingId) {
+        return jdbc.sql("SELECT attempts FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(Integer.class)
+                .single();
+    }
+
+    private int receipts(final String hearingId) {
+        return jdbc.sql("SELECT count(*) FROM event_receipt WHERE hearing_id = :hearingId")
+                .param("hearingId", UUID.fromString(hearingId))
+                .query(Integer.class)
+                .single();
     }
 
     private static String envelope(final String hearingId) {
@@ -113,33 +168,17 @@ class HearingResultedEventListenerIT {
     }
 
     private static void publish(final String eventName, final String body) {
-        try (ActiveMQConnectionFactory publisher = new ActiveMQConnectionFactory(BROKER_URL);
-             JMSContext session = publisher.createContext()) {
-            final Topic topic = session.createTopic(TOPIC);
-            final TextMessage message = session.createTextMessage(body);
-            // The broker filters on this property; it cannot read the body.
-            message.setStringProperty("CPPNAME", eventName);
-            session.createProducer().send(topic, message);
-        } catch (final JMSException problem) {
-            throw new IllegalStateException("could not publish " + eventName, problem);
-        }
+        broker.publish(eventName, body);
     }
 
-    private static List<Queue> subscriptionsOnTheTopic() throws Exception {
-        return broker.getActiveMQServer().getPostOffice().listQueuesForAddress(SimpleString.of(TOPIC));
+    private static List<Queue> subscriptionsOnTheTopic() {
+        return broker.subscriptions();
     }
 
     private static synchronized void startTheBroker() throws Exception {
-        if (broker != null) {
-            return;
+        if (broker == null) {
+            // Artemis's own default of 10 deliveries; this suite never fails a delivery on purpose.
+            broker = EmbeddedBrokerSupport.start("public-event-test-broker", 10);
         }
-        final ConfigurationImpl configuration = new ConfigurationImpl();
-        configuration.setName("public-event-test-broker")
-                .setPersistenceEnabled(false)
-                .setSecurityEnabled(false)
-                .setJMXManagementEnabled(false);
-        configuration.addAcceptorConfiguration("tcp", BROKER_URL);
-        broker = new EmbeddedActiveMQ().setConfiguration(configuration);
-        broker.start();
     }
 }

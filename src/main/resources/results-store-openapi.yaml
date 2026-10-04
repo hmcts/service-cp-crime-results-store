@@ -1,12 +1,740 @@
-# The results store's HTTP API. Read by cp-audit-filter-springboot to resolve path parameters; the
-# file name is unique to this service because the filter finds it by a suffix glob over the classpath.
-# No paths yet: the read API is described here as its feature spec adds it.
+# The results store's HTTP API: the machine-readable form of specs/003-read-api/contracts/read-api.md.
+# Where the two disagree, the contract document is corrected. Also read at runtime by
+# cp-audit-filter-springboot to resolve path parameters; the file name is unique to this service because
+# the filter finds it by a suffix glob over the classpath.
 openapi: 3.0.3
 
 info:
   title: Results Store API
-  version: 0.1.0
+  version: 0.2.0
   description: >-
-    Versioned, queryable store of every share of every resulted hearing day.
+    Versioned, queryable store of every share of every resulted hearing day. Every route is GET only;
+    nothing else is served under /results-store/v1. Send CJSCPPUID on every request; the caller must be in
+    "System Users" or "Second Line Support". The action is derived from the method and path: a CPP-ACTION
+    header and any vendor media type (application/vnd.…) in Content-Type or Accept are ignored. A path the
+    store does not serve is refused 404 route_not_found before authentication; a served path with another
+    method (HEAD and OPTIONS included) is refused 405 method_not_allowed with Allow. Every field of every
+    item is always present (null when missing); instants are UTC with exactly six fraction digits.
 
-paths: {}
+tags:
+  - name: shares
+    description: Pull, search and read shares.
+
+paths:
+  /results-store/v1/shares:
+    get:
+      tags: [shares]
+      operationId: pullOrSearchShares
+      summary: Pull (with storedAfterSeq) or search (without it)
+      description: >-
+        Two modes on one path, told apart by the presence of storedAfterSeq.
+
+
+        Pull (results-store.pull-shares): storedAfterSeq is required; limit, dayYouthSeen (notFalse or
+        true) and courtCentreId are optional. Shares with storedSeq > storedAfterSeq in ascending storedSeq,
+        bounded by the visibility lag. Any search parameter with storedAfterSeq is 400
+        conflicting_parameters. Answers a PullPage.
+
+
+        Search (results-store.search-shares): courtCentreId is required with exactly one range form, the day
+        form (sharedDayFrom and sharedDayTo, London register days, both inclusive) or the time form
+        (sharedFrom inclusive and sharedTo exclusive, instants on sharedTime); at most 31 days. dayYouthSeen
+        (notFalse, true or false), latestOnly, limit and cursor are optional. Ordered by sharedTime then
+        shareId. FAILED shares never appear. Answers a SearchPage.
+
+
+        Query parameter names are case-sensitive; an unknown name is 400 unknown_parameter and a repeated
+        one 400 repeated_parameter.
+      parameters:
+        - $ref: '#/components/parameters/StoredAfterSeq'
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/DayYouthSeen'
+        - $ref: '#/components/parameters/CourtCentreId'
+        - $ref: '#/components/parameters/SharedDayFrom'
+        - $ref: '#/components/parameters/SharedDayTo'
+        - $ref: '#/components/parameters/SharedFrom'
+        - $ref: '#/components/parameters/SharedTo'
+        - $ref: '#/components/parameters/LatestOnly'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: A pull page (pull) or a search page (search).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PullPage'
+                  - $ref: '#/components/schemas/SearchPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /results-store/v1/shares/{shareId}:
+    get:
+      tags: [shares]
+      operationId: getShare
+      summary: One share's current key details, chain and youth facts
+      description: Action results-store.get-share. No visibility lag.
+      parameters:
+        - $ref: '#/components/parameters/ShareId'
+      responses:
+        '200':
+          description: The share item, current values.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ShareSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /results-store/v1/shares/{shareId}/payload:
+    get:
+      tags: [shares]
+      operationId: getSharePayload
+      summary: The payload the store holds for one share, without the envelope metadata
+      description: >-
+        Action results-store.get-share-payload. The working copy (the message as hearing sent it, with any
+        finalised court-application results from progression added at intake), or the text as it arrived
+        when the database could not hold a working copy, in both cases without the message envelope's
+        `_metadata` member. The ETag is the SHA-256 of exactly the bytes of this body. It is not offered as,
+        nor to be compared with, the store's stored checksum of the arrived message, which is over the text
+        as it arrived. Send If-None-Match with an ETag you hold for a 304.
+      parameters:
+        - $ref: '#/components/parameters/ShareId'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: One or more ETags, weak or strong, or `*`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The payload as application/json (UTF-8), without `_metadata`.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Results-Store-Share-Id:
+              description: The share id.
+              schema:
+                type: string
+                format: uuid
+            Results-Store-Hearing-Id:
+              description: The hearing id.
+              schema:
+                type: string
+                format: uuid
+            Results-Store-Hearing-Day:
+              description: The hearing day, yyyy-MM-dd.
+              schema:
+                type: string
+                format: date
+            Results-Store-Shared-Time:
+              description: sharedTime, UTC, six fraction digits.
+              schema:
+                type: string
+                format: date-time
+            Results-Store-Enrichment-Applied:
+              description: Whether finalised application results were added at intake.
+              schema:
+                type: boolean
+            Results-Store-Payload-Form:
+              description: working-copy, or arrived-text when the working copy is empty.
+              schema:
+                type: string
+                enum: [working-copy, arrived-text]
+            Cache-Control:
+              description: Always no-store.
+              schema:
+                type: string
+                enum: [no-store]
+            Content-Length:
+              description: The body's byte count. No Content-Encoding; no chunked transfer.
+              schema:
+                type: integer
+                format: int64
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+                description: >-
+                  The working copy's exact bytes (or the arrived text, when the working copy is empty), without
+                  `_metadata`: a JSON object with top level `hearing`, `hearingDay`, `sharedTime` and
+                  `isReshare`, served byte for byte and not validated by the store. The ETag is the SHA-256
+                  over exactly these bytes.
+        '304':
+          description: The If-None-Match matched. No body; only the ETag is promised.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /results-store/v1/shares/{shareId}/payload/arrived:
+    get:
+      tags: [shares]
+      operationId: getShareArrivedPayload
+      summary: The text of one share as it arrived, before enrichment, without the envelope metadata
+      description: >-
+        Action results-store.get-share-arrived-payload. The message as hearing sent it, before any
+        court-application results were added, without the message envelope's `_metadata` member. The store
+        parses the text, removes `_metadata` and writes it back as JSON, so it is not byte-identical to what
+        hearing sent: key order and values are hearing's; spacing and escape forms are the store's. The ETag
+        is the SHA-256 of exactly the bytes of this body. It is not offered as, nor to be compared with, the
+        store's stored checksum of the arrived message, which is over the text as it arrived; the two
+        coincide only for a compact message that held no `_metadata`. Send If-None-Match with an ETag you
+        hold for a 304.
+      parameters:
+        - $ref: '#/components/parameters/ShareId'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: One or more ETags, weak or strong, or `*`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The arrived text as application/json (UTF-8), without `_metadata`.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+            Results-Store-Share-Id:
+              description: The share id.
+              schema:
+                type: string
+                format: uuid
+            Results-Store-Hearing-Id:
+              description: The hearing id.
+              schema:
+                type: string
+                format: uuid
+            Results-Store-Hearing-Day:
+              description: The hearing day, yyyy-MM-dd.
+              schema:
+                type: string
+                format: date
+            Results-Store-Shared-Time:
+              description: sharedTime, UTC, six fraction digits.
+              schema:
+                type: string
+                format: date-time
+            Results-Store-Enrichment-Applied:
+              description: Whether finalised application results were added to the working copy at intake.
+              schema:
+                type: boolean
+            Results-Store-Payload-Form:
+              description: Always arrived-text on this route.
+              schema:
+                type: string
+                enum: [arrived-text]
+            Cache-Control:
+              description: Always no-store.
+              schema:
+                type: string
+                enum: [no-store]
+            Content-Length:
+              description: The body's byte count. No Content-Encoding; no chunked transfer.
+              schema:
+                type: integer
+                format: int64
+          content:
+            application/json:
+              schema:
+                type: string
+                format: binary
+                description: >-
+                  The text as it arrived, without `_metadata`, written back as JSON by the
+                  store: a JSON object with top level `hearing`, `hearingDay`, `sharedTime`
+                  and `isReshare`, served byte for byte. The ETag is the SHA-256 over
+                  exactly these bytes.
+        '304':
+          description: The If-None-Match matched. No body; only the ETag is promised.
+          headers:
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+  /results-store/v1/hearings/{hearingId}/days/{hearingDay}/shares:
+    get:
+      tags: [shares]
+      operationId: listHearingDayShares
+      summary: Every version of one hearing day, in sharedTime order
+      description: >-
+        Action results-store.list-hearing-day-shares. Not paged; versionNumber runs 1, 2, 3 …; exactly one
+        item has isLatest true. No visibility lag.
+      parameters:
+        - name: hearingId
+          in: path
+          required: true
+          description: A canonical UUID; otherwise 400 invalid_hearing_id.
+          schema:
+            type: string
+            format: uuid
+        - name: hearingDay
+          in: path
+          required: true
+          description: yyyy-MM-dd; otherwise 400 invalid_hearing_day.
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Every share of the hearing day.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DayVersions'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthenticated'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '406':
+          $ref: '#/components/responses/NotAcceptable'
+        '415':
+          $ref: '#/components/responses/UnsupportedContentType'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/StoreUnavailable'
+
+components:
+  parameters:
+    ShareId:
+      name: shareId
+      in: path
+      required: true
+      description: A canonical UUID; otherwise 400 invalid_share_id.
+      schema:
+        type: string
+        format: uuid
+    StoredAfterSeq:
+      name: storedAfterSeq
+      in: query
+      required: false
+      description: Pull only, and what makes the call a pull. Exclusive; start from 0.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Pull and search. 1 to 500.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 500
+        default: 100
+    DayYouthSeen:
+      name: dayYouthSeen
+      in: query
+      required: false
+      description: >-
+        Pull: notFalse or true. Search: notFalse, true or false. Absent: every day.
+      schema:
+        type: string
+        enum: [notFalse, 'true', 'false']
+    CourtCentreId:
+      name: courtCentreId
+      in: query
+      required: false
+      description: >-
+        Required for search; optional for pull, where it selects exact court matches only (a FAILED share
+        is never returned to a court-filtered pull).
+      schema:
+        type: string
+        format: uuid
+    SharedDayFrom:
+      name: sharedDayFrom
+      in: query
+      required: false
+      description: Search, day form. London register day, inclusive.
+      schema:
+        type: string
+        format: date
+    SharedDayTo:
+      name: sharedDayTo
+      in: query
+      required: false
+      description: Search, day form. Inclusive; not before sharedDayFrom; at most 31 days counting both ends.
+      schema:
+        type: string
+        format: date
+    SharedFrom:
+      name: sharedFrom
+      in: query
+      required: false
+      description: Search, time form. ISO-8601 UTC with Z, at most six fraction digits; inclusive.
+      schema:
+        type: string
+        format: date-time
+    SharedTo:
+      name: sharedTo
+      in: query
+      required: false
+      description: Search, time form. Exclusive; after sharedFrom; at most 31 days after it.
+      schema:
+        type: string
+        format: date-time
+    LatestOnly:
+      name: latestOnly
+      in: query
+      required: false
+      description: Search only.
+      schema:
+        type: boolean
+        default: false
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Search only. The nextCursor of the previous page, unchanged.
+      schema:
+        type: string
+        maxLength: 128
+
+  headers:
+    ETag:
+      description: '"<64 lower-case hex>": strong, quoted, the SHA-256 of exactly the bytes of the body.'
+      schema:
+        type: string
+        pattern: '^"[0-9a-f]{64}"$'
+
+  responses:
+    BadRequest:
+      description: A malformed request; reason from the contract's list.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Unauthenticated:
+      description: No CJSCPPUID (reason unauthenticated). The same JSON body whatever Accept says.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    Forbidden:
+      description: The caller is in neither admitted group (reason forbidden).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    NotFound:
+      description: route_not_found, share_not_found or hearing_day_not_found.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    MethodNotAllowed:
+      description: Another method on a served path (reason method_not_allowed); see Allow.
+      headers:
+        Allow:
+          description: GET.
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    NotAcceptable:
+      description: The store cannot produce what Accept asks (reason not_acceptable).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    UnsupportedContentType:
+      description: A multipart request (reason unsupported_content_type).
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    InternalError:
+      description: Anything else (reason internal_error). Retry with back-off.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+    StoreUnavailable:
+      description: The database cannot be reached or a query timed out (reason store_unavailable).
+      headers:
+        Retry-After:
+          description: Seconds; 5.
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetail'
+
+  schemas:
+    ProblemDetail:
+      type: object
+      description: >-
+        Every 4xx and 5xx body, and nothing else. Never holds the caller's input, a path, an exception
+        message or payload content.
+      required: [type, title, status, reason]
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: [about:blank]
+        title:
+          type: string
+          description: The HTTP reason phrase.
+        status:
+          type: integer
+        reason:
+          type: string
+          enum:
+            - unknown_parameter
+            - repeated_parameter
+            - conflicting_parameters
+            - missing_parameter
+            - invalid_stored_after_seq
+            - limit_out_of_range
+            - invalid_day_youth_seen
+            - invalid_court_centre_id
+            - invalid_shared_day
+            - day_range_reversed
+            - day_range_too_long
+            - invalid_shared_from
+            - invalid_shared_to
+            - time_range_reversed
+            - time_range_too_long
+            - invalid_latest_only
+            - invalid_cursor
+            - invalid_share_id
+            - invalid_hearing_id
+            - invalid_hearing_day
+            - bad_request
+            - unauthenticated
+            - forbidden
+            - route_not_found
+            - share_not_found
+            - hearing_day_not_found
+            - method_not_allowed
+            - not_acceptable
+            - unsupported_content_type
+            - internal_error
+            - store_unavailable
+
+    KeyDetails:
+      type: object
+      nullable: true
+      description: >-
+        Facts read from the payload, exactly as it states them. The whole object is null exactly when
+        projectionStatus is FAILED; each field is null when the payload did not state it.
+      required: [courtCentreId, courtRoomId, ljaCode, jurisdictionType, isSjp, isGroupProceedings,
+                 youthCourtId, isReshare]
+      properties:
+        courtCentreId:
+          type: string
+          format: uuid
+          nullable: true
+        courtRoomId:
+          type: string
+          format: uuid
+          nullable: true
+        ljaCode:
+          type: string
+          nullable: true
+        jurisdictionType:
+          type: string
+          nullable: true
+          description: As stated (no fixed list).
+        isSjp:
+          type: boolean
+          nullable: true
+          description: true = an SJP share, false = INT. There is no eventType field; this is its source.
+        isGroupProceedings:
+          type: boolean
+          nullable: true
+        youthCourtId:
+          type: string
+          format: uuid
+          nullable: true
+        isReshare:
+          type: boolean
+          nullable: true
+
+    ShareSummary:
+      type: object
+      description: >-
+        One share: never the payload. keyDetails, anySubjectIsYouth, dayYouthSeen, isLatest,
+        predecessorShareId, projectionStatus, projectionVersion, projectedAt and versionNumber are read-time
+        values and can change with no new storedSeq.
+      required: [shareId, hearingId, hearingDay, sharedTime, storedSeq, storedAt, sharedDayLondon,
+                 sharedDayUtc, keyDetails, anySubjectIsYouth, dayYouthSeen, isLatest, predecessorShareId,
+                 arrivedOutOfOrder, enrichmentApplied, projectionStatus, projectionVersion, projectedAt,
+                 versionNumber]
+      properties:
+        shareId:
+          type: string
+          format: uuid
+          description: The share's key and the consumer's idempotency key.
+        hearingId:
+          type: string
+          format: uuid
+        hearingDay:
+          type: string
+          format: date
+        sharedTime:
+          type: string
+          format: date-time
+          description: As stored (cut to the microsecond); UTC, six fraction digits.
+        storedSeq:
+          type: integer
+          format: int64
+          description: Order of receipt by the store; the pull cursor. Has gaps.
+        storedAt:
+          type: string
+          format: date-time
+        sharedDayLondon:
+          type: string
+          format: date
+        sharedDayUtc:
+          type: string
+          format: date
+        keyDetails:
+          $ref: '#/components/schemas/KeyDetails'
+        anySubjectIsYouth:
+          type: boolean
+          nullable: true
+        dayYouthSeen:
+          type: boolean
+          nullable: true
+        isLatest:
+          type: boolean
+        predecessorShareId:
+          type: string
+          format: uuid
+          nullable: true
+        arrivedOutOfOrder:
+          type: boolean
+        enrichmentApplied:
+          type: boolean
+        projectionStatus:
+          type: string
+          enum: [OK, FAILED]
+        projectionVersion:
+          type: integer
+        projectedAt:
+          type: string
+          format: date-time
+        versionNumber:
+          type: integer
+          description: 1-based position in the day by sharedTime, worked out when read.
+
+    PullPage:
+      type: object
+      required: [items, nextStoredAfterSeq, hasMore, visibleUpTo]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareSummary'
+        nextStoredAfterSeq:
+          type: integer
+          format: int64
+          description: The next cursor; store it after processing the page.
+        hasMore:
+          type: boolean
+          description: More matching shares are already visible; call again at once.
+        visibleUpTo:
+          type: string
+          format: date-time
+          description: The store's clock minus the visibility lag.
+
+    SearchPage:
+      type: object
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareSummary'
+        nextCursor:
+          type: string
+          nullable: true
+          maxLength: 128
+          description: Null on the last page; otherwise pass it back unchanged with the same parameters.
+
+    DayVersions:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ShareSummary'

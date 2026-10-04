@@ -1,11 +1,91 @@
-// Authorisation rules for the results store's HTTP API.
+// Authorisation rules for the results store's HTTP API: one allow rule per action, and nothing else.
 //
-// No rules yet. `authz.http.deny-when-no-rules` is true, so every action is refused until a rule
-// allows it; `/actuator` and `/error` are excluded from the filter altogether. Each read endpoint
-// adds one allow rule here when its feature spec lands, naming the action ActionHeaderFilter
-// derives for it.
+// There is no deny rule. `authz.http.deny-when-no-rules` is true, so an action no rule names is refused
+// by the absence of a rule. `/actuator` and `/error` never reach the library (excluded prefixes).
+//
+// Every rule admits exactly two groups, "System Users" and "Second Line Support" (constitution VII:
+// support staff read payloads through the read API under its own rules). The action names are the ones
+// ActionHeaderFilter derives from method and path (filters/ApiRoute); a caller's CPP-ACTION and any
+// vendor media type are overwritten before the library resolves the action.
+//
+// Each rule also matches the Action's `method` and `path` attributes. cp-auth-rules-filter 1.0.7 builds
+// the fact as `new Action(name, {"method": request.getMethod(), "path": <path within the application>})`
+// (record `Action(String name, Map<String, Object> attributes)`), so the attributes are read with map
+// access, `attributes["method"]` and `attributes["path"]`, and a spoofed action name on another route
+// still fails. The path is matched against the route's template as a whole-string regular expression,
+// one path segment (`[^/]+`) per template variable; the variable's form (a canonical UUID, a date) is
+// checked by the endpoint, which answers 400 with its own reason.
+//
+// There is deliberately no `package` declaration: the engine synthesises a source path from the file
+// name when a DRL carries none.
 
 import uk.gov.moj.cpp.authz.drools.Outcome;
 import uk.gov.moj.cpp.authz.drools.Action;
 
 global uk.gov.moj.cpp.authz.http.providers.UserAndGroupProvider userAndGroupProvider;
+
+rule "Allow - results-store.pull-shares"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.pull-shares",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/shares")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end
+
+rule "Allow - results-store.search-shares"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.search-shares",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/shares")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end
+
+rule "Allow - results-store.get-share"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.get-share",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/shares/[^/]+")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end
+
+rule "Allow - results-store.get-share-payload"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.get-share-payload",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/shares/[^/]+/payload")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end
+
+rule "Allow - results-store.list-hearing-day-shares"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.list-hearing-day-shares",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/hearings/[^/]+/days/[^/]+/shares")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end
+
+rule "Allow - results-store.get-share-arrived-payload"
+when
+  $o: Outcome()
+  $a: Action(name == "results-store.get-share-arrived-payload",
+             attributes["method"] == "GET",
+             attributes["path"] matches "/results-store/v1/shares/[^/]+/payload/arrived")
+  eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a, "System Users", "Second Line Support"))
+then
+  $o.setSuccess(true);
+end

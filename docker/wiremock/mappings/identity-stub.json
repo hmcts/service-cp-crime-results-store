@@ -1,4 +1,5 @@
 {
+  "priority": 10,
   "request": {
     "method": "GET",
     "urlPath": "/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions"

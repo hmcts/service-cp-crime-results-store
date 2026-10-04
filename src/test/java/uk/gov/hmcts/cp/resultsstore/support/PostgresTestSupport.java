@@ -16,7 +16,10 @@ public final class PostgresTestSupport {
     private static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer(IMAGE)
             .withDatabaseName("resultsstore")
             .withUsername("resultsstore")
-            .withPassword("resultsstore");
+            .withPassword("resultsstore")
+            // Every cached Spring context keeps its own pool; the default 100 is too few for them
+            // all on a busy runner.
+            .withCommand("postgres", "-c", "max_connections=300");
 
     private PostgresTestSupport() {
         // Static fixture holder.

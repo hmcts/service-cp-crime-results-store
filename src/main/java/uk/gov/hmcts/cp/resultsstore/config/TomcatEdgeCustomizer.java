@@ -1,0 +1,75 @@
+package uk.gov.hmcts.cp.resultsstore.config;
+
+import java.util.Arrays;
+import org.apache.catalina.Container;
+import org.apache.catalina.Context;
+import org.apache.catalina.Pipeline;
+import org.apache.catalina.connector.Connector;
+import org.apache.catalina.core.StandardHost;
+import org.apache.catalina.valves.ErrorReportValve;
+import org.apache.tomcat.util.buf.EncodedSolidusHandling;
+import org.springframework.boot.tomcat.servlet.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.core.Ordered;
+import uk.gov.hmcts.cp.resultsstore.api.ProblemErrorReportValve;
+import uk.gov.hmcts.cp.resultsstore.application.RefusalObserver;
+
+/**
+ * The read API's HTTP connector policy and the host's error report (contracts/read-api.md §2.2, §6).
+ *
+ * <ul>
+ *   <li>The connector rejects an encoded slash ({@code %2F}) and a backslash: Tomcat's defaults, set here
+ *       explicitly so nobody loosens them by accident; Boot has no property for them. A rejected URI never
+ *       reaches the service's filters.</li>
+ *   <li>The connector lets {@code TRACE} through ({@code allowTrace}), so the action filter refuses it as it
+ *       refuses any other method ({@code 405 method_not_allowed}, {@code Allow}, counted) on every path; it
+ *       never reaches a servlet's {@code doTrace}, which would echo the request's headers.</li>
+ *   <li>The host's error report is {@link ProblemErrorReportValve}, so a request the connector rejects gets
+ *       the four-field problem body rather than Tomcat's HTML page. Boot's own {@link ErrorReportValve} is
+ *       removed from the host, and the host is told the valve's class, so it adds no default one at start.</li>
+ * </ul>
+ *
+ * <p>Runs last ({@link Ordered#LOWEST_PRECEDENCE}), after Boot's Tomcat customiser has added its valve.
+ */
+public class TomcatEdgeCustomizer implements WebServerFactoryCustomizer<TomcatServletWebServerFactory>, Ordered {
+
+    private final RefusalObserver refusals;
+
+    /**
+     * Creates the customiser.
+     *
+     * @param refusals handed to the host's error report, which counts each connector-level refusal
+     */
+    public TomcatEdgeCustomizer(final RefusalObserver refusals) {
+        this.refusals = refusals;
+    }
+
+    @Override
+    public void customize(final TomcatServletWebServerFactory factory) {
+        factory.addConnectorCustomizers(TomcatEdgeCustomizer::connectorPolicy);
+        factory.addContextCustomizers(this::problemErrorReport);
+    }
+
+    @Override
+    public int getOrder() {
+        return LOWEST_PRECEDENCE;
+    }
+
+    private static void connectorPolicy(final Connector connector) {
+        connector.setEncodedSolidusHandling(EncodedSolidusHandling.REJECT.getValue());
+        connector.setAllowBackslash(false);
+        connector.setAllowTrace(true);
+    }
+
+    private void problemErrorReport(final Context context) {
+        final Container parent = context.getParent();
+        if (parent instanceof StandardHost host) {
+            final Pipeline pipeline = host.getPipeline();
+            Arrays.stream(pipeline.getValves())
+                    .filter(ErrorReportValve.class::isInstance)
+                    .forEach(pipeline::removeValve);
+            pipeline.addValve(new ProblemErrorReportValve(refusals));
+            host.setErrorReportValveClass(ProblemErrorReportValve.class.getName());
+        }
+    }
+}

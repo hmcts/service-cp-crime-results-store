@@ -1,0 +1,48 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/progression-query-api/query/api/rest/progression/applications/a1a1a1a1-0000-4000-8000-000000000001",
+        "headers": {
+          "Accept": { "equalTo": "application/vnd.progression.query.application-only+json" },
+          "CJSCPPUID": { "matches": "[0-9a-f-]{36}" }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/vnd.progression.query.application-only+json" },
+        "jsonBody": {
+          "courtApplication": {
+            "id": "a1a1a1a1-0000-4000-8000-000000000001",
+            "applicationStatus": "FINALISED",
+            "judicialResults": [
+              {
+                "judicialResultId": "b1b1b1b1-0000-4000-8000-000000000001",
+                "label": "Synthetic result",
+                "amendmentDate": "2026-10-01",
+                "amendmentReason": "Synthetic",
+                "amendmentReasonId": "c1c1c1c1-0000-4000-8000-000000000009"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/progression-query-api/query/api/rest/progression/applications/a1a1a1a1-0000-4000-8000-000000000002",
+        "headers": {
+          "Accept": { "equalTo": "application/vnd.progression.query.application-only+json" },
+          "CJSCPPUID": { "matches": "[0-9a-f-]{36}" }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/vnd.progression.query.application-only+json" },
+        "jsonBody": {}
+      }
+    }
+  ]
+}

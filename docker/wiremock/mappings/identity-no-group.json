@@ -1,0 +1,29 @@
+{
+  "priority": 1,
+  "request": {
+    "method": "GET",
+    "urlPath": "/usersgroups-query-api/query/api/rest/usersgroups/users/logged-in-user/permissions",
+    "headers": {
+      "CJSCPPUID": {
+        "equalTo": "11111111-1111-4111-8111-111111111111"
+      }
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": {
+      "groups": [
+        {
+          "groupId": "grp-1",
+          "groupName": "Other Group",
+          "prosecutingAuthority": null
+        }
+      ],
+      "switchableRoles": [],
+      "permissions": []
+    }
+  }
+}

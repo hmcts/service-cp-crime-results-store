@@ -1,8 +1,21 @@
-# The `test` profile: no database, no broker, no usersgroups, so context-load tests run without
-# Docker. Suites that need one of those switch it back on for themselves.
+# The `test` profile: no broker, no usersgroups, authorisation and audit off. The datasource and Flyway
+# are excluded here, but every Spring context test runs on the Testcontainers database
+# (support/PostgresTestSupport.register clears the exclusion), so context tests need Docker. Suites that
+# need the broker, usersgroups, authorisation or audit switch them on for themselves.
 resultsstore:
   publicevents:
     # Literal, so an exported RESULTSSTORE_PUBLICEVENTS_ENABLED cannot start a listener here.
+    enabled: false
+  intake:
+    redelivery-pause:
+      # Tests do not wait; RedeliveryPauseTest proves the pause once with a real sleeper.
+      enabled: false
+  sweep:
+    # Sweep tests call the sweep directly.
+    enabled: false
+  enrichment:
+    # Literal, so an exported RESULTSSTORE_ENRICHMENT_ENABLED cannot reach progression here. Suites
+    # that cover enrichment switch it on with a WireMock base URL and a synthetic system user id.
     enabled: false
 
 authz:
@@ -18,6 +31,14 @@ cp:
     enabled: false
 
 spring:
+  datasource:
+    hikari:
+      # Every cached context keeps its own pool against the one shared test database, so each pool
+      # stays small and holds no idle connection. Four is the most any test holds at once:
+      # ExtractionSweepIT's two-sweep race holds the day on one, runs a sweep on each of two more and
+      # watches for their lock waits on a fourth.
+      maximum-pool-size: 4
+      minimum-idle: 0
   artemis:
     # artemis-jakarta-server is on the test classpath, and with it visible Boot deduces embedded
     # mode and starts an in-VM broker in every context. Off; the listener IT runs its own broker.

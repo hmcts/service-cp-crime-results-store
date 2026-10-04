@@ -1,0 +1,6 @@
+# False positive: the estate's `internal-urls` rule matches one `.gitignore` entry, the path of a
+# local-only tool settings file whose name carries a `.local.` infix. A fingerprint is bound to its
+# commit, so this covers only that line in history; new findings are not silenced by this file.
+d6e0d581b4cf392e4bb0f0366c487220c2c003a2:.gitignore:internal-urls:38
+# The first version of this file quoted that path in its note, so the full-history scan flags it too.
+211399086232fa320313973bc34a4d1d21e72d75:.gitleaksignore:internal-urls:2

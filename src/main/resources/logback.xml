@@ -19,6 +19,23 @@
         </encoder>
     </appender>
 
+    <!-- The progression client's transport logs every header (CJSCPPUID, the system user id) and the
+         raw bytes of every exchange (the body) at DEBUG. Pinned OFF so no root level can print them. -->
+    <logger name="org.apache.hc.client5.http.headers" level="OFF"/>
+    <logger name="org.apache.hc.client5.http.wire" level="OFF"/>
+
+    <!-- Tomcat quotes what a caller sent when it rejects a request: the parser logs the first failure of each
+         request processor at INFO with an IllegalArgumentException naming the request target, the input buffer
+         the raw request at TRACE, the adapter the URI at DEBUG, the cookie parser the cookie header. The target
+         can carry an id or other caller data, and no log line may (constitution XI: identifiers only in logs).
+         Pinned to WARN so no root level can print them; the rejection is counted in
+         resultsstore.read.refused{reason=connector_rejected} instead. -->
+    <logger name="org.apache.coyote.http11.Http11Processor" level="WARN"/>
+    <logger name="org.apache.coyote.http11.Http11InputBuffer" level="WARN"/>
+    <logger name="org.apache.coyote.AbstractProcessor" level="WARN"/>
+    <logger name="org.apache.catalina.connector.CoyoteAdapter" level="WARN"/>
+    <logger name="org.apache.tomcat.util.http.parser" level="WARN"/>
+
     <root level="INFO">
         <appender-ref ref="JSON"/>
     </root>
