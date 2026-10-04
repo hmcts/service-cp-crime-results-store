@@ -12,7 +12,7 @@ Messages name properties, never values from the environment. The operations bean
 
 | Property | Default | Environment variable | Rule |
 |---|---|---|---|
-| `resultsstore.operations.statement-timeout` | `10s` | `RESULTSSTORE_OPERATIONS_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (30 s). The operations `JdbcTemplate`'s JDBC query timeout, as spec 003's read timeout |
+| `resultsstore.operations.statement-timeout` | `10s` | `RESULTSSTORE_OPERATIONS_STATEMENTTIMEOUT` | > 0; below the driver's socket timeout (30 s). The operations `JdbcTemplate`'s JDBC query timeout, as spec 003's read timeout. Server-side, every pooled connection also carries spec 003's backstop (`resultsstore.intake.store.statement-timeout`, 10 s; 003 FR-062), so a value above it has no effect beyond it |
 | `resultsstore.operations.rerun.max-range` | `31d` | `RESULTSSTORE_OPERATIONS_RERUN_MAXRANGE` | 1 day to 92 days (D-RERUN-BOUNDS, pending Sachin) |
 | `resultsstore.operations.rerun.max-hearing-ids` | `200` | `RESULTSSTORE_OPERATIONS_RERUN_MAXHEARINGIDS` | 1 to 1,000 |
 | `resultsstore.operations.rerun.max-share-ids` | `1000` | `RESULTSSTORE_OPERATIONS_RERUN_MAXSHAREIDS` | 1 to 5,000 |
@@ -27,7 +27,12 @@ Messages name properties, never values from the environment. The operations bean
 
 The rerun request transaction sets its own `lock_timeout`, `statement_timeout` and
 `idle_in_transaction_session_timeout` (the last equal to the statement timeout) with
-`set_config(..., TRUE)`, as the store transaction does, and is bounded by its transaction timeout.
+`set_config(..., TRUE)`, as the store transaction does, and is bounded by its transaction timeout. Inside
+that transaction they replace the pool's backstop. They are not part of the visibility lag's proof: the
+request writes only the rerun tables and never takes a hearing-day lock. The intake values the lag is
+derived from (transaction 60 s, statement 10 s, lock 5 s, idle-in-transaction 10 s; lag 90 s) are spec
+003's and unchanged by 004; the sweep's rerun write runs in the store transaction under those intake
+timeouts.
 
 `application.yaml`:
 
@@ -100,9 +105,21 @@ No new property. `authz.http.enabled`, `audit.http.enabled` and `cp.audit.enable
 |---|---|---|
 | `RESULTSSTORE_SWEEP_INITIALDELAY`, `RESULTSSTORE_SWEEP_FIXEDDELAY` | short values through `${VAR:-default}` (for example `5s`, `10s`) | so the smoke sees its rerun item done in seconds, not minutes |
 
-`docker/wiremock/mappings/identity-second-line-support.json` (new) answers "Second Line Support" for
-the synthetic operator id `22222222-2222-4222-8222-222222222222`, matched on `CJSCPPUID`, priority 1.
-`identity-stub.json` keeps a lower priority, as spec 003 set it, so every other id is "System Users".
+No new WireMock mapping: spec 003's `docker/wiremock/mappings/identity-second-line.json` already answers
+"Second Line Support" for `22222222-2222-4222-8222-222222222222` (matched on `CJSCPPUID`, priority 1),
+`identity-no-group.json` answers "Other Group" for `11111111-1111-4111-8111-111111111111`, and
+`identity-stub.json` (priority 10) answers "System Users" for every other id.
+
+The compose stack runs short intake timeouts (spec 003: transaction 6 s, statement 2 s, lock 1 s,
+idle 1 s; derived lag 11 s), so the pool's backstop there is 2 s: the operations reads and the sweep's
+claim each have 2 seconds, plenty for the smoke's few rows. A stored-range rerun in the smoke must end at
+least 11 seconds before now.
+
+## Contract jar (`gradle/libs.versions.toml`)
+
+| Entry | During 004 | At the end (T011) |
+|---|---|---|
+| `api-results-store` | the `rs-<sha7>` draft of the api repository's `team/rs` branch holding the operations (T001; a new draft for each later contract change) | `0.3.0`, from the GitHub Release `v0.3.0`; `./gradlew validateApiSpecVersions` passes |
 
 ## Constants that are deliberately not settings
 

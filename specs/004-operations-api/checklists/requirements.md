@@ -20,7 +20,7 @@
 - [x] All acceptance scenarios are defined — every story has Given/When/Then scenarios and an independent test.
 - [x] Edge cases are identified — shares stored while a request is written, overlapping requests, a pod dying mid-item, a rerun of a `FAILED` share, rolling deploys, values moving to null, youth flags moving in each direction, clock-change days, receipts across midnight, bad bodies and media types, a sweep switched off.
 - [x] Scope is clearly bounded — the Scope section names replay, the nightly job, sampled R2, a youth-raised feed, a cancel endpoint, defendant row removal, retention and erasure, read API changes and deploy values as out of scope.
-- [x] Dependencies and assumptions identified — spec 003 is named as the base with what 004 reuses; *Decisions pending Sachin* lists every D-item from the rulings that touches 004; *Assumptions* lists the settled choices.
+- [x] Dependencies and assumptions identified — spec 003, as built and merged, is named as the base with what 004 reuses, including its contract repository (FR-054); *Decisions pending Sachin* lists every open D-item that touches 004 (D-OPS-CONTRACT included); *Decided before 004* lists the four settled for spec 003; *Assumptions* lists the settled choices.
 
 ## Feature Readiness
 
@@ -33,3 +33,4 @@
 
 - Validation pass 1 found two problems in spec.md: User Story 1's independent test described changing a stored share, which the guards forbid (reworded: the share is inserted with key details its working copy does not state); and the rulings' FALSE-to-unknown youth move was not covered by any default (now written under D-NEVER-BLANK and named in D-YOUTH-RAISE). Pass 2: every item passes.
 - `grep -c "NEEDS CLARIFICATION" spec.md` = 0.
+- Pass 3 (2026-10-04, after the rebase onto the built spec 003): D-LAG-VALUE (90 s), D-AUTHZ-REQUIRED, D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED moved out of the pending table as decided; D-OPS-CONTRACT and FR-054 added; FR-007, FR-014, FR-044 to FR-049 and FR-051 aligned with what 003 built. Every item still passes.

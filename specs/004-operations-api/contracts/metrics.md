@@ -15,9 +15,15 @@ holds unless this file says otherwise.
   rather than nothing. `MicrometerOperationsObserver` (T007) and `MicrometerSweepObserver` (T005, T006)
   are built **whatever `resultsstore.publicevents.enabled` and `resultsstore.sweep.enabled` say**: a pod
   whose sweep is off still shows the rerun meters at zero.
-- No meter moves on a `401` or `403`: those end before any operations code runs. Spec 003's
-  `resultsstore.read.refused{reason}` counts them, and every `404`, `405` and multipart `415` its filters
-  refuse, for `/operations` paths as well as read paths. The name is spec 003's and is kept.
+- No operations meter moves on a refusal made before the endpoint: those end before any operations
+  code runs. Spec 003's `resultsstore.read.refused{reason}` counts them for `/operations` paths as well
+  as read paths, with its reasons as built (`RouteRefusal.tag()`): `route_not_found` and
+  `method_not_allowed` (the action filter), `unsupported_content_type` (the multipart filter),
+  `unauthenticated` and `forbidden` (the `/error` page, for the authorisation library's `401` and `403`),
+  `connector_rejected` (the host's error report). The name is spec 003's and is kept.
+- Spec 003's `resultsstore.read.requests` and `resultsstore.read.duration` never move for an operations
+  route: `ReadMetricsInterceptor` runs on `/results-store/v1/**` only, and the advice's no-handler count
+  records read routes only.
 
 ## Counters
 
@@ -25,7 +31,7 @@ holds unless this file says otherwise.
 |---|---|---|---|
 | `resultsstore.operations.rerun.requests` | `selector` = `stored_range` \| `hearing_ids` \| `share_ids`; `result` = `created` \| `repeat` | a rerun request is answered `202`: `created` when this call wrote it, `repeat` when an open request with the same selector answered | FR-013, FR-015, FR-049 |
 | `resultsstore.operations.rerun.shares.queued` | `selector` (as above) | by `queued` when a request is `created` (not on a repeat) | FR-013, FR-049 |
-| `resultsstore.operations.refused` | `endpoint` = `rerun` \| `status` \| `receipts` \| `reconciliation`; `reason` = one of the operations `4xx` reasons of contracts/operations-api.md §7 that the advice or a controller sends (`unknown_parameter`, `repeated_parameter`, `unreadable_body`, `body_too_large`, `unknown_field`, `selector_not_exactly_one`, `range_invalid`, `range_too_long`, `hearing_ids_out_of_range`, `share_ids_out_of_range`, `invalid_hearing_id`, `invalid_share_id`, `invalid_reason`, `selector_too_wide`, `conflicting_parameters`, `missing_parameter`, `invalid_hearing_day`, `invalid_message_id`, `invalid_date`, `date_in_future`, `bad_request`, `unauthenticated`, `not_acceptable`, `unsupported_content_type`) | the advice answers a `4xx` for an operations route (the endpoint from the matched route); `unauthenticated` here is the rerun controller's own check (FR-011), not the library's `401` | FR-049 |
+| `resultsstore.operations.refused` | `endpoint` = `rerun` \| `status` \| `receipts` \| `reconciliation`; `reason` = one of the operations `4xx` reasons of contracts/operations-api.md §7 that the advice or a controller sends (`unknown_parameter`, `repeated_parameter`, `unreadable_body`, `body_too_large`, `unknown_field`, `selector_not_exactly_one`, `range_invalid`, `range_too_long`, `hearing_ids_out_of_range`, `share_ids_out_of_range`, `invalid_hearing_id`, `invalid_share_id`, `invalid_reason`, `selector_too_wide`, `conflicting_parameters`, `missing_parameter`, `invalid_hearing_day`, `invalid_message_id`, `invalid_date`, `date_in_future`, `bad_request`, `unauthenticated`, `not_acceptable`, `unsupported_content_type`) | an operations request is refused with a `4xx` by `OperationsParametersInterceptor` or by the advice (a body fault, a value fault, `415` for a non-JSON body, `406`), once, the endpoint from the matched route; `unauthenticated` here is the rerun controller's own check (FR-011), not the library's `401` | FR-049 |
 | `resultsstore.sweep.rerun.rows` | `outcome` = `reextracted` \| `unchanged` \| `fixed` \| `failed_again` \| `kept` \| `youth_kept` \| `youth_raise_held` \| `newer_kept` \| `skipped` \| `error` \| `abandoned` \| `cancelled` | after each rerun item's transactions end. `error`: an operational failure, the item stays pending; `abandoned`: the failure that reached the attempt limit (counted instead of `error`). **Alert on any `abandoned` or `youth_raise_held`** | FR-018, FR-021, FR-025, FR-027 |
 | `resultsstore.sweep.rerun.requests.finished` | — | by the number of requests a round end moves from `OPEN` to `DONE` | FR-026 |
 | `resultsstore.sweep.round.record.failed` | — | a pod's sweep-round upsert fails; the round itself completes | FR-032 |

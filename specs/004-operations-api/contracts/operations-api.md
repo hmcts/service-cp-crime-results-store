@@ -4,8 +4,11 @@
 **Owner**: the Results Store (`service-cp-crime-results-store`).
 **Status**: Draft with spec 004. Points marked *pending Sachin* carry the default shown and may change
 before release; spec.md *Decisions pending Sachin* lists them.
-**Machine-readable form**: `src/main/resources/results-store-openapi.yaml` (spec 004, task T001). Where
-the two disagree, this document is corrected.
+**Machine-readable form**: the contract repository `hmcts/api-cp-crime-results-store`, the same jar as
+the read API (`uk.gov.hmcts.cp:api-cp-crime-results-store`, tag `operations`, generated `OperationsApi`;
+release `0.3.0`; D-OPS-CONTRACT, pending Sachin), mirrored in the service's
+`src/main/resources/results-store-openapi.yaml` (spec 004, task T001). Where they disagree with this
+document, this document is corrected.
 
 The words MUST, MUST NOT, SHOULD and MAY are used in their usual sense. "The store" means the service;
 "you" means the support caller.
@@ -64,11 +67,14 @@ unique key.
 
 ### 2.4 Audit
 
-Every request that reaches an endpoint is audited by the estate's audit library with your user id and
-the action; the response event holds the response body (ids, counts, times, bounded codes). A request
-refused before the endpoint (`401`, `403`, `404`, `405`, `415` from a filter) is counted, not audited
-(pending Sachin). Whether the audit record holds the rerun's request body, and so its reason, has not
-been verified; task T009 records the answer here. **Write no personal data in a rerun reason.**
+Every request that reaches an endpoint is audited by the estate's audit library with your user id; the
+response event holds the response body (ids, counts, times, bounded codes). Only the read API's payload
+endpoints have their body replaced by a marker; nothing here returns a payload, so nothing here needs
+it. A request refused before the endpoint (`401`, `403`, `404`, `405`, a multipart `415`, or a request
+the HTTP connector rejects) is counted, not audited (constitution VII). Whether the audit record holds
+the rerun's request body, and so its reason, has not been verified: the library's request event carries
+the body, but no `POST` has been audited yet. Task T009 records the answer here. **Write no personal
+data in a rerun reason.**
 
 ---
 
@@ -95,7 +101,7 @@ status (§4).
 |---|---|---|
 | `reason` | string | Required. Trimmed, 10 to 500 characters, no control characters. Stored; never returned, logged or counted. **No personal data** |
 | `storedFrom` | string, RFC 3339 instant with an offset, at most six fraction digits | With `storedTo`, the stored-range selector: shares whose `storedAt` is ≥ `storedFrom` and < `storedTo` |
-| `storedTo` | as `storedFrom` | After `storedFrom`; at or before the database's current time minus the read API's visibility lag (110 s at the defaults, pending Sachin). Why: a share stored inside the lag may still be committing, so a range that has not ended before it could miss one. Span ≤ 31 days (pending Sachin) |
+| `storedTo` | as `storedFrom` | After `storedFrom`; at or before the database's current time minus the read API's visibility lag (90 seconds at the defaults; longer if the deployment sets a longer lag). Why: a share stored inside the lag may still be committing, so a range that has not ended before it could miss one. Span ≤ 31 days (pending Sachin) |
 | `hearingIds` | array of 1 to 200 UUIDs (pending Sachin) | The hearing-list selector: every share of every day of those hearings. Duplicates are removed |
 | `shareIds` | array of 1 to 1,000 UUIDs (pending Sachin) | The share-list selector. Duplicates are removed. Ids the store does not hold are counted in `unknownShareIds`, not refused |
 
@@ -319,7 +325,7 @@ and `partial`.
 | Field | Meaning |
 |---|---|
 | `from`, `to` | the window as instants: the date's London midnight to the next. 23 hours on the day clocks go forward, 25 on the day they go back |
-| `partial` | `true` while `to` is after `computedAt`: the day is not over. Shares stored in the last 110 seconds (the read API's visibility lag) may still be committing |
+| `partial` | `true` while `to` is after `computedAt`: the day is not over. Shares stored in the last 90 seconds (the read API's visibility lag at the defaults) may still be committing |
 | `receipts` | messages **first received** in the window: `total` all of them, then by their **current** status (`stillReceived` is status `RECEIVED`) |
 | `shares` | shares **stored** in the window: all; out of order; extraction `FAILED`; `FAILED` with no attempts left; read by an older extractor than the answering pod's |
 | `findings.r1` | receipts first received in the window, still `RECEIVED`, whose **last delivery** is older than `giveUpAfter` (1 hour, pending Sachin, to be set from the broker's redelivery give-up time): the count, the oldest 50 message ids, `truncated` |
@@ -366,7 +372,7 @@ on `status` and `reason`.
 | 400 | `invalid_message_id` | empty, over 256 characters, a space or a non-printable character | receipts |
 | 400 | `invalid_date` | not a date | reconciliation |
 | 400 | `date_in_future` | after today in London | reconciliation |
-| 400 | `bad_request` | any other malformed request | all |
+| 400 | `bad_request` | any other malformed request, including a request target the HTTP connector rejects (an encoded slash, a backslash) | all |
 | 401 | `unauthenticated` | no `CJSCPPUID`, or (rerun) one that is not a UUID | all |
 | 403 | `forbidden` | you are not in "Second Line Support" | all |
 | 404 | `route_not_found` | the path is not served | — |

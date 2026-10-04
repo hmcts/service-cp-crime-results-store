@@ -18,7 +18,10 @@ JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lo
 
 ```bash
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lock \
-  ./gradlew test --tests '*ResultsStoreRulesTest' --tests '*OpenApiDocumentTest' --tests '*OpenApiContractTest'
+  ./gradlew test --tests '*ResultsStoreRulesTest' --tests '*OpenApiDocumentTest' --tests '*OpenApiContractTest' \
+  --tests '*OpenApiContractDriftTest'
+JAVA_HOME=/usr/lib/jvm/java-25-openjdk ./gradlew dependencies --configuration apiSpec | grep api-cp-crime-results-store
+# the rs-<sha7> draft while 004 is built; 0.3.0 after T011
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lock \
   ./gradlew test --tests '*OperationsSchemaIT' --tests '*FlywayMigrationIT'
 JAVA_HOME=/usr/lib/jvm/java-25-openjdk flock -w 7200 /tmp/resultsstore-gradle.lock \
@@ -43,8 +46,8 @@ docker compose up -d --build
 ```
 
 The compose app runs its sweep every few seconds (T010). Publish a share as in 001 quickstart §4, then
-(`22222222-…` is the compose's synthetic "Second Line Support" caller, from
-`docker/wiremock/mappings/identity-second-line-support.json`):
+(`22222222-…` is the compose's synthetic "Second Line Support" caller, from spec 003's
+`docker/wiremock/mappings/identity-second-line.json`; any other id is "System Users"):
 
 ```bash
 OPS=http://localhost:8082/operations

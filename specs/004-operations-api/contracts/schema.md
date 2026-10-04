@@ -12,7 +12,9 @@ binds, except where rule 1 below changes one on purpose. The DDL is in full in
 |---|---|
 | `V6__operations.sql` | tables `extraction_rerun`, `extraction_rerun_item`, `sweep_round`; their checks and indexes; functions and triggers `extraction_rerun_guard`/`_tg`, `extraction_rerun_item_guard`/`_tg`; `hearing_share_guard()` replaced (`CREATE OR REPLACE`; trigger `hearing_share_guard_tg` unchanged); indexes `event_receipt_first_received_ix`, `event_receipt_stale_ix`, `hearing_share_stored_at_ix` |
 
-V1 to V5 are not edited.
+V1 to V5 are not edited. V3's `hearing_share_guard()` is the only earlier definition of the function
+V6 replaces (V4 and V5 leave it alone); V5's `BEFORE INSERT` trigger `hearing_share_stored_at_tg` is
+untouched and never fires on the `UPDATE` the guard checks.
 
 ## Rules added or changed by 004
 

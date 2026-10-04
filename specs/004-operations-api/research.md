@@ -4,17 +4,26 @@
 
 Each entry gives the decision, why, and what else was looked at. R1 and R2 settle the layering and the
 edge; R3 to R6 the rerun request; R7 to R12 the sweep's rerun work and its record; R13 to R15 the three
-reads; R16 to R20 errors, audit, indexes, metrics and settings; R21 the constitution; R22 the build traps.
+reads; R16 to R20 errors, audit, indexes, metrics and settings; R21 the constitution; R22 the build traps;
+R23 the contract repository.
 Every open point is settled here, or is a row of spec.md *Decisions pending Sachin* with its default
 applied.
 
 Sources: the design review of spec 004 and its critique; the orchestrator's rulings on both (2026-10-03,
-sections A, C and D), which win where they differ; the fact-finding report on the store's read side (this
-repository at `c21a901`); spec 003 as written on `003-read-api` (`b74c43b`); and this repository's code as
+sections A, C and D) and the decisions taken with Sachin for spec 003 (section E), which win where they
+differ; the fact-finding report on the store's read side (this repository at `c21a901`); spec 003 as
+built and merged (`main` at `8ea9980`, its tasks' close-out notes included); and this repository's code as
 read for this document (`V2__reshape_event_receipt.sql`, `V3__create_share_store.sql`,
-`V4__projection_tried_at.sql`, `JdbcShareStore`, `YouthFlags`, `ExtractionSweep`, `ShareStore`,
-`SweepRowOutcome`, `SweepProperties`, `SweepSchedulingConfig`, `IntakeObserver`, `FlywayMigrationIT`,
-`application.yaml`, `application-test.yaml`, `docker/wiremock/mappings/identity-stub.json`).
+`V4__projection_tried_at.sql`, `V5__read_api.sql`, `JdbcShareStore`, `YouthFlags`, `ExtractionSweep`,
+`ShareStore`, `SweepRowOutcome`, `SweepProperties`, `SweepSchedulingConfig`, `IntakeObserver`,
+`FlywayMigrationIT`; 003's `ApiRoute`, `ActionHeaderFilter`, `ActionRequestWrapper`, `RefusalWriter`,
+`UnsupportedContentTypeFilter`, `QueryParameterNames`, `ProblemReason`, `ReadApiExceptionHandler`,
+`BoundedErrorController`, `ProblemErrorReportValve`, `SharesController`, `ShareParameters`,
+`ShareParametersInterceptor`, `ReadMetricsInterceptor`, `PayloadBodyFreeAuditPayloadGenerationService`,
+`ApiWebConfig`, `ReadApiWebMvcConfig`, `ReadApiConfig`, `StatementTimeoutBackstop`,
+`MicrometerRefusalObserver`, `RouteRefusal`, `ReadEndpoint`, `ReadOutcome`; `application.yaml`,
+`application-test.yaml`, `acl/results-store-rules.drl`, `results-store-openapi.yaml`,
+`gradle/libs.versions.toml`, `docker-compose.yml` and `docker/wiremock/mappings/*`).
 
 ---
 
@@ -22,9 +31,13 @@ read for this document (`V2__reshape_event_receipt.sql`, `V3__create_share_store
 
 **Decision.** As the design rules (`design_rules.md`) and spec 003 research R1 set out:
 
-- `api/`: `ExtractionOperationsController` (rerun and status), `ReceiptsController`,
-  `ReconciliationController`; `RerunBodyParser` and `OperationsParameters` (strict parsing);
-  `*Response` records. Each controller parses, calls one service, maps the answer.
+- `api/`: `OperationsController`, the one implementation of the contract jar's generated
+  `OperationsApi` (R23), as 003's `SharesController` is of `SharesApi`; `OperationsParameters` with
+  `OperationsParametersInterceptor` (strict query parameters, 003's `ShareParametersInterceptor`
+  pattern), `RerunBodyParser` with `RerunBodyAdvice` (the strict rerun body, R16),
+  `OperationsResponseMapper` (application records to the generated models). No hand-written response
+  records: the generated models are the responses, as in 003. Each operation calls one service and maps
+  the answer.
 - `application/`: `RerunService`, `ExtractionStatusService`, `ReceiptsService`,
   `ReconciliationService`; ports `RerunRequests`, `OperationsQueries`, `SweepRounds`,
   `OperationsObserver`, `SweepObserver`. No JDBC or HTTP type.
@@ -40,9 +53,18 @@ read for this document (`V2__reshape_event_receipt.sql`, `V3__create_share_store
   `SweepSchedulingConfig` extended.
 
 Spec 003's pieces are reused, not copied: `ApiRoute`, `ActionHeaderFilter`, `ActionRequestWrapper`,
-`UnsupportedContentTypeFilter`, `RefusalWriter`, `ProblemReason`, `BadParameterException`,
-`ReadApiExceptionHandler`, `BoundedErrorController`, `InstantFormat`, the effective visibility lag bean of
-`ReadApiConfig`, and the `ApplicationContextRunner` stub `DataSource` pattern.
+`UnsupportedContentTypeFilter`, `RefusalWriter`, `QueryParameterNames`, `ProblemReason`,
+`application/BadParameterException`, `ReadApiExceptionHandler`, `BoundedErrorController`,
+`ProblemErrorReportValve`, `RouteRefusal` and `RefusalObserver`, `InstantFormat`, the effective
+`VisibilityLag` bean of `ReadApiConfig`, the pool backstop (`StatementTimeoutBackstop`), the
+`ApplicationContextRunner` stub `DataSource` pattern, and the test support `PostgresTestSupport`,
+`UsersGroupsStub` and `EmbeddedBrokerSupport`.
+
+`ReadApiExceptionHandler` is **extended, not joined by a second advice**. It extends
+`ResponseEntityExceptionHandler` and is the service's only `@RestControllerAdvice`, with no
+`basePackages` or `assignableTypes` filter, so it already handles every controller. A second advice of the
+same kind would compete with it for Spring MVC's own exceptions, and which one answered would depend on
+bean order. It keeps its name; its javadoc says it is the API-wide advice.
 
 **Wiring.** The operations beans are unconditional (spec 003 R1: a read-only pod is a valid shape, and a
 support endpoint must exist on every pod). The sweep stays where it is: built only with the subscription
@@ -66,31 +88,50 @@ rerun write in a separate adapter: it would duplicate the lock order and the you
 | `GET /operations/receipts` | `results-store-operations.list-receipts` | `receipts` |
 | `GET /operations/reconciliation/daily` | `results-store-operations.get-daily-reconciliation` | `reconciliation` |
 
-- `ApiRoute` (003 R2: one constant per method, template, action and tag) gains the four constants. Its
-  tag component widens from `ReadEndpoint` to a sealed interface `RouteEndpoint` in `domain/`, which
-  `ReadEndpoint` and the new `OperationsEndpoint` implement. `ReadMetricsInterceptor` records only
-  routes whose tag is a `ReadEndpoint`.
+- `ApiRoute` (003 R2: one constant per template, action and endpoint tag) gains the four constants. As
+  built, every constant serves `GET` (`method()` returns a constant) and `resolve` special-cases the
+  shared `/shares` template; it gains a method component, so `allowedMethods` answers `POST` for the
+  rerun path and `GET` for the others. Its tag component widens from `ReadEndpoint` to a sealed interface
+  `RouteEndpoint` in `domain/`, which `ReadEndpoint` and the new `OperationsEndpoint` implement; a static
+  `readRoutes()` lists the read constants.
+- `ReadMetricsInterceptor` is registered on `/results-store/v1/**` only (`ReadApiWebMvcConfig`), so it
+  never runs on `/operations`; it and the advice's no-handler count (a `406` before the handler) still
+  record only routes whose tag is a `ReadEndpoint`. An operations `406` is counted in
+  `resultsstore.operations.refused{reason=not_acceptable}` instead.
+- `ShareParameters.check` and `support/ApiRouteSamples.samplePath` are exhaustive switches over
+  `ApiRoute`; T001 gives them the operations constants (never reached by `ShareParameters`, whose
+  interceptor runs on the read paths only; sample paths for the tests). The ten test classes that iterate
+  over `ApiRoute.values()` are narrowed to `readRoutes()` where a case is about reads.
 - 003's filter already refuses an unmapped path under the service with `404 route_not_found`, a known
   path with another method with `405` and `Allow`, and rewrites vendor `Content-Type` and `Accept` to
   `application/json`. On the rerun route that rewrite matters: a vendor `Content-Type` would otherwise
   choose the action (003 R2).
 - `acl/results-store-rules.drl`: one rule per operations action, admitting **"Second Line Support"
-  only**, matching the `Action`'s method and path in the form T001 of spec 003 fixed (ruling A3).
+  only**, matching the `Action`'s method and path in the form spec 003 built (ruling A3): for the rerun,
+  `attributes["method"] == "POST"` and `attributes["path"] matches "/operations/extraction/rerun"`; the
+  other three `GET` and their own path. `eval(userAndGroupProvider.isMemberOfAnyOfTheSuppliedGroups($a,
+  "Second Line Support"))`.
 - Read-API rules keep admitting "System Users" and "Second Line Support" (ruling A3; constitution VII:
   support staff *read payloads through the read API under its own rules*). `ResultsStoreRulesTest`
   proves: read actions allowed for both groups and refused for a caller in neither; operations actions
   allowed for "Second Line Support" and refused for "System Users".
 
-**Contract first with a two-way test (ruling C7, critique improvement 3).** T001 adds the four paths to
-`results-store-openapi.yaml` with the extension `x-planned: true`, plus the rules and the routes. Spec
-003's `OpenApiContractTest` checks the document against controller mappings both ways; a "route" there
-is a **controller mapping**, not an `ApiRoute` constant. Until T008, an `x-planned` path may have no
-controller mapping; T008 removes the markers, and the test then demands the controllers. No other path
-may carry the marker.
+**Contract first, in the contract repository (R23; ruling C7).** T001 adds the four operations to
+`hmcts/api-cp-crime-results-store` first; the service pins the draft, mirrors the paths in
+`results-store-openapi.yaml` (003's `OpenApiContractDriftTest` compares the two as parsed objects), and
+adds the rules and the routes. Spec 003's `OpenApiContractTest` reads the "controller mappings" from the
+generated interfaces' annotations, not from the Spring context, so with `OperationsApi` added to its
+sources the two-way check holds from T001. What waits for T008 is its
+`every_sharesapi_operation_should_be_overridden` case, extended to `OperationsApi`: until a class
+implements the interface, Spring registers no mapping for `/operations`, and a call there gets
+`NoResourceFoundException`, which the advice answers `404 route_not_found`.
 
 **Alternatives considered.** The design review's dotted names (`results-store-operations.extraction.rerun`):
 replaced by the rulings' kebab verb-noun names, matching 003. One combined contract-and-controllers task:
-rejected, the contract must land first (constitution, *Development Workflow*).
+rejected, the contract must land first (constitution, *Development Workflow*). An `x-planned: true` marker
+on the paths until their controllers exist (this document's first draft): not needed now that the
+mappings come from the generated interface, and a marker in the service's document alone would fail the
+drift test.
 
 ---
 
@@ -117,7 +158,11 @@ synchronous rerun inside the `POST`: unbounded time and locks inside a web reque
 
 - One transaction with its own timeouts (`resultsstore.operations.rerun.request.*`; defaults transaction
   120 s, statement 20 s, lock 10 s; the same rules as intake's: lock ≤ statement ≤ transaction,
-  statement below the socket timeout).
+  statement below the socket timeout). They are set with `set_config(..., TRUE)` inside the transaction,
+  so for that transaction they replace the pool's backstop `statement_timeout` (003 FR-062, the intake
+  statement timeout, 10 s). The request's statement timeout is above intake's on purpose: one chunk of
+  5,000 items can take longer than one intake statement. The request never takes the day lock, so it
+  does not hold intake up (R4 *Locks*); it is not part of the visibility lag's proof.
 - Items are inserted in chunks of `chunk-size` (5,000) in `share_id` order, each chunk one statement:
   a `matched` CTE, an `INSERT … SELECT … ON CONFLICT (share_id) WHERE state = 'PENDING' DO NOTHING
   RETURNING`, and the two counts (data-model.md). So `matched` and `queued` come from the statement that
@@ -174,8 +219,10 @@ repeat (C): makes a double click an error.
 ## R6. A stored range must end before the visibility lag
 
 **Decision (ruling C2; critique defect 16).** `storedTo` must be at or before the database's `now()`
-minus spec 003's effective visibility lag (110 s at the defaults), checked inside the request's
-transaction on the database clock. Otherwise `400 range_invalid`.
+minus spec 003's effective visibility lag (90 s at the defaults: transaction 60 s + 2 × statement 10 s +
+idle-in-transaction 10 s, decided with Sachin, E3), checked inside the request's transaction on the
+database clock. Otherwise `400 range_invalid`. The lag is the `VisibilityLag` bean, so a deployment that
+sets a longer lag moves this cut-off with it.
 
 **Why.** `stored_at` is read when the share row is inserted (003's V5 trigger), but the share commits up
 to the lag later. A range ending near now could silently miss shares that commit after the request's
@@ -377,34 +424,58 @@ reading one more to set `truncated`.
 
 - Spec 003's four-field body, `ProblemReason` table, advice and `/error` page, unchanged in shape.
   `ProblemReason` gains the operations reasons (contracts/operations-api.md §6), in 003's style.
-- The rerun body is read as text (`@RequestBody(required = false) String`, `consumes =
-  application/json`), then parsed by `api/RerunBodyParser` with the service's Jackson 3 mapper into a
-  tree and checked field by field. So an unknown field is refused whatever Jackson's defaults say, and
-  every body fault has its own reason (`unreadable_body`, `unknown_field`, `body_too_large` above
-  64 KiB), with no change to how 003 maps `HttpMessageNotReadableException`.
-- A non-JSON `Content-Type` makes Spring MVC raise `HttpMediaTypeNotSupportedException`; 003's advice
-  maps any other MVC exception to `bad_request`, so 004 adds one mapping: that exception →
-  `415 unsupported_content_type` (the same reason 003's multipart filter uses).
-- The rerun controller reads `CJSCPPUID` itself and refuses a missing or non-UUID value with
-  `401 unauthenticated` (ruling A6, critique defect 21), through an `OperatorMissingException` the
-  advice maps. With authorisation on, the library refuses first; the controller's check matters where it
-  is off.
+- **The body.** The generated `OperationsApi.rerunExtraction` binds the contract's `RerunRequest`
+  model (`consumes = application/json`; the schema has `additionalProperties: false`). Strictness does
+  not depend on Jackson's defaults: `api/RerunBodyAdvice`, a `RequestBodyAdviceAdapter` that supports
+  the rerun's body type only, reads at most 64 KiB + 1 of the raw bytes in `beforeBodyRead`, has
+  `api/RerunBodyParser` read them into a tree with the service's Jackson 3 mapper and check them field by
+  field, and hands the same bytes on for binding. A fault throws `BadParameterException` with its own
+  reason (`unreadable_body`, `unknown_field`, `body_too_large`, and the value reasons); an empty body
+  reaches `handleEmptyBody`, which gives `unreadable_body`. So no body fault reaches 003's mapping of
+  `HttpMessageNotReadableException` (`bad_request`), which is unchanged.
+- **Query parameters.** `api/OperationsParametersInterceptor`, registered on `/operations/**` by
+  `config/OperationsWebMvcConfig` as 003's `ReadApiWebMvcConfig` registers `ShareParametersInterceptor`,
+  runs `OperationsParameters` over the raw query string (`QueryParameterNames`) before Spring binds the
+  generated method's typed arguments. A refusal is written through `RefusalWriter` and counted there,
+  since the advice never sees it.
+- A non-JSON `Content-Type` makes Spring MVC raise `HttpMediaTypeNotSupportedException`. 003's advice
+  gives it `ProblemReason.forErrorStatus(415)`, which is `bad_request`; 004 adds one mapping: that
+  exception → `415 unsupported_content_type` (the reason 003's multipart filter uses). The multipart
+  filter is unchanged; its javadoc's "no request to the API has a body" becomes "only the rerun has a
+  body, and it is JSON".
+- **The operator.** The rerun operation declares an optional `CJSCPPUID` header parameter in the
+  contract (a string), so the generated method receives it; `OperationsController` refuses a missing or
+  non-UUID value with `401 unauthenticated` (ruling A6, critique defect 21) through an
+  `OperatorMissingException` the advice maps. With authorisation on, the library refuses first; the
+  controller's check matters where it is off. 003's `AuditIT` found that the audit library writes no
+  request header into an event, so declaring the header leaks nothing into the audit store.
 - Operations `4xx` from the advice are counted in `resultsstore.operations.refused{endpoint,reason}`;
-  the endpoint comes from the matched `ApiRoute`, set as a request attribute by 003's filter.
+  the endpoint comes from the matched `ApiRoute` (request attribute `ApiRoute.REQUEST_ATTRIBUTE`, set
+  by 003's filter). Each refusal is counted once: by the interceptor, or by the advice.
 
 ---
 
 ## R17. Audit
 
-**Decision (ruling A7).** The library audits every operations request that reaches the endpoint. Its
-response event copies the response body: here ids, counts, times and bounded codes, never a payload or
-message text, so spec 003's D-AUDIT override (payload routes only) is not needed for `/operations`.
-Refusals before the audit filter are counted, not audited (003 FR-051).
+**Decision (ruling A7; E1, E13).** The library audits every operations request that reaches the
+endpoint. Its response event copies the response body: here ids, counts, times and bounded codes, never
+a payload or message text. Spec 003's `PayloadBodyFreeAuditPayloadGenerationService` swaps the body for
+`{"payloadOmitted":true}` only when the request's derived `CPP-ACTION` is one of the two payload
+actions (`results-store.get-share-payload`, `results-store.get-share-arrived-payload`); the operations
+actions are not payload routes, so their events are the library's own and the class is not changed.
+Refusals before the audit filter are counted, not audited (003 FR-051, constitution VII 2.2.0).
 
-**Not verified:** whether `cp-audit-filter-springboot` 1.0.5 records request bodies; the fact sheet says
-headers and query parameters. If it does, the rerun's reason lands in the audit store. `AuditIT` gains a
-case that pins what the library does, and the result is recorded under T009 and in the contract. The
-OpenAPI description of `reason` says it must hold no personal data; nothing can enforce that in free text.
+What 003's `AuditIT` pinned for `cp-audit-filter-springboot` 1.0.5: an event carries the caller
+(`_metadata.context.user`), the correlation id, the query and path parameters (path parameters only
+where the document declares them inline) and the body; no request header; the inner record is named from
+`Accept` or `Content-Type`, so the derived action is not in the event.
+
+**Not verified:** what the request event holds for a `POST` body. Every 003 route is a `GET`, so no
+request body has been seen. If the library copies it, the rerun's reason lands in the audit store.
+`AuditIT` gains a case that pins what the library does, and the result is recorded under T009 and in the
+contract. The OpenAPI description of `reason` says it must hold no personal data; nothing can enforce
+that in free text. The operator's id is in every event as the caller: that is the audit record, not a
+log line, and FR-011's "never logged" is about the service's own logs.
 
 ---
 
@@ -438,9 +509,13 @@ no id, date, operator or reason in a tag.
   `resultsstore.sweep.rerun.requests.finished`, `resultsstore.sweep.round.record.failed`.
 - Unchanged: `resultsstore.sweep.rows{outcome}` counts the `FAILED` path only;
   `resultsstore.extraction.failed{stage=sweep,…}` also moves for a rerun's `FAILED_AGAIN`.
-- Spec 003's `resultsstore.read.refused{reason}` is the edge's counter: its filters and `/error`
-  page count `404`, `405`, `415`, `401` and `403` for every path they guard, `/operations` included. The
-  name is 003's and is kept; the metrics delta says it covers both bases.
+- Spec 003's `resultsstore.read.refused{reason}` is the edge's counter, with the `RouteRefusal` tags as
+  built: `route_not_found` and `method_not_allowed` (action filter), `unsupported_content_type` (the
+  multipart filter), `unauthenticated` and `forbidden` (the `/error` page, for the authorisation
+  library's `401` and `403`), `connector_rejected` (the host's error report). They count for every path
+  they guard, `/operations` included. The name is 003's and is kept; the metrics delta says it covers both
+  bases. A `415` that Spring MVC raises for a non-JSON rerun body is not an edge refusal: it is counted in
+  `resultsstore.operations.refused`.
 
 ---
 
@@ -456,8 +531,8 @@ are part of the contract and the schema stay constants: the reason length (10 to
 
 ## R21. Constitution 2.3.0
 
-**Decision (ruling A11; D-PRINCIPLE-I-BUMP, pending Sachin).** MINOR, 2.2.0 → 2.3.0 (or the next free
-MINOR if spec 003's T013 made its own amendment first): Principle I gains a new freedom, which changes
+**Decision (ruling A11; D-PRINCIPLE-I-BUMP, pending Sachin).** MINOR, 2.2.0 (in the tree since spec 003)
+→ 2.3.0: Principle I gains a new freedom, which changes
 what a stored version means to consumers, so it is not a PATCH (critique defect 19). The sweep bullet of
 Principle I becomes:
 
@@ -493,4 +568,48 @@ payload, and states the audit rule 004 follows.
 - **`ExtractionSweep`'s constructor changes twice** (T005: `SweepObserver` and the rerun settings;
   T006: `SweepRounds`). Each task updates `SweepSchedulingConfig` and every test that builds it, so each
   phase stays green.
-- **`FlywayMigrationIT`'s version list** gains `"6"` in T002 (it lists `"1"` to `"5"` after spec 003).
+- **`FlywayMigrationIT`'s version list** gains `"6"` in T002 (it lists `"1"` to `"5"` after spec 003);
+  its checksum map, `V1_TO_V4_CHECKSUMS` today, gains V5's checksum, so V5 is pinned once V6 exists.
+- **Exhaustive switches and route iterations.** `ShareParameters.check` and `ApiRouteSamples.samplePath`
+  switch over `ApiRoute` and stop compiling when constants are added; ten test classes iterate over
+  `ApiRoute.values()` (R2). T001 updates them in the same commit.
+- **The real server.** `OperationsApiIT` runs with `webEnvironment = RANDOM_PORT`, as `ReadApiIT`: the
+  authorisation library refuses with `sendError`, which reaches `/error` only on a real container, so a
+  `401` or `403` case under MockMvc proves nothing.
+
+---
+
+## R23. The contract repository (D-OPS-CONTRACT)
+
+**Decision (default, pending Sachin).** The operations API is HTTP, so it is published contract-first
+like the read API (003 research R23, 003 FR-063). Its four operations go into the **same** repository and jar,
+`hmcts/api-cp-crime-results-store` / `uk.gov.hmcts.cp:api-cp-crime-results-store`:
+
+- the paths under the tag `operations`, so the generator emits `uk.gov.hmcts.cp.resultsstore.openapi.api.OperationsApi`
+  beside `SharesApi` (interface only, as 003);
+- schemas `RerunRequest` (`additionalProperties: false`), `RerunAccepted`, `ExtractionStatus` (with its
+  nested types), `Receipts`, `Receipt`, `DailyReconciliation` (with its nested types); `date-time` is
+  `java.time.Instant`, durations are strings;
+- the shared `ProblemDetail` schema's `reason` enum gains the operations reasons, so the advice's
+  `ProblemDetail.ReasonEnum.fromValue(reason.code())` works for every reason;
+- the rerun operation's optional `CJSCPPUID` header parameter (R16);
+- a CHANGELOG line and `OpenApiObjectsTest` cases (each operation's return type).
+
+The flow is 003's: a pull request to the api repository, merged and fast-forwarded to `team/rs`, whose
+build publishes a `rs-<sha7>` draft to `hmcts-lib`; the service pins the draft in
+`gradle/libs.versions.toml` and mirrors the paths in `results-store-openapi.yaml` (the drift test is red
+until both are made); any later contract change repeats the loop. At the end (T011) a GitHub Release
+`v0.3.0` publishes `0.3.0`, the service pins it, and `./gradlew validateApiSpecVersions` (run by
+`ci-released.yml`) passes. The audit library keeps reading the service's own `results-store-openapi.yaml`
+(`audit.http.openapi-rest-spec`), which is why the service keeps its mirrored copy. Its `info.description`
+stops saying that the caller may be in either group: the read routes admit both, `/operations` admits
+"Second Line Support" only.
+
+One `OperationsController implements OperationsApi` serves all four operations, as `SharesController`
+serves `SharesApi`: the generated interface's mappings would register once per implementing class.
+
+**Alternatives considered.** A second repository, `api-cp-crime-results-store-operations`: its own jar,
+version gate and drift test, and its own `ProblemDetail` model in another package, so the one advice
+would have to build two problem types by route. It would let the operations contract move on its own
+release cycle, which nothing needs today. Keeping the operations out of any contract repository: against
+the constitution's contract-first workflow and the estate convention 003 followed.

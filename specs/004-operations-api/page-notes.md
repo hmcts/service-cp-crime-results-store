@@ -70,6 +70,12 @@ Line Support" only, audited, never returns a payload."
 > extractor never overwrites a newer reading), abandoned (three operational failures; pending Sachin). A
 > request closes when no item is pending.
 
+**Add a line on the contract**:
+
+> The operations API's OpenAPI contract is published with the read API's, from
+> `hmcts/api-cp-crime-results-store` (tag `operations`, from release `0.3.0`; pending Sachin). A stored
+> range must end at least the read API's visibility lag (90 seconds) before the request.
+
 ---
 
 ## 3. *Reconciliation*
@@ -117,9 +123,9 @@ recorded. The alert "Reconciliation … does not run" waits for the nightly job.
 
 Until Sachin rules: D-RERUN-GUARD, D-NEVER-BLANK, D-YOUTH-RAISE, D-RERUN-CANCEL, D-RERUN-BOUNDS,
 D-RECON-CLOCK, D-R1-WINDOW (with the platform team), D-R2, D-NIGHTLY, D-SWEEP-ROUND, D-RERUN-ERASURE,
-D-PRINCIPLE-I-BUMP (spec.md *Decisions pending Sachin* has each question, default and alternatives).
-D-AUTHZ-REQUIRED, D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, D-LAG-VALUE and D-PG-VERSION are spec 003's
-and apply here too.
+D-PRINCIPLE-I-BUMP, D-OPS-CONTRACT (spec.md *Decisions pending Sachin* has each question, default and
+alternatives). D-LAG-VALUE (90 seconds), D-AUTHZ-REQUIRED, D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED
+were decided with Sachin for spec 003 and apply here as settled; D-PG-VERSION stays a recorded risk.
 
 ---
 

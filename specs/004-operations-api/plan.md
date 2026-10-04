@@ -7,8 +7,10 @@
 
 Build the four support endpoints under `/operations`: re-run extraction, extraction status, receipts and
 the daily reconciliation, for "Second Line Support" only, audited, never returning a payload or a
-message's text. The contract comes first: the OpenAPI paths (marked `x-planned` until their controllers
-exist), the allow rules and the route entries land before any serving code.
+message's text. The contract comes first, as in spec 003: the four operations go into the contract
+repository `hmcts/api-cp-crime-results-store` (the read API's jar, tag `operations`, generated
+`OperationsApi`; D-OPS-CONTRACT, pending Sachin), the service pins its draft and mirrors it, and the allow
+rules and route entries land before any serving code. The contract is released as `v0.3.0` at the end.
 
 A rerun is a **request, not a write**: the `POST` records a request and one item per matched share in
 one transaction, with counts taken from the very statements that insert the items, and answers `202`.
@@ -20,22 +22,26 @@ guard so the database refuses any such rewrite unless a pending item names the r
 named. Each pod records its last sweep round, so the status can tell "ran, nothing to do" from "not
 running". Receipts and the reconciliation are read on demand from indexed columns.
 
-004 builds on spec 003's web edge (route table, action filter, `415` guard, bounded errors, rules test,
-OpenAPI contract test) and names. Detail: [research.md](research.md), [data-model.md](data-model.md),
+004 builds on spec 003's web edge as built (`main` at `8ea9980`): route table, action filter, `415`
+guard, bounded errors, the connector's error report, the rules test, the contract jar with its drift and
+contract tests, and its names. Detail: [research.md](research.md), [data-model.md](data-model.md),
 [contracts/](contracts/).
 
 ## Technical Context
 
 **Language/Version**: Java 25
 **Primary Dependencies**: Spring Boot 4.1 (webmvc, jdbc, flyway, actuator); `cp-auth-rules-filter` 1.0.7
-and `cp-audit-filter-springboot` 1.0.5 (already dependencies); Jackson 3 (`tools.jackson`); Micrometer.
-No new dependency
+and `cp-audit-filter-springboot` 1.0.5 (already dependencies); the contract jar
+`uk.gov.hmcts.cp:api-cp-crime-results-store` (`0.2.0` today; a `rs-<sha7>` draft while 004 is built;
+`0.3.0` at the end); Jackson 3 (`tools.jackson`); Micrometer. No new dependency
 **Storage**: PostgreSQL 16 (local and tests); migration `V6__operations.sql` (three tables, guards, a
 replaced share guard, three indexes; data-model.md)
-**Testing**: JUnit 5, Mockito, AssertJ; `@WebMvcTest` slices for the controllers; MockMvc with
-`@SpringBootTest` for `OperationsApiIT` and `AuditIT`; Testcontainers `postgres:16`
-(`support/PostgresTestSupport`); WireMock 3.13.2 for usersgroups (matched on `CJSCPPUID`); embedded
-Artemis for the audit topic; KIE for the rule tests; the compose smoke over `curl`
+**Testing**: JUnit 5, Mockito, AssertJ; a `@WebMvcTest` slice of `OperationsController`;
+`@SpringBootTest(webEnvironment = RANDOM_PORT)` on a real server for `OperationsApiIT` and `AuditIT`, as
+spec 003's `ReadApiIT` (the authorisation library's `sendError` reaches `/error` only on a real
+container); Testcontainers `postgres:16` (`support/PostgresTestSupport`); in-process WireMock 3.13.2 for
+usersgroups (`support/UsersGroupsStub`, matched on `CJSCPPUID`); embedded Artemis for the audit topic;
+KIE for the rule tests; the compose smoke over `curl` and `jq`
 **Target Platform**: Linux container on AKS (2 or more pods), Gradle build
 **Project Type**: single Spring Boot service (`uk.gov.hmcts.cp.resultsstore`)
 **Performance Goals**: a request of 200,000 shares written within its 120 s transaction (40 chunks of
@@ -46,8 +52,9 @@ default pace, more with more pods; status, receipts and reconciliation are a few
 bodies only; JaCoCo 0.88 line / 0.85 branch; PMD 7.22.0 clean on main and test (`OnlyOneReturn`: single
 exit or a site suppression with a reason); no wildcard imports; V1 to V5 never edited; the share guard's
 fixed-columns branch byte-identical to V3
-**Scale/Scope**: about 4,800 shares a day; a 31-day rerun is about 150,000 items. About 45 new
-production classes, 15 changed; 11 tasks in four phases
+**Scale/Scope**: about 4,800 shares a day; a 31-day rerun is about 150,000 items. About 40 new
+production classes, 20 changed (the response types are the jar's generated models); 11 tasks in four
+phases
 
 Every point above is settled in [research.md](research.md) or is a row of spec.md *Decisions pending
 Sachin* with its default applied.
@@ -56,10 +63,10 @@ Sachin* with its default applied.
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-Constitution 2.1.0 in this tree; 2.2.0 once spec 003's T012 lands. The check below is made against the
-2.2.0 wording. T011 amends it to 2.3.0 (MINOR; research R21); the check holds against both, with the
-deviations recorded under *Complexity Tracking* (Principle I, and Principle VII's dependency on 003's
-wording).
+Constitution 2.2.0 is in this tree (spec 003's amendment: Principle VII's derived actions, counted
+refusals and payload audit marker; Principle II's no-`_metadata` clause). The check below is made against
+it. T011 amends it to 2.3.0 (MINOR; Principle I; research R21); the one deviation is recorded under
+*Complexity Tracking*.
 
 | Principle | How this feature satisfies it | Gate |
 |---|---|---|
@@ -69,16 +76,15 @@ wording).
 | IV. No business rules | The store re-reads what the payload states. Holding a `false`-to-`true` youth change is about how a change reaches consumers, not about the case; the held share is listed and counted (research R9). Note: while held, that column lags its payload | PASS (with the note) |
 | V. Never refuse to store | Intake unchanged. A rerun never moves a share to `FAILED` or drops it | PASS |
 | VI. Idempotent, transactional intake | Intake unchanged. Rerun writes take the hearing-day lock first, as intake does (`RerunConcurrencyIT`) | PASS |
-| VII. Default-deny authorisation | One allow rule per action, "Second Line Support" only, matching method and path; `deny-when-no-rules` true; actions derived by 003's filter; no operations response holds a payload; audited by the library; refusals counted (2.2.0 wording). The checked-in 2.1.0 says *every request is audited*; this PASS depends on 003's 2.2.0 wording (D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED, pending Sachin; see *Complexity Tracking*) | PASS, pending 003's 2.2.0 wording |
+| VII. Default-deny authorisation | One allow rule per action, "Second Line Support" only, matching method and path; `deny-when-no-rules` true; actions derived by 003's filter; no operations response holds a payload. As 2.2.0 says: *every request that reaches an endpoint is audited; a request refused by a filter, by the connector or by authorisation is counted*. The audit marker covers the two payload actions only; operations events are the library's own, with no payload in them | PASS |
 | VIII. Observability through Azure Monitor | Rerun requests, queued shares, refusals, every item outcome, abandoned and held items, finished requests, failed round records: all registered at start; R1 and R2 visible on demand. The "reconciliation does not run" alert waits for the nightly job (D-NIGHTLY) | PASS |
 | IX. Artemis only for legacy integration | Nothing published by the store; the audit library publishes as it already does | PASS |
 | X. Test-driven development | Every task names its tests first; red run quoted before green (phase gate) | PASS |
 | XI. Privacy in telemetry | The reason and operator id are never logged or tagged (`NoPayloadInLogsIT` gains a rerun case); logs hold share ids and counts; problem bodies hold bounded codes. Request-body audit not verified (pinned by `AuditIT`) | PASS |
 | XII. Estate conventions | Gradle, Java 25, Boot 4; constructor injection; records; explicit imports; typed validated properties; Conventional Commits; no attribution | PASS |
-| Quality gates | `build pmdMain pmdTest jacocoTestReport` green per phase; OpenAPI and allow rules before the code that serves them (T001 before T008); reviewers code-reviewer, qa, spec-validator, and Codex | PASS |
+| Quality gates | `build pmdMain pmdTest jacocoTestReport` green per phase; the contract repository's operations, the mirrored document and the allow rules before the code that serves them (T001 before T008); no release on a draft (`validateApiSpecVersions`); reviewers code-reviewer, qa, spec-validator, and Codex | PASS |
 
-**Initial gate: PASS**, with one recorded deviation (Principle I, the `OK` re-read) and one recorded
-dependency (Principle VII, on spec 003's 2.2.0 audit wording), both justified below.
+**Initial gate: PASS**, with one recorded deviation (Principle I, the `OK` re-read), justified below.
 
 **Re-check after Phase 1 design: PASS.** Points checked again:
 
@@ -115,7 +121,7 @@ specs/004-operations-api/
 ### Source Code (repository root)
 
 New (`+`), changed (`~`). Packages follow the design rules: nothing in `domain/` or `application/`
-imports a JMS, JDBC or HTTP type. Spec 003's classes are named as 003's documents give them.
+imports a JMS, JDBC or HTTP type. Spec 003's classes are named as built.
 
 ```text
 src/main/java/uk/gov/hmcts/cp/resultsstore/
@@ -142,38 +148,47 @@ src/main/java/uk/gov/hmcts/cp/resultsstore/
 │   ├── + JdbcSweepRounds.java
 │   └── ~ JdbcShareStore.java        # the rerun write path, INSERT_DEFENDANT_IF_ABSENT
 ├── filters/
-│   └── ~ ApiRoute.java              # + four operations routes; tag widened to RouteEndpoint
+│   └── ~ ApiRoute.java              # + four operations routes; a method per route; tag widened to RouteEndpoint
 ├── api/
-│   ├── + ExtractionOperationsController.java, ReceiptsController.java, ReconciliationController.java
-│   ├── + RerunBodyParser.java, OperationsParameters.java, OperatorMissingException.java
-│   ├── + RerunAcceptedResponse.java, ExtractionStatusResponse.java, ReceiptsResponse.java,
-│   │     ReceiptResponse.java, DailyReconciliationResponse.java (and their nested records)
+│   ├── + OperationsController.java  # implements the jar's generated OperationsApi (all four operations)
+│   ├── + OperationsParameters.java, OperationsParametersInterceptor.java   # strict query parameters
+│   ├── + RerunBodyParser.java, RerunBodyAdvice.java   # strict rerun body, before Jackson binds the model
+│   ├── + OperationsResponseMapper.java, OperatorMissingException.java
 │   ├── ~ ProblemReason.java         # + the operations reasons
-│   ├── ~ ReadApiExceptionHandler.java  # + 415 mapping, OperatorMissingException, operations refusal count
+│   ├── ~ ShareParameters.java       # its route switch covers read routes only
+│   ├── ~ ReadApiExceptionHandler.java  # the one advice: + 415 mapping, OperatorMissingException,
+│   │                                   #   operations refusal count; no-handler read count for read routes only
 │   └── ~ ReadMetricsInterceptor.java   # read routes only
 └── config/
     ├── + OperationsProperties.java, OperationsConfig.java, MicrometerOperationsObserver.java
+    ├── + OperationsWebMvcConfig.java # the operations interceptor on /operations/**
     ├── + SweepObserverConfig.java, MicrometerSweepObserver.java
     ├── ~ SweepProperties.java       # + rerun-batch-size, rerun-max-attempts, pod-name
     └── ~ SweepSchedulingConfig.java # SweepObserver, rerun settings, JdbcSweepRounds
 
 src/main/resources/
-├── ~ results-store-openapi.yaml     # four paths and schemas (T001, x-planned until T008)
+├── ~ results-store-openapi.yaml     # mirrors the contract jar's four operations (T001)
 ├── ~ acl/results-store-rules.drl    # four allow rules (T001)
 ├── + db/migration/V6__operations.sql
 └── ~ application.yaml               # resultsstore.operations.*, three sweep settings
 
-docker-compose.yml                                           # ~ short sweep delays (T010)
-docker/wiremock/mappings/identity-second-line-support.json   # + (T010)
-scripts/container-smoke.sh                                   # ~ operations checks (T010)
+gradle/libs.versions.toml            # ~ api-results-store: the draft (T001, T009 if the contract changes), 0.3.0 (T011)
+docker-compose.yml                   # ~ short sweep delays (T010)
+scripts/container-smoke.sh           # ~ operations checks (T010); 003's identity-second-line.json is reused
+
+hmcts/api-cp-crime-results-store (contract repository, T001 and T011)
+└── the four operations under tag `operations`; RerunRequest, RerunAccepted, ExtractionStatus, Receipts,
+    DailyReconciliation schemas; ProblemDetail.reason widened; CHANGELOG; release v0.3.0
 
 src/test/java/uk/gov/hmcts/cp/resultsstore/
 ├── acl/          ~ ResultsStoreRulesTest
-├── api/          + ExtractionOperationsControllerTest, ReceiptsControllerTest, ReconciliationControllerTest,
-│                   RerunBodyParserTest, OperationsParametersTest;
-│                   ~ OpenApiDocumentTest, OpenApiContractTest, ProblemReasonTest, ReadApiExceptionHandlerTest,
-│                   ReadMetricsInterceptorTest
-├── filters/      ~ ApiRouteTest, ActionHeaderFilterTest
+├── api/          + OperationsControllerTest, ReceiptsControllerTest, ReconciliationControllerTest (slices of
+│                   OperationsController), RerunBodyParserTest, RerunBodyAdviceTest, OperationsParametersTest,
+│                   OperationsParametersInterceptorTest, OperationsResponseMapperTest;
+│                   ~ OpenApiDocumentTest, OpenApiContractTest, OpenApiContractDriftTest, ProblemReasonTest,
+│                   ReadApiExceptionHandlerTest, ReadMetricsInterceptorTest, ShareParametersInterceptorTest,
+│                   ContentNegotiationTest
+├── filters/      ~ ApiRouteTest, ActionHeaderFilterTest, UnsupportedContentTypeFilterTest
 ├── domain/       + OperationsEndpointTest, RerunSelectorTest, RerunReasonTest, OperatorIdTest,
 │                   RerunRowOutcomeTest, ReconciliationWindowTest, SelectorKindTest
 ├── application/  + RerunServiceTest, ExtractionStatusServiceTest, ReceiptsServiceTest,
@@ -183,8 +198,8 @@ src/test/java/uk/gov/hmcts/cp/resultsstore/
 │                   ~ FlywayMigrationIT
 ├── config/       + MicrometerOperationsObserverTest, MicrometerSweepObserverTest, OperationsConfigTest,
 │                   SweepObserverConfigTest; ~ ConfigurationValidationTest, SweepSchedulingConfigTest
-├── support/      ~ SampleShares (rerun fixtures)
-└── integration/  + OperationsApiIT; ~ AuditIT, NoPayloadInLogsIT
+├── support/      ~ SampleShares (rerun fixtures), ApiRouteSamples (operations sample paths)
+└── integration/  + OperationsApiIT; ~ AuditIT, NoPayloadInLogsIT, ReadApiIT and AuthzIT (read routes only)
 ```
 
 **Structure Decision**: one Spring Boot service, packages as in the design rules. Decisions (selector
@@ -197,13 +212,14 @@ the OpenAPI contract test.
 
 Four phase-gate phases, exactly as the rulings (C11). The *Covers* column is a summary; the *Covers*
 lines in tasks.md are the full list and win where the two differ. Each task is test first; each phase is
-green on its own before the next starts.
+green on its own before the next starts. Any change to the contract is made in the contract repository
+first and taken as a new draft, as in spec 003.
 
 ### Phase A: contract, schema, types
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T001 | `ResultsStoreRulesTest`, `OpenApiDocumentTest`, `OpenApiContractTest`, `ApiRouteTest`, `ActionHeaderFilterTest`, `ReadMetricsInterceptorTest`, `OperationsEndpointTest` | the four paths (`x-planned`), four rules, four routes, `RouteEndpoint`, `OperationsEndpoint` | FR-001, FR-042–FR-044 |
+| T001 | `ResultsStoreRulesTest`, `OpenApiDocumentTest`, `OpenApiContractTest`, `OpenApiContractDriftTest`, `ApiRouteTest`, `ActionHeaderFilterTest`, `UnsupportedContentTypeFilterTest`, `ReadMetricsInterceptorTest`, `ReadApiExceptionHandlerTest`, `OperationsEndpointTest` | api repo pull request → `team/rs` draft → the service pins the draft → the service's document mirrors it, four rules, four routes, `RouteEndpoint`, `OperationsEndpoint`; the `ApiRoute` iterations narrowed to read routes | FR-001, FR-042–FR-044, FR-054 (contract half) |
 | T002 | `OperationsSchemaIT`, `FlywayMigrationIT` | `V6__operations.sql` | FR-020, FR-021 (guard), FR-029, FR-030, FR-048; SC-002 |
 | T003 | `RerunSelectorTest`, `SelectorKindTest`, `RerunReasonTest`, `OperatorIdTest`, `RerunRowOutcomeTest`, `ReconciliationWindowTest` | domain values, application ports and records | FR-006–FR-010, FR-015 (canonical form), FR-018 (names), FR-038 (window) |
 
@@ -220,15 +236,15 @@ green on its own before the next starts.
 | Task | Test first | Then | Covers |
 |---|---|---|---|
 | T007 | `RerunServiceTest`, `ExtractionStatusServiceTest`, `ReceiptsServiceTest`, `ReconciliationServiceTest`, `MicrometerOperationsObserverTest`, `OperationsConfigTest`, `ConfigurationValidationTest` | services, observer, `OperationsProperties`, `OperationsConfig` | FR-005–FR-016 (service half), FR-031, FR-033, FR-035, FR-037–FR-041, FR-047, FR-049, FR-050; SC-009, SC-010 |
-| T008 | `RerunBodyParserTest`, `OperationsParametersTest`, three controller slices, `ReadApiExceptionHandlerTest`, `ProblemReasonTest`, `OpenApiContractTest` | controllers, parsers, responses, advice changes; markers removed | FR-002–FR-016 (web half), FR-034, FR-037, FR-046 |
+| T008 | `RerunBodyParserTest`, `RerunBodyAdviceTest`, `OperationsParametersTest`, `OperationsParametersInterceptorTest`, `OperationsResponseMapperTest`, the `OperationsController` slices, `ReadApiExceptionHandlerTest`, `ProblemReasonTest`, `OpenApiContractTest` | `OperationsController implements OperationsApi`, the parameter interceptor, the body advice, the mapper, advice changes | FR-002–FR-016 (web half), FR-034, FR-037, FR-046, FR-054 (served half) |
 | T009 | `OperationsApiIT`, `AuditIT`, `NoPayloadInLogsIT` | fixes found | US1–US6 end to end; FR-045; SC-006–SC-008 |
 
 ### Phase D: smoke and documents
 
 | Task | Test first | Then | Covers |
 |---|---|---|---|
-| T010 | smoke operations checks first (red on the old build) | compose sweep delays, the "Second Line Support" WireMock mapping | FR-053; SC-011 |
-| T011 | review grep for the old wording (red before the edits) | constitution 2.3.0, design rules, spec 001 notes, spec 003 contract §5.5, contracts reconciled, page notes, `/speckit-analyze`, Deferred | FR-051, FR-052; SC-012 |
+| T010 | smoke operations checks first (red on the old build) | compose sweep delays; spec 003's `identity-second-line.json` reused | FR-053; SC-011 |
+| T011 | review grep for the old wording (red before the edits) | constitution 2.3.0, design rules, spec 001 notes, spec 003 contract §5.5, contracts reconciled, page notes, `/speckit-analyze`, Deferred; contract Release `v0.3.0` and the bump from the draft | FR-051, FR-052, FR-054 (release half); SC-012 |
 
 Rules for every task: a unit test per class; an IT on Testcontainers Postgres, embedded Artemis or
 WireMock for every persistence, messaging and HTTP path; latches or Awaitility, never sleeps; no payload,
@@ -242,7 +258,7 @@ before green.
    returned is final". The `false`-to-`true` youth case is held; unknown-to-known and `false`-to-unknown
    are written and documented (003 contract §5.5, page notes). Consumers must re-read.
 2. **Day-lock contention.** Each rerun item takes its hearing day's lock briefly; intake for that day
-   waits up to its 10 s lock timeout. Batch size bounds the load per round; very large reruns are best
+   waits up to its 5 s lock timeout (spec 003's E3 default). Batch size bounds the load per round; very large reruns are best
    run off-peak.
 3. **Slow large reruns.** About 2.6 days for a 31-day range on one pod at the default pace; the request
    stays `OPEN` that long. More pods help (claims do not collide).
@@ -263,20 +279,26 @@ before green.
 10. **The R1 window is a guess** (1 hour) until the broker's give-up time is known: too short flags work
     in flight; too long reports late.
 11. **Status cost.** Outcome counts for 20 requests of up to 200,000 items each scan up to 4 million item
-    entries; bounded by the 10 s query timeout (`503` beyond it).
+    entries; bounded by the 10 s query timeout and the pool's 10 s server-side backstop (`503` beyond
+    it).
 12. **A pod that dies mid-item** leaves it pending with no attempt counted; a payload that kills the JVM
     every time would loop. No such payload is known; the item's claim time keeps it behind the others.
 13. **Clock steps.** A database clock stepping back would make the version guard refuse a `FAILED`-path
     write that uses plain `clock_timestamp()` (counted `error` until the clock passes the old time). The
     rerun path uses `GREATEST(clock_timestamp(), projected_at)`.
-14. **003 lands first.** 004's tasks name 003's classes; if 003's names change in implementation, 004's
-    paths follow them.
+14. **Iterations over every route.** Ten 003 test classes iterate over `ApiRoute.values()` (rules,
+    filters, contract, `ShareParametersInterceptorTest`, `ContentNegotiationTest`, `ReadApiIT`,
+    `AuthzIT`), and `ShareParameters` and `support/ApiRouteSamples` switch over it. T001 narrows every
+    read-only case to the read routes (the route, rule and filter tests gain operations cases of their
+    own), or they start calling operations routes as if they were reads.
 15. Not verified: whether the audit library records request bodies; the broker's redelivery give-up
     time; production table sizes at deploy; the production PostgreSQL version.
+16. **Contract draft.** The service builds on a `rs-<sha7>` draft until T011's release;
+    `validateApiSpecVersions` refuses a release on a draft, so `v0.3.0` must be published before 004
+    ships. Under D-OPS-CONTRACT's alternative (a second repository) T001 and T011 change, not the rest.
 
 ## Complexity Tracking
 
 | Deviation | Why needed | Simpler alternative rejected because |
 |---|---|---|
 | Constitution I (2.2.0) and V3's guard comment say an `OK` share's key details are final ("OK is final in 001"); from T002 the schema, and from T005 the sweep, rewrite an `OK` share in place while a pending rerun item names it. The 2.3.0 wording lands in T011 | An extractor fix must reach shares already stored `OK`; that is the purpose of the rerun (spec 001: "marking rows for a rerun is spec 004"). Reviewers of T002 to T010 read this row as the written justification the constitution asks for | Moving rows to `FAILED` to reuse the existing retry: blanks their key details (`hearing_share_failed_is_empty_ck`) and drops them from consumers' searches while they wait. Amending the constitution first, in T001: the wording should describe what was built and tested; T011 checks it against the code |
-| Constitution VII as checked in (2.1.0) says *every request is audited*. FR-045 counts refusals before the audit filter (`401`, `403`, `404`, `405`, `415`) and does not audit them. The VII PASS above rests on spec 003's 2.2.0 wording (*every request that reaches an endpoint is audited; refusals before authorisation are counted*), which exists only once 003's T012 lands and Sachin accepts D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED (both pending Sachin) | The audit library sits after authorisation, so a refused request never reaches it; counting refusals keeps them visible without a second audit path | If Sachin refuses either decision, refusals must be audited by a filter of our own before authorisation. Then FR-045, contracts/operations-api.md §2.4 and T009's `AuditIT` case `a_403_on_an_operations_route_should_publish_nothing` change: the case becomes "a `403` on an operations route should publish one refusal event", and that filter is added to T009 |

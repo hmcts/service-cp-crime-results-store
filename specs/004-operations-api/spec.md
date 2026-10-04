@@ -5,11 +5,11 @@
 **Status**: Draft
 **Input**: User description: "Operations API: the support endpoints under /operations that let Second Line Support re-run extraction, see the sweep's state, look up receipts and read a daily reconciliation, without ever seeing a payload"
 
-**Sources**: the Results Store design page (CRA 321061800), sections *Operations API*, *Data model and versioning*, *Reconciliation*, *Security* and *Observability*; the design review of spec 004 and its critique, with the orchestrator's rulings on both (2026-10-03, sections A, C and D), which win where they differ from the design; the fact-finding report on the store's read side (this repository at `c21a901`); specs 001 (*Share intake*), 002 (*Enrichment*) and 003 (*Read API*, as written on branch `003-read-api` at `b74c43b`), whose web edge, error shape, names and migration V5 this spec builds on. Quotes in *italics* are the design page's or the rulings' wording.
+**Sources**: the Results Store design page (CRA 321061800), sections *Operations API*, *Data model and versioning*, *Reconciliation*, *Security* and *Observability*; the design review of spec 004 and its critique, with the orchestrator's rulings on both (2026-10-03, sections A, C and D) and the decisions taken with Sachin for spec 003 (section E), which win where they differ from the design; the fact-finding report on the store's read side (this repository at `c21a901`); specs 001 (*Share intake*), 002 (*Enrichment*) and 003 (*Read API*, as built and merged to `main` at `8ea9980`), whose web edge, error shape, contract repository, names and migration V5 this spec builds on. Class and file names are those of the built code. Quotes in *italics* are the design page's or the rulings' wording.
 
 ### Scope
 
-**In scope.** Four endpoints under `/operations`: a request to re-run extraction for a set of shares, the extraction status, a receipts lookup, and a daily reconciliation. The extraction sweep working rerun requests, which rewrites an `OK` share's key details in place from its stored working copy. Migration V6: the two rerun tables, the sweep's last round per pod, a replaced share guard that lets an `OK` row change only while a pending rerun names it, and the indexes the operations reads need. Four allow rules for "Second Line Support". Metrics. The support contract (`contracts/operations-api.md`). An end-to-end check through the compose stack. Documentation changes, performed as the last task: constitution 2.3.0 (Principle I), design rules, spec 001 forward notes, spec 003's consumer contract on values that change in place, forward notes for the page owner and the consumer teams.
+**In scope.** Four endpoints under `/operations`: a request to re-run extraction for a set of shares, the extraction status, a receipts lookup, and a daily reconciliation. The extraction sweep working rerun requests, which rewrites an `OK` share's key details in place from its stored working copy. Migration V6: the two rerun tables, the sweep's last round per pod, a replaced share guard that lets an `OK` row change only while a pending rerun names it, and the indexes the operations reads need. Four allow rules for "Second Line Support". Metrics. The support contract (`contracts/operations-api.md`) and its machine-readable form: the four paths are added first to the contract repository `hmcts/api-cp-crime-results-store`, as spec 003 did, mirrored in the service's `results-store-openapi.yaml`, and released as `v0.3.0` (D-OPS-CONTRACT, pending Sachin). An end-to-end check through the compose stack. Documentation changes, performed as the last task: constitution 2.3.0 (Principle I), design rules, spec 001 forward notes, spec 003's consumer contract on values that change in place, forward notes for the page owner and the consumer teams.
 
 **Out of scope.**
 
@@ -170,14 +170,14 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
   - a `Content-Type` other than JSON with `415 unsupported_content_type`;
   - any query parameter with `400 unknown_parameter`.
 - **FR-006**: The body MUST name exactly one selector: a stored range (`storedFrom` and `storedTo`), `hearingIds`, or `shareIds`. None, or more than one, MUST give `400 selector_not_exactly_one`. For this check either of `storedFrom` and `storedTo` alone counts as the stored-range selector, and this check runs before the range checks of FR-007. So `storedFrom` with `hearingIds` gives `selector_not_exactly_one`, and `storedFrom` alone gives `range_invalid`.
-- **FR-007**: A stored range MUST be two RFC 3339 instants with an offset and at most six fraction digits, read as the half-open range [`storedFrom`, `storedTo`) of `storedAt`, with `storedFrom` before `storedTo`, and `storedTo` at or before the database's current time minus the read API's visibility lag (003 FR-017). Any breach, or only one of the two fields, MUST give `400 range_invalid`. A span longer than `resultsstore.operations.rerun.max-range` (default 31 days) MUST give `400 range_too_long`. The contract MUST say why: a share stored inside the lag may still be committing, and a range that ended before it can no longer gain a share.
+- **FR-007**: A stored range MUST be two RFC 3339 instants with an offset and at most six fraction digits, read as the half-open range [`storedFrom`, `storedTo`) of `storedAt`, with `storedFrom` before `storedTo`, and `storedTo` at or before the database's current time minus the read API's effective visibility lag (003 FR-017: 90 seconds at the intake defaults). Any breach, or only one of the two fields, MUST give `400 range_invalid`. A span longer than `resultsstore.operations.rerun.max-range` (default 31 days) MUST give `400 range_too_long`. The contract MUST say why: a share stored inside the lag may still be committing, and a range that ended before it can no longer gain a share.
 - **FR-008**: `hearingIds` MUST hold 1 to `max-hearing-ids` (default 200) canonical UUIDs, duplicates removed, and select every share of every day of those hearings. An empty or longer list MUST give `400 hearing_ids_out_of_range`; a bad id `400 invalid_hearing_id`.
 - **FR-009**: `shareIds` MUST hold 1 to `max-share-ids` (default 1,000) canonical UUIDs, duplicates removed. An empty or longer list MUST give `400 share_ids_out_of_range`; a bad id `400 invalid_share_id`. Ids the store does not hold MUST be counted in `unknownShareIds`, not refused.
 - **FR-010**: `reason` MUST be present and, trimmed, 10 to 500 characters with no control characters; otherwise `400 invalid_reason`. It MUST be stored with the request and MUST never be logged, returned, or used in a metric.
 - **FR-011**: The operator MUST be the request's `CJSCPPUID`, a canonical UUID. The rerun endpoint MUST itself refuse a missing or malformed `CJSCPPUID` with `401 unauthenticated`, so it never stores a request with no operator, even where authorisation is off. The operator id MUST never be logged or returned.
 - **FR-012**: A selector that matches more than `max-matched` shares (default 200,000) MUST give `400 selector_too_wide`, with nothing written.
 - **FR-013**: An accepted request MUST answer `202` with `{ rerunId, status, selectorKind, matched, queued, alreadyPending, unknownShareIds, repeat }`. `queued` MUST equal `matched` minus `alreadyPending`. A share already pending under another open request MUST NOT be queued again. A request that matches no share MUST be stored `DONE` at once and answer `status` `DONE`.
-- **FR-014**: Writing a request MUST touch only the rerun tables, all or nothing, in one transaction with its own checked timeouts. `matched` and `queued` MUST be counted by the same statements that insert the items, in chunks of `chunk-size` (default 5,000) shares in `shareId` order.
+- **FR-014**: Writing a request MUST touch only the rerun tables, all or nothing, in one transaction with its own checked timeouts, set inside the transaction (so there they replace the pool's backstop statement timeout, 003 FR-062). `matched` and `queued` MUST be counted by the same statements that insert the items, in chunks of `chunk-size` (default 5,000) shares in `shareId` order.
 - **FR-015**: The selector MUST be put in a canonical form (ids lower-case, sorted, duplicates removed; instants in UTC with six fraction digits) and hashed with SHA-256. While a request with the same hash is `OPEN`, a new post MUST answer `202` with that request's id and stored counts and `repeat` true, writing nothing; its reason MUST NOT be stored. Once the request is `DONE`, the same selector MUST create a new request. If the open request closes between the store's insert and its look-up, the store MUST try the insert once more.
 - **FR-016**: Two identical requests posted at the same moment MUST leave exactly one open request.
 
@@ -255,21 +255,22 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
   - a known path with another method, `HEAD` and `OPTIONS` included, gives `405 method_not_allowed` with `Allow`;
   - `multipart/*` gives `415 unsupported_content_type`;
   - a caller's `CPP-ACTION` is overwritten, and vendor media types are answered as `application/json`;
-  - the service refuses to start with authorisation off outside the test profile (003 FR-050; D-AUTHZ-REQUIRED, pending Sachin).
-- **FR-045**: Every operations request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`; refusals before the audit filter MUST be counted, not audited (D-REFUSALS-UNAUDITED, D-VII-AUDIT-WORDING, pending Sachin). Whether the library records the rerun request's body (and so the reason) has not been verified; a test MUST pin what it does, and the OpenAPI description MUST tell operators the reason must hold no personal data.
+  - a request target the HTTP connector rejects gets `400 bad_request` from the host's error report, counted `connector_rejected`;
+  - the service refuses to start with authorisation off outside the test profile (003 FR-050; decided with Sachin for 003, E12).
+- **FR-045**: Every operations request that reaches an endpoint MUST be audited by `cp-audit-filter-springboot`; refusals before the audit filter MUST be counted, not audited (003 FR-051 and constitution VII 2.2.0; decided with Sachin for 003, E13). The operations actions are not payload routes: spec 003's audit override (`PayloadBodyFreeAuditPayloadGenerationService`) replaces the body only for the two payload actions, so an operations response event holds the response body as the library copies it (ids, counts, times, bounded codes). Whether the library records the rerun request's body (and so the reason) has not been verified: 003's `AuditIT` found that a request event carries the caller, the correlation id, the query and path parameters and the body, but every 003 route is a `GET` with no body. A test MUST pin what it does with a `POST` body, and the OpenAPI description MUST tell operators the reason must hold no personal data.
 
 **Errors**
 
-- **FR-046**: Every `4xx` and `5xx` MUST be spec 003's four-field body (003 FR-042) with `reason` from the list in `contracts/operations-api.md`; a database that cannot answer MUST give `503 store_unavailable` with `Retry-After`; any other failure `500 internal_error`, logged by exception class only.
-- **FR-047**: Every operations read MUST run with a query timeout (`resultsstore.operations.statement-timeout`, default 10 seconds) below the driver's socket timeout.
+- **FR-046**: Every `4xx` and `5xx` MUST be spec 003's four-field body (003 FR-042) with `reason` from the list in `contracts/operations-api.md` (`ProblemReason` and the contract's shared `ProblemDetail.reason` list both gain the operations reasons); a database that cannot answer MUST give `503 store_unavailable` with `Retry-After`; any other failure `500 internal_error`, logged by exception class only.
+- **FR-047**: Every operations read MUST run with a query timeout (`resultsstore.operations.statement-timeout`, default 10 seconds) below the driver's socket timeout. Every pooled connection also carries spec 003's server-side backstop (003 FR-062: `resultsstore.intake.store.statement-timeout`, 10 seconds), so an autocommit read never runs longer than the smaller of the two.
 
 **Schema**
 
-- **FR-048**: Migration V6 MUST add the tables `extraction_rerun`, `extraction_rerun_item` and `sweep_round`, their checks, guards and indexes, the replaced share guard (FR-029), and three indexes for the operations reads: receipts by first arrival, receipts still `RECEIVED` by last delivery, and shares by `stored_at`. V1 to V5 MUST NOT be edited.
+- **FR-048**: Migration V6 MUST add the tables `extraction_rerun`, `extraction_rerun_item` and `sweep_round`, their checks, guards and indexes, the replaced share guard (FR-029), and three indexes for the operations reads: receipts by first arrival, receipts still `RECEIVED` by last delivery, and shares by `stored_at`. V1 to V5 MUST NOT be edited. V6 replaces V3's `hearing_share_guard()`, its only earlier definition (V4 and V5 do not touch it); V5's `BEFORE INSERT` trigger `hearing_share_stored_at_tg` stays as it is and never fires on the `UPDATE` the guard checks.
 
 **Metrics**
 
-- **FR-049**: The service MUST publish `resultsstore.operations.rerun.requests{selector,result}`, `resultsstore.operations.rerun.shares.queued{selector}`, `resultsstore.operations.refused{endpoint,reason}`, `resultsstore.sweep.rerun.rows{outcome}`, `resultsstore.sweep.rerun.requests.finished` and `resultsstore.sweep.round.record.failed`, with every tag value from a fixed list, all registered at start whatever `resultsstore.publicevents.enabled` says.
+- **FR-049**: The service MUST publish `resultsstore.operations.rerun.requests{selector,result}`, `resultsstore.operations.rerun.shares.queued{selector}`, `resultsstore.operations.refused{endpoint,reason}`, `resultsstore.sweep.rerun.rows{outcome}`, `resultsstore.sweep.rerun.requests.finished` and `resultsstore.sweep.round.record.failed`, with every tag value from a fixed list, all registered at start whatever `resultsstore.publicevents.enabled` says. Spec 003's `resultsstore.read.refused{reason}` MUST keep counting the edge's refusals on `/operations` paths too, with its reasons as built (`RouteRefusal`: `route_not_found`, `method_not_allowed`, `unsupported_content_type`, `unauthenticated`, `forbidden`, `connector_rejected`).
 
 **Configuration**
 
@@ -277,12 +278,16 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 
 **Documentation (performed by the last task, not now)**
 
-- **FR-051**: The constitution MUST gain a MINOR bump: 2.3.0, or the next free MINOR after spec 003's amendments (D-PRINCIPLE-I-BUMP, pending Sachin), with Principle I saying that the sweep re-reads an `OK` share only while a pending rerun item names it, that the share stays `OK`, that its extraction never goes back, and that a `true` youth subject stays `true`.
+- **FR-051**: The constitution MUST gain a MINOR bump, 2.2.0 → 2.3.0 (D-PRINCIPLE-I-BUMP, pending Sachin), with Principle I saying that the sweep re-reads an `OK` share only while a pending rerun item names it, that the share stays `OK`, that its extraction never goes back, and that a `true` youth subject stays `true`.
 - **FR-052**: The design rules, spec 001's forward references ("`OK` is final in 001", "marking rows for a rerun is spec 004"), spec 003's consumer contract (values that change in place) and the page notes MUST be brought in line; the design page itself is not edited.
 
 **End to end**
 
 - **FR-053**: The container smoke check MUST, as a "Second Line Support" caller, read the status, look up the stored share's receipts, read today's reconciliation, post a rerun for the stored share and see a repeat, then wait for the item to be done with the share still `OK`; and MUST see `403` for a "System Users" caller, `401` with no identity and `404` for an unmapped operations path.
+
+**Contract**
+
+- **FR-054**: The operations API's OpenAPI contract MUST be published from the contract repository first, as the read API's is (003 FR-063; D-OPS-CONTRACT, pending Sachin, default shown): the four operations added to `hmcts/api-cp-crime-results-store` under the tag `operations`, so the same jar gains a generated `OperationsApi` and its models, and the shared `ProblemDetail.reason` list gains the operations reasons. The service MUST take it as a `rs-<sha7>` draft while 004 is built, MUST mirror it in `results-store-openapi.yaml` (003's `OpenApiContractDriftTest`), and MUST serve it with one controller, `OperationsController implements OperationsApi`. The contract MUST be released as `v0.3.0` at the end of 004, and the service MUST NOT release on a draft (`validateApiSpecVersions`).
 
 ### Changes to spec 001, spec 002 and spec 003
 
@@ -294,7 +299,8 @@ Operators see rerun requests accepted and repeated, shares queued, every rerun i
 - **001 `research.md`** ("ShedLock not used; spec 004 can add it if its status endpoint needs a 'last run' row"): honoured without ShedLock; each pod records its own last round.
 - **002**: no change. The sweep's re-read uses `payloadForExtraction` as built (002 FR-033).
 - **003 `contracts/read-api.md` §5.5** (*Values that change in place*): gains the rerun's rules (held `false` to `true`; unknown to `false` or `true` written; a day may leave or join the `notFalse` view; `projectionVersion` and `projectedAt`).
-- **003 code**: `ApiRoute` gains four routes and its endpoint tag widens to cover operations endpoints; `ProblemReason` gains the operations reasons; the advice maps an unsupported request media type to `415 unsupported_content_type`; `ReadMetricsInterceptor` ignores operations routes. 003's read endpoints behave exactly as before.
+- **003 code**: `ApiRoute` gains four routes, a method per route (every 003 route is `GET`) and an endpoint tag widened to a sealed `RouteEndpoint` (`ReadEndpoint` or the new `OperationsEndpoint`); `ProblemReason` gains the operations reasons; `ReadApiExceptionHandler`, the service's one `@RestControllerAdvice`, maps an unsupported request media type to `415 unsupported_content_type` and counts operations refusals; `ReadMetricsInterceptor` and the advice's no-handler count record read routes only; `ShareParameters` and the tests that iterate over every `ApiRoute` are narrowed to the read routes. 003's read endpoints behave exactly as before.
+- **003 contract**: the contract repository and jar gain the operations (FR-054); `results-store-openapi.yaml`'s description stops saying that every caller may be in either group.
 
 ### Key Entities *(include if feature involves data)*
 
@@ -339,17 +345,27 @@ Each is applied with its default in every 004 document and marked "pending Sachi
 | D-SWEEP-ROUND | Shape of the sweep's last-round record | One row per pod, upserted, rows older than a day dropped (FR-032) | One row per round (a history, about 288 rows a day per pod, with no purge until retention exists) |
 | D-RERUN-ERASURE | Can the rerun tables be erased? | No delete guard; erasure is deferred to the retention spec. The reason may hold staff-typed text; the operator id identifies a member of staff (FR-030) | Delete-guard them for ever (a later erasure must drop the triggers) |
 | D-PRINCIPLE-I-BUMP | Is rewriting an `OK` share in place a MINOR amendment? | Yes: 2.2.0 to 2.3.0, a new freedom stated in Principle I (FR-051) | A PATCH clarification (rejected by the critique: it changes what a stored version means to consumers) |
-| D-AUTHZ-REQUIRED | Refuse to start with authorisation off outside the test profile? | Yes (spec 003 FR-050); the rerun endpoint also refuses a missing operator itself (FR-011) | Allow it |
-| D-VII-AUDIT-WORDING | Constitution VII audit wording | Spec 003's 2.2.0 wording: *every request that reaches an endpoint is audited; a request refused by a filter or by authorisation is counted* (FR-045) | Keep "every request is audited" and audit refusals another way |
-| D-REFUSALS-UNAUDITED | Accept that refused operations requests are counted, not audited | Yes (FR-045) | Audit them with a filter of our own before authorisation |
-| D-LAG-VALUE | The visibility lag (spec 003) | 110 s; a stored range must end before it (FR-007) | 91 s |
+| D-OPS-CONTRACT | Where is the operations API's OpenAPI contract published? | The same contract repository and jar as the read API, `hmcts/api-cp-crime-results-store`: the four paths under the tag `operations` (generated `OperationsApi`), the shared `ProblemDetail` reasons widened, released as `v0.3.0`; the service's document mirrors it; one `OperationsController implements OperationsApi` (FR-054) | A second repository, `api-cp-crime-results-store-operations`, with its own jar, version gate, drift test and its own `ProblemDetail` model (two problem models for the one advice) |
 | D-PG-VERSION / HA | Production PostgreSQL version and table sizes at deploy | Unknown; V6 builds three indexes without `CONCURRENTLY`, which is fine before volume builds up (plan.md *Risks*) | Build them `CONCURRENTLY` outside Flyway's transaction |
+
+### Decided before 004 (spec 003, with Sachin, 2026-10-03)
+
+These were pending when 004 was first written. They are now settled and 004 takes them as given.
+
+| Id | Decision | Where 004 uses it |
+|---|---|---|
+| D-LAG-VALUE | **90 seconds** (ruling E3): intake statement timeout 10 s, lock timeout 5 s, idle-in-transaction 10 s, transaction 60 s; lag = 60 + 2 × 10 + 10 | A stored range must end at least the effective lag before now (FR-007); the reconciliation's note on shares still committing (FR-041) |
+| D-AUTHZ-REQUIRED | Yes (E12; 003 FR-050) | An assumption below; the rerun still refuses a missing operator itself (FR-011) |
+| D-VII-AUDIT-WORDING, D-REFUSALS-UNAUDITED | Accepted (E13; constitution VII 2.2.0) | An assumption below; FR-045 |
 
 ## Assumptions
 
 Settled choices from the rulings, spec 003 and the design, stated so they are visible:
 
-- Spec 003 lands first. 004 reuses its action filter, route table, `415` guard, bounded error body and `/error` page, `ProblemReason`, `BadParameterException`, the instant format, `OpenApiContractTest`, the Testcontainers and WireMock test pattern, and its effective visibility lag. Its names are used as 003's documents give them.
+- Spec 003 is built and merged (`main` at `8ea9980`). 004 reuses its action filter, route table, `415` guard, bounded error body, `/error` page and connector error report, `ProblemReason`, `BadParameterException`, the instant format, the contract jar with `OpenApiContractDriftTest` and `OpenApiContractTest`, the Testcontainers, real-server and WireMock test pattern (`support/UsersGroupsStub`), and its effective visibility lag (90 seconds). Names are the built code's.
+- Authorisation is required outside the test profile (003 FR-050; decided with Sachin, E12; formerly D-AUTHZ-REQUIRED here).
+- Constitution VII 2.2.0 is in the tree: every request that reaches an endpoint is audited; a request refused by a filter, by the connector or by authorisation is counted (decided with Sachin, E13; formerly D-VII-AUDIT-WORDING and D-REFUSALS-UNAUDITED here).
+- Every read-API rule admits both "System Users" and "Second Line Support" (003 FR-049); 004 adds no read rule and changes none.
 - Action names are kebab verb-noun with the `results-store-operations.` prefix; a known path with the wrong method gives `405` (D-METHOD, settled in 003).
 - Reason codes follow 003's style (`unknown_parameter`, `invalid_hearing_id`), not the design review's draft codes.
 - A rerun is a request the sweep works, never a write to shares at request time (ruling C1). Only the sweep writes key details, as Principle I already requires.
@@ -357,6 +373,6 @@ Settled choices from the rulings, spec 003 and the design, stated so they are vi
 - The receipts lookup with no match is an empty list, not `404`: it is a query, not a resource.
 - The status lists the 20 most recent requests whatever their state, so a finished request's outcomes stay visible.
 - The operator id is stored as a UUID, as every `CJSCPPUID` on the estate is one.
-- Operations response bodies hold ids, counts, times and bounded codes only, so spec 003's D-AUDIT override (payload routes only) does not touch them.
+- Operations response bodies hold ids, counts, times and bounded codes only. Spec 003's audit override keys on the derived action and lists only the two payload actions, so operations events are the library's own.
 - Every query is a fixed constant with bound parameters; nothing is built from input.
 - V6 uses plain `CREATE INDEX` because it deploys before go-live.

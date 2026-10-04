@@ -246,16 +246,18 @@ the `CONCURRENTLY` fallback is in plan.md *Risks*.
 | The fixed-columns branch of `hearing_share_guard` | byte-identical to V3 (`OperationsSchemaIT` re-runs V3's fixed-column refusals) |
 | `share_defendant_guard_tg` (insert-only) | unchanged: the rerun adds missing rows with `ON CONFLICT DO NOTHING`, never removes |
 | `hearing_share_payload_guard_tg` | unchanged |
-| V5's trigger and indexes | unchanged |
+| V5's trigger and indexes | unchanged. `hearing_share_stored_at_tg` is `BEFORE INSERT` and sets only `stored_at`; the guard V6 replaces runs `BEFORE UPDATE` (`hearing_share_guard_tg`, V3), so the two never fire on the same event. V3's function is the only earlier definition of `hearing_share_guard()`: V4 and V5 do not replace it. `hearing_share_stored_at_ix` (V6) is a new name beside V5's `hearing_share_youth_feed_ix`, `hearing_share_centre_feed_ix` and `hearing_share_centre_shared_at_ix` |
 
 ## Rerun request: the statements (shape; the constants live in `JdbcRerunRequests`)
 
 One transaction (`resultsstore.operations.rerun.request.*` timeouts, set with `set_config(..., TRUE)` as
-`JdbcShareStore` does). Before it, one autocommit read looks for an open request with the same hash; if
+`JdbcShareStore` does; inside this transaction they replace the pool's backstop `statement_timeout`,
+003 FR-062). Before it, one autocommit read looks for an open request with the same hash; if
 there is one, the answer is a repeat and nothing else runs.
 
-1. Stored range only: `SELECT now() - make_interval(secs => :lagSeconds) >= :storedTo`. False → the
-   transaction ends with "range not settled" (`400 range_invalid`).
+1. Stored range only: `SELECT now() - make_interval(secs => :lagSeconds) >= :storedTo`, where
+   `:lagSeconds` is spec 003's effective visibility lag (the `VisibilityLag` bean; 90 s at the
+   defaults). False → the transaction ends with "range not settled" (`400 range_invalid`).
 2. Chunks, until a chunk matches fewer than `chunk-size` rows:
 
    ```sql
@@ -461,6 +463,13 @@ first_received_at, message_id LIMIT 51`, and a `count(*)` with the same predicat
 | `RerunCandidate` | `application/` | a claimed item: rerun id, share id, hearing id and day, attempts |
 | `ExtractionCounts`, `RerunOverview`, `RecentRerun`, `SweepRoundView`, `ReceiptView`, `DailyCounts`, `R1Finding` | `application/` | the operations reads' answers |
 | `SweepRoundRecord` | `application/` | what a round reports: pod, version, length, counts |
+
+The HTTP shapes are not hand-written: they are the contract jar's generated models
+(`uk.gov.hmcts.cp.resultsstore.openapi.model`: `RerunRequest`, `RerunAccepted`, `ExtractionStatus`,
+`Receipts`, `Receipt`, `DailyReconciliation` and their nested types; research R23). Some share a simple
+name with an application record (`RerunRequest`, `RerunAccepted`, `ExtractionStatus`,
+`DailyReconciliation`); `api/OperationsResponseMapper` names one side by its full name, as 003's
+`ShareResponseMapper` does for `PullPage` and `SearchPage`.
 
 ## Invariants the tests hold
 
