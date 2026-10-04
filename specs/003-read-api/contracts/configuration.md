@@ -114,7 +114,8 @@ resultsstore:
     `IntakeConfig`'s for the intake statement timeout.
 - Messages name properties, never values from the environment.
 - The read statement timeout is applied as the read `JdbcTemplate`'s query timeout, in whole seconds rounded
-  up (`1500ms` runs as 2 s; never 0, which would be no timeout). The read template is built inside the
+  up (`1500ms` runs as 2 s; never 0, which would be no timeout). The socket-timeout rule compares that
+  rounded value, so `29500ms` under a 30 s socket timeout is refused (it would run as 30 s). The read template is built inside the
   `JdbcShareQueries` bean, not exposed as a bean: a second `JdbcTemplate` bean would make Boot's own back off
   and put the read timeout under intake's `JdbcClient`.
 

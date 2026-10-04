@@ -52,8 +52,9 @@ public class ReadApiConfig {
             Rules.atMost(VISIBILITY_LAG, set, "10 minutes", MOST_LAG);
         }
         final Integer socketSeconds = environment.getProperty(SOCKET_TIMEOUT, Integer.class);
+        // The timeout the read template actually enforces (rounded up to whole seconds) is the one compared.
         if (socketSeconds != null && socketSeconds > 0
-                && read.statementTimeout().compareTo(Duration.ofSeconds(socketSeconds)) >= 0) {
+                && queryTimeoutSeconds(read.statementTimeout()) >= socketSeconds) {
             throw new IllegalStateException("resultsstore.read.statement-timeout must be below " + SOCKET_TIMEOUT);
         }
         this.lag = new VisibilityLag(set == null ? bound : set);
@@ -89,9 +90,13 @@ public class ReadApiConfig {
      */
     /* default */ static JdbcTemplate readTemplate(final DataSource dataSource, final Duration statementTimeout) {
         final JdbcTemplate template = new JdbcTemplate(dataSource);
-        // Whole seconds, rounded up so a part second never becomes no timeout at all.
-        final long millis = statementTimeout.toMillis();
-        template.setQueryTimeout(Math.toIntExact(Math.max(1, (millis + 999) / 1000)));
+        template.setQueryTimeout(queryTimeoutSeconds(statementTimeout));
         return template;
+    }
+
+    /** The JDBC query timeout for a statement timeout: whole seconds, rounded up so a part second is never none. */
+    private static int queryTimeoutSeconds(final Duration statementTimeout) {
+        final long millis = statementTimeout.toMillis();
+        return Math.toIntExact(Math.max(1, (millis + 999) / 1000));
     }
 }

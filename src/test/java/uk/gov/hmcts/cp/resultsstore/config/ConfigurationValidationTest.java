@@ -375,6 +375,8 @@ class ConfigurationValidationTest {
         resultsstore.read.statement-timeout=0s | resultsstore.read.statement-timeout must be above zero
         resultsstore.read.statement-timeout=30s | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
         resultsstore.read.statement-timeout=31s | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
+        resultsstore.read.statement-timeout=29500ms | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
+        resultsstore.read.statement-timeout=29001ms | resultsstore.read.statement-timeout must be below spring.datasource.hikari.data-source-properties.socketTimeout
         """)
     void a_read_statement_timeout_of_zero_or_at_the_socket_timeout_should_stop_the_service(final String setting,
             final String refusal) {
@@ -385,6 +387,9 @@ class ConfigurationValidationTest {
     @Test
     void a_read_statement_timeout_below_the_socket_timeout_or_with_none_should_be_accepted() {
         runner.withPropertyValues("resultsstore.read.statement-timeout=29s")
+                .run(context -> assertThat(context).hasNotFailed());
+        // 28.5 s is enforced as 29 s, still below the default 30 s socket timeout.
+        runner.withPropertyValues("resultsstore.read.statement-timeout=28500ms")
                 .run(context -> assertThat(context).hasNotFailed());
         runner.withPropertyValues("spring.datasource.hikari.data-source-properties.socketTimeout=0",
                         "resultsstore.read.statement-timeout=45s")
