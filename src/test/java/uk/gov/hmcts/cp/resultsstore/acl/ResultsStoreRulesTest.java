@@ -39,6 +39,8 @@ class ResultsStoreRulesTest {
 
     private static final String SECOND_LINE_SUPPORT = "Second Line Support";
 
+    private static final String SAMPLE_SHARE_ID = "6f1c2a3b-0d4e-5f60-8a7b-9c0d1e2f3a4b";
+
     private static KieBuilder builder;
 
     private static KieContainer container;
@@ -138,6 +140,21 @@ class ResultsStoreRulesTest {
         assertThat(fire(both, route.action(), "GET", anotherRoutesPath(route)).allowed()).isFalse();
         assertThat(fire(both, route.action(), "GET", samplePath(route) + "/extra").allowed()).isFalse();
         assertThat(fire(both, route.action(), "GET", "/prefix" + samplePath(route)).allowed()).isFalse();
+    }
+
+    /** The arrived text's rule (phase D): both groups, its own path, and not the payload's path. */
+    @Test
+    void the_arrived_payload_action_should_be_allowed_on_its_own_path_for_both_groups_only() {
+        final String action = "results-store.get-share-arrived-payload";
+        final String arrived = "/results-store/v1/shares/" + SAMPLE_SHARE_ID + "/payload/arrived";
+
+        assertThat(fire(new Caller(SYSTEM_USERS), action, "GET", arrived).allowed()).isTrue();
+        assertThat(fire(new Caller(SECOND_LINE_SUPPORT), action, "GET", arrived).allowed()).isTrue();
+        assertThat(fire(new Caller("Other Group"), action, "GET", arrived).allowed()).isFalse();
+        assertThat(fire(new Caller(SYSTEM_USERS), action, "GET",
+                "/results-store/v1/shares/" + SAMPLE_SHARE_ID + "/payload").allowed()).isFalse();
+        assertThat(fire(new Caller(SYSTEM_USERS), "results-store.get-share-payload", "GET", arrived).allowed())
+                .isFalse();
     }
 
     @Test

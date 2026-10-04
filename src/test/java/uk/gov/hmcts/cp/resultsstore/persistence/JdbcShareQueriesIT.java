@@ -634,12 +634,37 @@ class JdbcShareQueriesIT {
                     .isEqualTo(PayloadChecksum.sha256Hex(text));
         }
 
+        /** Phase D: {@code payload_text} as stored, whatever the working copy, with the identity columns. */
+        @Test
+        void arrived_text_should_return_payload_text_with_the_identity_columns() {
+            final String text = SampleShares.shareWithApplication(UUID.randomUUID(), "2026-10-02",
+                    "2026-10-02T14:19:50.706Z", UUID.randomUUID().toString());
+            final String messageId = "ID:" + UUID.randomUUID();
+            receipts.recordArrival(SampleShares.arrival(messageId, text));
+            final StoreRequest request = SampleShares.enrichedRequest(messageId, text,
+                    SampleShares.finalised("Conditional discharge"));
+            store.store(request);
+
+            final StoredPayload arrived = present(queries.arrivedText(request.shareId()));
+
+            assertThat(request.enrichmentApplied()).as("the working copy was enriched").isTrue();
+            assertThat(arrived.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
+            assertThat(PayloadChecksum.sha256Hex(arrived.body())).as("body hash")
+                    .isEqualTo(PayloadChecksum.sha256Hex(text));
+            assertThat(arrived.shareId()).isEqualTo(request.shareId());
+            assertThat(arrived.hearingId()).isEqualTo(request.identity().hearingId());
+            assertThat(arrived.hearingDay()).isEqualTo(LocalDate.parse("2026-10-02"));
+            assertThat(arrived.sharedTime()).isEqualTo(Instant.parse("2026-10-02T14:19:50.706Z"));
+            assertThat(arrived.enrichmentApplied()).isTrue();
+        }
+
         @Test
         void an_unknown_share_payload_or_day_should_be_empty() {
             insert(row().sharedAt("2026-10-02T10:00:00Z"));
 
             assertThat(queries.share(UUID.randomUUID())).isEmpty();
             assertThat(queries.payload(UUID.randomUUID())).isEmpty();
+            assertThat(queries.arrivedText(UUID.randomUUID())).isEmpty();
             assertThat(queries.dayVersions(UUID.randomUUID(), LocalDate.parse("2026-10-02"))).isEmpty();
         }
 

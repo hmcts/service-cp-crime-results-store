@@ -8,11 +8,11 @@ import org.springframework.http.ResponseEntity;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 
 /**
- * The payload's {@code 200} (FR-033 to FR-037; research R10, R11): the exact bytes as a {@code byte[]}, written by
- * {@code ByteArrayHttpMessageConverter}, never parsed or re-written; a strong {@code ETag} over them, from which
- * Spring answers {@code If-None-Match} with a {@code 304} carrying exactly one {@code ETag}; the store's own facts
- * as {@code Results-Store-*} headers; {@code Cache-Control: no-store}; {@code Content-Type: application/json}
- * with no charset; a {@code Content-Length} of the byte count.
+ * The payload's and the arrived text's {@code 200} (FR-033 to FR-037, FR-041; research R10, R11, R19): the
+ * exact bytes as a {@code byte[]}, written by {@code ByteArrayHttpMessageConverter}, never parsed or re-written; a
+ * strong {@code ETag} over them, from which Spring answers {@code If-None-Match} with a {@code 304} carrying
+ * exactly one {@code ETag}; the store's own facts as {@code Results-Store-*} headers; {@code Cache-Control:
+ * no-store}; {@code Content-Type: application/json} with no charset; a {@code Content-Length} of the byte count.
  */
 public final class PayloadResponses {
 

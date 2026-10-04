@@ -25,8 +25,9 @@ public class PayloadBodyFreeAuditPayloadGenerationService extends AuditPayloadGe
     /** What the payload endpoints' response event carries in place of the body. */
     public static final String MARKER = "{\"payloadOmitted\":true}";
 
-    /** The actions whose response body is the payload. */
-    private static final Set<String> PAYLOAD_ACTIONS = Set.of(ApiRoute.GET_SHARE_PAYLOAD.action());
+    /** The actions whose response body is the payload: the working copy and the text as it arrived. */
+    private static final Set<String> PAYLOAD_ACTIONS = Set.of(ApiRoute.GET_SHARE_PAYLOAD.action(),
+            ApiRoute.GET_SHARE_ARRIVED_PAYLOAD.action());
 
     /**
      * Creates the builder.

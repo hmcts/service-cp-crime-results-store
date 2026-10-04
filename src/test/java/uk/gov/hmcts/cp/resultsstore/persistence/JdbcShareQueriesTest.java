@@ -25,6 +25,14 @@ class JdbcShareQueriesTest {
         assertThat(JdbcShareQueries.PAYLOAD_SQL).contains(PAYLOAD_TABLE).contains("payload_json - '_metadata'");
     }
 
+    /** Phase D: the arrived query reads {@code payload_text} only, never the working copy or the checksum. */
+    @Test
+    void the_arrived_constant_should_read_payload_text_and_never_payload_sha256_or_payload_json() {
+        assertThat(JdbcShareQueries.ARRIVED_SQL).contains(PAYLOAD_TABLE).contains("p.payload_text AS body")
+                .doesNotContain("payload_sha256").doesNotContain("payload_json");
+        assertThat(JdbcShareQueries.PAYLOAD_SQL).doesNotContain("payload_sha256");
+    }
+
     @Test
     void the_variant_table_should_cover_every_day_youth_filter_and_court_combination() {
         final List<String> pulls = new ArrayList<>();

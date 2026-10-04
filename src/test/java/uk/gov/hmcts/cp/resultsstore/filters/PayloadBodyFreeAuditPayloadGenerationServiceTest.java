@@ -40,11 +40,11 @@ class PayloadBodyFreeAuditPayloadGenerationServiceTest {
         return new ResponseInfo("", Map.of("CJSCPPUID", USER, headerName, action), BODY);
     }
 
-    @Test
-    void the_payload_routes_should_be_replaced_by_the_marker() {
+    @ParameterizedTest
+    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"})
+    void the_payload_routes_should_be_replaced_by_the_marker(final ApiRoute route) {
         for (final String headerName : new String[] {"CPP-ACTION", "cpp-action"}) {
-            final AuditPayload payload = service.generatePayload(response(headerName,
-                    ApiRoute.GET_SHARE_PAYLOAD.action()));
+            final AuditPayload payload = service.generatePayload(response(headerName, route.action()));
 
             assertThat(payload.content().path("payloadOmitted").asBoolean()).isTrue();
             assertThat(payload.content().toString()).doesNotContain("zz-payload-zz").doesNotContain("hearing");
@@ -54,7 +54,8 @@ class PayloadBodyFreeAuditPayloadGenerationServiceTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = "GET_SHARE_PAYLOAD", mode = EnumSource.Mode.EXCLUDE)
+    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"},
+            mode = EnumSource.Mode.EXCLUDE)
     void every_other_route_should_be_left_to_the_library(final ApiRoute route) {
         final ObjectNode ours = service.generatePayload(response("CPP-ACTION", route.action())).content();
         final ObjectNode theirs = library.generatePayload(response("CPP-ACTION", route.action())).content();

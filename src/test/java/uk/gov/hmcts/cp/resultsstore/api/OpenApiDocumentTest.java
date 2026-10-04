@@ -45,6 +45,8 @@ class OpenApiDocumentTest {
 
     private static final String PROBLEM_SCHEMA = "#/components/schemas/ProblemDetail";
 
+    private static final String ARRIVED = "/results-store/v1/shares/{shareId}/payload/arrived";
+
     private static final Pattern VARIABLE = Pattern.compile("\\{([^}]+)}");
 
     private static SwaggerParseResult result;
@@ -131,6 +133,27 @@ class OpenApiDocumentTest {
         assertThat(payload.getParameters()).extracting(Parameter::getName).contains("If-None-Match");
         assertThat(api.getComponents().getSchemas().keySet()).contains("ShareSummary", "KeyDetails", "PullPage",
                 "SearchPage", "DayVersions", "ProblemDetail");
+    }
+
+    /** The arrived text (phase D): the payload's headers, with the form fixed to {@code arrived-text}. */
+    @Test
+    void the_arrived_operation_should_declare_the_etag_and_results_store_headers_with_the_arrived_form() {
+        assertThat(api.getPaths()).containsKey(ARRIVED);
+        final Operation arrived = api.getPaths().get(ARRIVED).getGet();
+
+        assertThat(arrived.getOperationId()).isEqualTo("getShareArrivedPayload");
+        assertThat(arrived.getDescription()).startsWith("Action results-store.get-share-arrived-payload.");
+        assertThat(arrived.getResponses().get("200").getHeaders().keySet()).containsExactlyInAnyOrder(
+                "ETag", "Results-Store-Share-Id", "Results-Store-Hearing-Id", "Results-Store-Hearing-Day",
+                "Results-Store-Shared-Time", "Results-Store-Enrichment-Applied", "Results-Store-Payload-Form",
+                "Cache-Control", "Content-Length");
+        final Schema<?> form = arrived.getResponses().get("200").getHeaders().get("Results-Store-Payload-Form")
+                .getSchema();
+        assertThat(form.getEnum().stream().map(String::valueOf).toList()).containsExactly("arrived-text");
+        assertThat(arrived.getResponses().get("200").getContent().get("application/json").getSchema().getFormat())
+                .isEqualTo("binary");
+        assertThat(arrived.getResponses().get("304").getHeaders().keySet()).containsExactly("ETag");
+        assertThat(arrived.getParameters()).extracting(Parameter::getName).contains("If-None-Match");
     }
 
     /** The audit library finds the document by the suffix glob {@code classpath*:**}{@code /*<name>}. */

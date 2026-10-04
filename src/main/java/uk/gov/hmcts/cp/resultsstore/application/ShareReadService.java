@@ -18,7 +18,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
 import uk.gov.hmcts.cp.resultsstore.domain.StoredPayload;
 
 /**
- * The read API's application service (FR-010, FR-013, FR-014, FR-026 to FR-029, FR-031 to FR-034, FR-039):
+ * The read API's application service (FR-010, FR-013, FR-014, FR-026 to FR-029, FR-031 to FR-034, FR-039,
+ * FR-041):
  * checks the parameters the store depends on, works out the pull cursor and {@code hasMore}, the search cursor,
  * and the payload bytes with their {@code ETag}. A refusal is a {@link BadParameterException} or a
  * {@link NotFoundException} carrying a bounded reason, never a caller's value.
@@ -166,11 +167,33 @@ public class ShareReadService {
         final String text = stored.form() == PayloadForm.ARRIVED_TEXT
                 ? EnvelopeMetadata.strip(stored.body())
                 : stored.body();
+        return served(stored, text);
+    }
+
+    /** The text to serve as UTF-8 bytes with their quoted SHA-256 {@code ETag}, counted in the payload meter. */
+    private ServedPayload served(final StoredPayload stored, final String text) {
         final byte[] body = text.getBytes(StandardCharsets.UTF_8);
         observer.payloadBytes(body.length);
         return new ServedPayload(body, "\"" + PayloadChecksum.sha256Hex(body) + "\"", stored.shareId(),
                 stored.hearingId(), stored.hearingDay(), stored.sharedTime(), stored.enrichmentApplied(),
                 stored.form());
+    }
+
+    /**
+     * The text as it arrived (FR-041; phase D): {@code payload_text} with {@code _metadata} removed here, before
+     * any application results were added; the {@code ETag} is over exactly the bytes returned, so it never equals
+     * the stored checksum, which is over the text with {@code _metadata}.
+     *
+     * @param shareId the share
+     * @return the bytes, their {@code ETag} and the share's facts, in the arrived-text form
+     * @throws NotFoundException {@code share_not_found}
+     * @throws EnvelopeMetadata.UnreadablePayloadException when the text does not parse ({@code 500
+     *         internal_error}); never the text
+     */
+    public ServedPayload arrivedPayload(final UUID shareId) {
+        final StoredPayload stored = queries.arrivedText(shareId)
+                .orElseThrow(() -> new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
+        return served(stored, EnvelopeMetadata.strip(stored.body()));
     }
 
     private static int limit(final Integer limit) {

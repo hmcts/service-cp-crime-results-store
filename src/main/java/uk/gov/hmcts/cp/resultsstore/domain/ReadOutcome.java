@@ -10,7 +10,7 @@ public enum ReadOutcome {
 
     /** {@code 200}. */
     OK,
-    /** {@code 304}: the payload endpoints only. */
+    /** {@code 304}: the two payload endpoints only ({@code payload}, {@code arrived_payload}). */
     NOT_MODIFIED,
     /** Any {@code 4xx} but {@code 404}. */
     BAD_REQUEST,
@@ -66,9 +66,10 @@ public enum ReadOutcome {
      * Whether a request to the endpoint can end this way, so the pair is a registered series.
      *
      * @param endpoint the endpoint
-     * @return false only for {@link #NOT_MODIFIED} on an endpoint that serves no payload
+     * @return false only for {@link #NOT_MODIFIED} on an endpoint that serves no payload (neither
+     *         {@link ReadEndpoint#PAYLOAD} nor {@link ReadEndpoint#ARRIVED_PAYLOAD})
      */
     public boolean appliesTo(final ReadEndpoint endpoint) {
-        return this != NOT_MODIFIED || endpoint == ReadEndpoint.PAYLOAD;
+        return this != NOT_MODIFIED || endpoint == ReadEndpoint.PAYLOAD || endpoint == ReadEndpoint.ARRIVED_PAYLOAD;
     }
 }

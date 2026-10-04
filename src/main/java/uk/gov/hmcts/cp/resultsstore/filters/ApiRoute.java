@@ -34,7 +34,10 @@ public enum ApiRoute {
             ReadEndpoint.PAYLOAD),
     /** {@code GET /results-store/v1/hearings/{hearingId}/days/{hearingDay}/shares}. */
     LIST_HEARING_DAY_SHARES(ApiRoute.BASE + "/hearings/{hearingId}/days/{hearingDay}/shares",
-            "results-store.list-hearing-day-shares", ReadEndpoint.DAY_VERSIONS);
+            "results-store.list-hearing-day-shares", ReadEndpoint.DAY_VERSIONS),
+    /** {@code GET /results-store/v1/shares/{shareId}/payload/arrived}: the text as it arrived (phase D). */
+    GET_SHARE_ARRIVED_PAYLOAD(ApiRoute.SHARES + "/{shareId}/payload/arrived",
+            "results-store.get-share-arrived-payload", ReadEndpoint.ARRIVED_PAYLOAD);
 
     /** The request attribute under which {@link ActionHeaderFilter} leaves the matched route. */
     public static final String REQUEST_ATTRIBUTE = ApiRoute.class.getName();

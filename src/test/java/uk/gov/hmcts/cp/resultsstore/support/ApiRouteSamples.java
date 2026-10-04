@@ -28,6 +28,7 @@ public final class ApiRouteSamples {
             case GET_SHARE_PAYLOAD -> "/results-store/v1/shares/" + SHARE_ID + "/payload";
             case LIST_HEARING_DAY_SHARES -> "/results-store/v1/hearings/" + HEARING_ID + "/days/" + HEARING_DAY
                     + "/shares";
+            case GET_SHARE_ARRIVED_PAYLOAD -> "/results-store/v1/shares/" + SHARE_ID + "/payload/arrived";
         };
     }
 
@@ -40,7 +41,8 @@ public final class ApiRouteSamples {
     public static String anotherRoutesPath(final ApiRoute route) {
         return switch (route) {
             case PULL_SHARES, SEARCH_SHARES, GET_SHARE_PAYLOAD -> samplePath(ApiRoute.GET_SHARE);
-            case GET_SHARE, LIST_HEARING_DAY_SHARES -> samplePath(ApiRoute.GET_SHARE_PAYLOAD);
+            case GET_SHARE, LIST_HEARING_DAY_SHARES, GET_SHARE_ARRIVED_PAYLOAD ->
+                    samplePath(ApiRoute.GET_SHARE_PAYLOAD);
         };
     }
 

@@ -432,6 +432,71 @@ class ShareReadServiceTest {
     }
 
     @Nested
+    @DisplayName("arrived text")
+    class Arrived {
+
+        private static final String TEXT = "{\"_metadata\":{\"id\":\"m\",\"context\":{\"user\":\"u\"}},"
+                + "\"hearing\":{\"id\":\"h\",\"note\":\"a\\u0000b\"},\"hearingDay\":\"2026-10-02\",\"n\":1.50}";
+
+        @Test
+        void arrived_body_should_have_no_metadata_and_its_etag_should_be_the_sha256_of_the_served_bytes() {
+            final StoredPayload stored = payload(TEXT, PayloadForm.ARRIVED_TEXT);
+            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
+
+            final ServedPayload served = service().arrivedPayload(stored.shareId());
+
+            assertThat(JSON.readTree(served.body()).has("_metadata")).as("has _metadata").isFalse();
+            assertThat(JSON.readTree(served.body()).get("hearing").get("note").asString()).as("note kept")
+                    .isEqualTo("a\u0000b");
+            assertThat(JSON.readTree(served.body()).propertyNames()).as("member order")
+                    .containsExactly("hearing", "hearingDay", "n");
+            assertThat(new String(served.body(), StandardCharsets.UTF_8)).as("decimal kept as written")
+                    .contains("\"n\":1.50");
+            assertThat(served.etag()).isEqualTo("\"" + PayloadChecksum.sha256Hex(served.body()) + "\"")
+                    .matches("^\"[0-9a-f]{64}\"$");
+            assertThat(served.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
+            assertThat(served.shareId()).isEqualTo(stored.shareId());
+            assertThat(served.hearingId()).isEqualTo(stored.hearingId());
+            assertThat(served.hearingDay()).isEqualTo(stored.hearingDay());
+            assertThat(served.sharedTime()).isEqualTo(stored.sharedTime());
+            assertThat(served.enrichmentApplied()).as("enrichment as stored").isTrue();
+            verify(observer).payloadBytes(served.length());
+            verify(queries, never()).payload(any());
+        }
+
+        @Test
+        void arrived_etag_should_never_equal_payload_sha256() {
+            final StoredPayload stored = payload(TEXT, PayloadForm.ARRIVED_TEXT);
+            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
+            final String payloadSha256 = PayloadChecksum.sha256Hex(TEXT);
+
+            final ServedPayload served = service().arrivedPayload(stored.shareId());
+
+            assertThat(served.etag()).isNotEqualTo("\"" + payloadSha256 + "\"").doesNotContain(payloadSha256);
+        }
+
+        @Test
+        void an_unreadable_arrived_text_should_be_internal_error_never_the_text() {
+            final StoredPayload stored = payload("secret-marker-43 not json", PayloadForm.ARRIVED_TEXT);
+            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
+
+            assertThatThrownBy(() -> service().arrivedPayload(stored.shareId()))
+                    .isInstanceOf(UnreadablePayloadException.class)
+                    .satisfies(failure -> assertThat(failure.getMessage()).doesNotContain("secret-marker-43"));
+            verify(observer, never()).payloadBytes(anyLong());
+        }
+
+        @Test
+        void an_unknown_share_should_be_share_not_found() {
+            final UUID shareId = UUID.randomUUID();
+            when(queries.arrivedText(shareId)).thenReturn(Optional.empty());
+
+            assertThatThrownBy(() -> service().arrivedPayload(shareId)).isInstanceOf(NotFoundException.class)
+                    .hasMessage("share_not_found");
+        }
+    }
+
+    @Nested
     @DisplayName("the observer")
     class Observer {
 

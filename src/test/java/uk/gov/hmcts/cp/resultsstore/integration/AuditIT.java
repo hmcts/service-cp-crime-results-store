@@ -267,6 +267,26 @@ class AuditIT {
                 .as("events carrying payload content").isZero();
     }
 
+    /** Phase D: the arrived text's response event carries the marker too (the override keys on the derived action). */
+    @Test
+    void arrived_response_event_should_carry_the_marker() throws Exception {
+        final UUID shareId = stored(MARKER);
+
+        final Exchange exchange = get("/results-store/v1/shares/" + shareId + "/payload/arrived", caller(SYSTEM_USER,
+                "CPP-ACTION", "results-store.get-share"));
+
+        assertThat(exchange.response().statusCode()).isEqualTo(200);
+        assertThat(new String(exchange.response().body(), StandardCharsets.UTF_8)).contains(MARKER);
+        final List<JsonNode> events = events(exchange, 2);
+        assertThat(responseEvents(events)).singleElement()
+                .satisfies(event -> assertThat(content(event).path("payloadOmitted").asBoolean()).isTrue());
+        // Named by count only, so a failure prints no payload content.
+        assertThat(events.stream().filter(event -> event.toString().contains(MARKER)).count())
+                .as("events carrying payload content").isZero();
+        assertThat(events.stream().filter(event -> event.toString().contains("prosecutionCases")).count())
+                .as("events carrying payload content").isZero();
+    }
+
     @Test
     void a_list_response_event_should_carry_the_page() throws Exception {
         final UUID shareId = stored("");

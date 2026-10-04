@@ -91,6 +91,10 @@ class ContentNegotiationTest {
                 "{}".getBytes(StandardCharsets.UTF_8), "\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"",
                 ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false,
                 PayloadForm.WORKING_COPY));
+        when(service.arrivedPayload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(
+                "{}".getBytes(StandardCharsets.UTF_8), "\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"",
+                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false,
+                PayloadForm.ARRIVED_TEXT));
     }
 
     private static String path(final ApiRoute route) {
@@ -154,10 +158,12 @@ class ContentNegotiationTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD"})
+    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"})
     void an_error_should_be_application_json_whatever_accept_says(final ApiRoute route) throws Exception {
         when(service.share(ShareViews.SHARE_ID)).thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
         when(service.payload(ShareViews.SHARE_ID)).thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
+        when(service.arrivedPayload(ShareViews.SHARE_ID))
+                .thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
 
         for (final String accept : new String[] {"application/json", "application/problem+json", "*/*",
             "application/vnd.x+json"}) {
