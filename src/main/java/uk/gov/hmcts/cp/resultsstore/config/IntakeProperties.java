@@ -1,6 +1,7 @@
 package uk.gov.hmcts.cp.resultsstore.config;
 
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -51,8 +52,17 @@ public record IntakeProperties(@DefaultValue Pause redeliveryPause, @DefaultValu
     public record Store(@DefaultValue("60s") Duration transactionTimeout, @DefaultValue("5s") Duration lockTimeout,
             @DefaultValue("10s") Duration statementTimeout, @DefaultValue("10s") Duration idleInTransactionTimeout) {
 
-        /** Checks each timeout and how they relate. */
+        /**
+         * Checks each timeout and how they relate. The transaction timeout must be whole seconds and the
+         * PostgreSQL limits whole milliseconds, the units they are enforced in, so that
+         * {@link #visibilityBound()} is the bound actually enforced.
+         */
         public Store {
+            Rules.whole("resultsstore.intake.store.transaction-timeout", transactionTimeout, ChronoUnit.SECONDS);
+            Rules.whole("resultsstore.intake.store.statement-timeout", statementTimeout, ChronoUnit.MILLIS);
+            Rules.whole("resultsstore.intake.store.lock-timeout", lockTimeout, ChronoUnit.MILLIS);
+            Rules.whole("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout,
+                    ChronoUnit.MILLIS);
             Rules.positive("resultsstore.intake.store.lock-timeout", lockTimeout);
             Rules.positive("resultsstore.intake.store.statement-timeout", statementTimeout);
             Rules.positive("resultsstore.intake.store.idle-in-transaction-timeout", idleInTransactionTimeout);

@@ -658,6 +658,18 @@ prove the overrun counter.
     28, `IntakeConfigTest` 10, `ConfigurationValidationTest` 65, `StatementTimeoutBackstopTest` 7,
     `PooledStatementTimeoutIT` 3, `FlywayMigrationIT` 128, `StoreTimeoutIT` 6, 0 failures; the gate green (1506
     tests passed, 0 skipped; JaCoCo report line 0.9954, branch 0.9734).
+  - Gate round 1 (Codex HIGH, fractional timeouts): `IntakeProperties.Store` now refuses a transaction timeout
+    that is not whole seconds and a lock, statement or idle-in-transaction timeout that is not whole
+    milliseconds (`Rules.whole`, checked before the other rules), so `visibilityBound()` is what Spring and
+    PostgreSQL enforce (`IntakeConfig.seconds` would run `500ms` as 1 s; `JdbcShareStore.milliseconds` and
+    `StatementTimeoutBackstop` would send `500us` as `0ms`, no limit). Recorded in contracts/configuration.md.
+    Tests: `ConfigurationValidationTest.an_intake_store_timeout_the_enforcing_side_would_round_should_stop_the_
+    service_starting` (6 rows: `500ms` and `60500ms` transaction; `10500us` and `500us` statement; `4999999ns`
+    lock; `500us` idle) and `whole_second_and_whole_millisecond_store_timeouts_should_be_accepted` (1 s / 1 ms /
+    1 ms / 999 ms). RED: `[1] settings = "transaction-timeout=500ms;statement-timeout=200ms;lock-timeout=100ms;
+    idle-in-transaction-timeout=100ms" … FAILED` `Expecting: <Started application …> to have failed but context
+    started successfully`. GREEN: `ConfigurationValidationTest`, `IntakeConfigTest`, `StatementTimeoutBackstopTest`
+    0 failures.
 
 ---
 

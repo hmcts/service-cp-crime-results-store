@@ -33,6 +33,12 @@ Build settings, not runtime properties. Set in `gradle/libs.versions.toml` and `
 The lag rule (below) ties them to the read side: **lag ≥ transaction + 2 × statement +
 idle-in-transaction**, and **lock ≤ statement**. At the defaults: 60 + 2 × 10 + 10 = 90 s.
 
+Each is also checked to be whole in the unit that enforces it (gate round 1): the transaction timeout in
+whole seconds (a Spring transaction timeout is an `int` of seconds, so `500ms` would run as one second) and
+the three PostgreSQL limits in whole milliseconds (they are sent as `<n>ms`, so `500us` would be sent as
+`0ms`, which PostgreSQL reads as no limit). A value that is not stops the service naming the property
+(`… must be a whole number of seconds` / `milliseconds`), so the lag sum is always the bound actually enforced.
+
 ## Pool backstop: Hikari connection-init SQL (E3)
 
 | Setting | Value | Set by | Rule |

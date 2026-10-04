@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.time.Duration;
+import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.Set;
 import uk.gov.hmcts.cp.resultsstore.domain.CanonicalUuid;
@@ -38,6 +39,17 @@ final class Rules {
     /* default */ static void positive(final String name, final Duration value) {
         if (value.isNegative() || value.isZero()) {
             throw new IllegalArgumentException(name + " must be above zero");
+        }
+    }
+
+    /**
+     * Checks that the value is a whole number of the unit, so the side that enforces it in that unit (a Spring
+     * transaction timeout in seconds, a PostgreSQL limit in milliseconds) enforces exactly this value.
+     */
+    /* default */ static void whole(final String name, final Duration value, final ChronoUnit unit) {
+        if (!value.truncatedTo(unit).equals(value)) {
+            throw new IllegalArgumentException(name + " must be a whole number of "
+                    + (unit == ChronoUnit.MILLIS ? "milliseconds" : unit.name().toLowerCase(Locale.ROOT)));
         }
     }
 

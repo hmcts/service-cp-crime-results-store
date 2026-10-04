@@ -3,6 +3,7 @@ package uk.gov.hmcts.cp.resultsstore.config;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -122,6 +123,39 @@ class ConfigurationValidationTest {
         runner.withPropertyValues(setting).run(context -> assertThat(context).getFailure().rootCause()
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageStartingWith(refusal));
+    }
+
+    /**
+     * A Spring transaction timeout is whole seconds and PostgreSQL's limits are whole milliseconds; a value
+     * either would round would make the visibility bound differ from the limits actually enforced (R4).
+     */
+    @ParameterizedTest
+    @CsvSource(delimiter = '|', textBlock = """
+        transaction-timeout=500ms;statement-timeout=200ms;lock-timeout=100ms;idle-in-transaction-timeout=100ms | resultsstore.intake.store.transaction-timeout must be a whole number of seconds
+        transaction-timeout=60500ms | resultsstore.intake.store.transaction-timeout must be a whole number of seconds
+        statement-timeout=10500us | resultsstore.intake.store.statement-timeout must be a whole number of milliseconds
+        statement-timeout=500us | resultsstore.intake.store.statement-timeout must be a whole number of milliseconds
+        lock-timeout=4999999ns | resultsstore.intake.store.lock-timeout must be a whole number of milliseconds
+        idle-in-transaction-timeout=500us | resultsstore.intake.store.idle-in-transaction-timeout must be a whole number of milliseconds
+        """)
+    void an_intake_store_timeout_the_enforcing_side_would_round_should_stop_the_service_starting(
+            final String settings, final String refusal) {
+        runner.withPropertyValues(storeSettings(settings)).run(context -> assertThat(context).getFailure()
+                .rootCause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageStartingWith(refusal));
+    }
+
+    @Test
+    void whole_second_and_whole_millisecond_store_timeouts_should_be_accepted() {
+        runner.withPropertyValues(storeSettings(
+                        "transaction-timeout=1s;statement-timeout=1ms;lock-timeout=1ms;idle-in-transaction-timeout=999ms"))
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    private static String[] storeSettings(final String settings) {
+        return Arrays.stream(settings.split(";")).map(setting -> "resultsstore.intake.store." + setting)
+                .toArray(String[]::new);
     }
 
     @Test
