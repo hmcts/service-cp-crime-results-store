@@ -571,6 +571,32 @@ class JdbcShareQueriesIT {
                             tuple(third.shareId, 3L));
         }
 
+        /** Each day of a multi-day hearing is its own chain (the edge-case matrix; gate round 1). */
+        @Test
+        void a_hearing_with_two_days_should_keep_each_days_versions_apart() {
+            final UUID hearing = UUID.randomUUID();
+            final RowSpec dayOneFirst = row().hearing(hearing).sharedAt("2026-10-02T09:00:00Z");
+            final RowSpec dayOneSecond = row().hearing(hearing).sharedAt("2026-10-02T16:00:00Z").latest();
+            final RowSpec dayTwoFirst = row().hearing(hearing).sharedAt("2026-10-03T08:00:00Z");
+            final RowSpec dayTwoSecond = row().hearing(hearing).sharedAt("2026-10-03T11:00:00Z");
+            final RowSpec dayTwoThird = row().hearing(hearing).sharedAt("2026-10-03T14:00:00Z").latest();
+            List.of(dayTwoThird, dayOneSecond, dayTwoFirst, dayOneFirst, dayTwoSecond)
+                    .forEach(JdbcShareQueriesIT.this::insert);
+
+            assertThat(queries.dayVersions(hearing, LocalDate.parse("2026-10-02")))
+                    .extracting(ShareView::shareId, ShareView::hearingDay, ShareView::versionNumber)
+                    .containsExactly(tuple(dayOneFirst.shareId, LocalDate.parse("2026-10-02"), 1L),
+                            tuple(dayOneSecond.shareId, LocalDate.parse("2026-10-02"), 2L));
+            assertThat(queries.dayVersions(hearing, LocalDate.parse("2026-10-03")))
+                    .extracting(ShareView::shareId, ShareView::hearingDay, ShareView::versionNumber)
+                    .containsExactly(tuple(dayTwoFirst.shareId, LocalDate.parse("2026-10-03"), 1L),
+                            tuple(dayTwoSecond.shareId, LocalDate.parse("2026-10-03"), 2L),
+                            tuple(dayTwoThird.shareId, LocalDate.parse("2026-10-03"), 3L));
+            assertThat(present(queries.share(dayOneSecond.shareId)).versionNumber()).isEqualTo(2);
+            assertThat(present(queries.share(dayTwoFirst.shareId)).versionNumber()).isEqualTo(1);
+            assertThat(present(queries.share(dayTwoThird.shareId)).versionNumber()).isEqualTo(3);
+        }
+
         @Test
         void payload_should_return_the_working_copy_without_metadata_as_the_database_writes_it() {
             final String text = SampleShares.share(UUID.randomUUID(), "2026-10-02", "2026-10-02T14:19:50.706Z");

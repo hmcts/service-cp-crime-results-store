@@ -564,11 +564,16 @@ prove the overrun counter.
   - GREEN: `JdbcShareQueriesIT` 35 (`PullQueries` 16, `SearchQueries` 14, `OneShare` 5), `JdbcShareQueriesTest`
     8, `ReadQueriesPlanIT` 16, 0 failures; the read timeout surfaces as Spring's `QueryTimeoutException`. The
     gate green (1451 tests passed, 0 skipped; JaCoCo report line 0.9951, branch 0.9863).
-  - Gate round 1: `SearchQueries.search_keyset_pages_should_cross_the_epoch` (Codex MEDIUM:
+  - Gate round 1: `OneShare.a_hearing_with_two_days_should_keep_each_days_versions_apart` (QA MEDIUM: the
+    matrix's multi-day case; one hearing, two shares on 2026-10-02 and three on 2026-10-03, inserted out of
+    order; each day's versions and `share(...).versionNumber()` count within the day). It passes at once, pinning
+    behaviour T006 built; checked by mutation: without `v.hearing_day = s.hearing_day` in the version-number
+    subquery it fails `expected: 1L but was: 3L`, and without `s.hearing_day = :hearingDay` in the day query it
+    fails listing day two's shares. `SearchQueries.search_keyset_pages_should_cross_the_epoch` (Codex MEDIUM:
     five shares from 1969-12-31T12:00Z to 1970-01-01T00:00:00.000001Z, two at the same instant, paged one at a
     time). RED (before the `SearchCursor` change): `search_keyset_pages_should_cross_the_epoch() FAILED`
-    `IllegalArgumentException: sharedAtMicros must not be negative`. GREEN: `JdbcShareQueriesIT` 36
-    (`PullQueries` 16, `SearchQueries` 15, `OneShare` 5), 0 failures.
+    `IllegalArgumentException: sharedAtMicros must not be negative`. GREEN: `JdbcShareQueriesIT` 37
+    (`PullQueries` 16, `SearchQueries` 15, `OneShare` 6), 0 failures.
 
 - [X] T007 [US1] [US2] [US3] [US4] Test first: `ShareReadServiceTest` (plain mocks, no Spring) in src/test/java/uk/gov/hmcts/cp/resultsstore/application/ShareReadServiceTest.java; then src/main/java/uk/gov/hmcts/cp/resultsstore/application/ShareReadService.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/PullPage.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/SearchPage.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/ServedPayload.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/BadParameterException.java, src/main/java/uk/gov/hmcts/cp/resultsstore/application/NotFoundException.java (both carry a `ProblemReason` only, never a caller value)
   - Cases: `pull_limit_should_default_to_100_and_refuse_0_and_501`; `has_more_should_be_true_only_when_limit_plus_one_rows_came_back`; `next_stored_after_seq_should_be_the_last_item_when_there_is_more`; `next_stored_after_seq_should_be_the_greater_of_the_cursor_and_the_bound_otherwise`; `a_null_bound_should_keep_the_cursor`; `visible_up_to_should_be_passed_through`; `search_day_form_should_accept_31_days_and_refuse_32_and_a_reversed_range`; `search_time_form_should_accept_31_days_and_refuse_31_days_and_a_microsecond_and_a_to_not_after_from` (`time_range_too_long`, `time_range_reversed`); `search_day_form_should_reach_the_query_as_london_midnight_instants`; `search_next_cursor_should_encode_the_last_item_and_be_null_on_the_last_page`; `a_bad_cursor_should_be_invalid_cursor`; `payload_etag_should_be_the_quoted_sha256_of_exactly_the_bytes_returned` (non-ASCII text); `the_arrived_text_form_should_be_served_without_metadata_and_hashed_after_the_strip` (E8); `a_working_copy_should_be_served_as_read` (the database already removed `_metadata`); `an_arrived_text_that_fails_to_parse_should_be_internal_error_never_the_text`; `payload_form_should_follow_the_stored_form`; `an_unknown_share_should_be_share_not_found`; `an_empty_day_should_be_hearing_day_not_found`; `page_items_and_payload_bytes_should_be_reported_to_the_observer`.
