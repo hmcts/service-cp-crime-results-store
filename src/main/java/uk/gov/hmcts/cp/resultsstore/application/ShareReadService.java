@@ -59,7 +59,7 @@ public class ShareReadService {
     }
 
     /**
-     * The pull's visibility lag, for the wiring tests.
+     * The pull's visibility lag this service holds back by (the effective lag of {@code ReadApiConfig}).
      *
      * @return the lag
      */
