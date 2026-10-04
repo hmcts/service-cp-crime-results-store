@@ -381,6 +381,36 @@ class ReadApiIT {
     }
 
     @Test
+    void a_share_between_midnight_and_one_bst_should_be_searched_on_its_london_day() throws Exception {
+        // 23:30 UTC on 2 October is 00:30 BST on 3 October: the two days differ.
+        final UUID share = stored(SampleShares.share(hearingId, "2026-10-03", "2026-10-02T23:30:00Z"), null);
+        final String court = SHARES + "?courtCentreId=" + SampleShares.COURT_CENTRE;
+
+        final JsonNode third = json(court + "&sharedDayFrom=2026-10-03&sharedDayTo=2026-10-03", SYSTEM_USER);
+        assertThat(shareIds(third)).containsExactly(share.toString());
+        assertThat(third.get("items").get(0).get("sharedDayLondon").asString()).isEqualTo("2026-10-03");
+        assertThat(third.get("items").get(0).get("sharedDayUtc").asString()).isEqualTo("2026-10-02");
+        assertThat(shareIds(json(court + "&sharedDayFrom=" + DAY + "&sharedDayTo=" + DAY, SYSTEM_USER))).isEmpty();
+    }
+
+    @Test
+    void each_day_of_a_multi_day_hearing_should_list_only_its_own_versions() throws Exception {
+        final UUID firstDayEarly = stored("2026-10-02T09:00:00Z");
+        final UUID firstDayLate = stored("2026-10-02T18:30:00Z");
+        final UUID secondDay = stored(SampleShares.share(hearingId, "2026-10-03", "2026-10-03T10:00:00Z"), null);
+        final String days = "/results-store/v1/hearings/" + hearingId + "/days/";
+
+        final JsonNode first = json(days + DAY + "/shares", SYSTEM_USER);
+        final JsonNode second = json(days + "2026-10-03/shares", SYSTEM_USER);
+
+        assertThat(shareIds(first)).containsExactly(firstDayEarly.toString(), firstDayLate.toString());
+        assertThat(first.get("items").valueStream().map(item -> item.get("versionNumber").asInt()))
+                .containsExactly(1, 2);
+        assertThat(shareIds(second)).containsExactly(secondDay.toString());
+        assertThat(second.get("items").get(0).get("versionNumber").asInt()).isEqualTo(1);
+    }
+
+    @Test
     void payload_bytes_should_hash_to_the_etag_and_have_no_metadata_key() throws Exception {
         final UUID workingCopy = stored("2026-10-02T09:00:00Z");
         final UUID arrivedText = stored(SampleShares.share(hearingId, DAY, "2026-10-02T10:00:00Z", "false",
