@@ -42,6 +42,7 @@ readonly PULL_BUDGET_SECONDS=45
 # After readiness: for the listener to join the subscription, and for the three messages to settle.
 readonly SUBSCRIPTION_BUDGET_SECONDS=30
 readonly INTAKE_BUDGET_SECONDS=30
+readonly METRICS_BUDGET_SECONDS=30
 
 readonly ARTEMIS_CLI="/var/lib/artemis-instance/bin/artemis"
 readonly TOPIC="public.event"
@@ -306,15 +307,37 @@ expect_requests "progression asked once for the enriched application" "1" "${PRO
 expect_requests "progression asked once for the not-found application" "1" "${PROGRESSION_PATH}/${APP_NOT_FOUND_ID}"
 expect_requests "progression asked twice in all" "2" "${PROGRESSION_PATH}/.*"
 
-scrape=$(curl --silent --fail --max-time 5 "$PROMETHEUS_URL") || scrape=""
-for line in 'resultsstore_intake_received_total 3.0' \
-    'resultsstore_intake_stored_total{order="in_order"} 1.0' \
-    'resultsstore_intake_duplicate_total 1.0' \
-    'resultsstore_intake_not_share_total{reason="not_json",status="unreadable"} 1.0' \
-    'resultsstore_enrichment_applied_total 1.0' \
-    'resultsstore_enrichment_applications_total{outcome="enriched"} 1.0' \
-    'resultsstore_enrichment_applications_total{outcome="not_found"} 1.0' \
-    'resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0'; do
+intake_metric_lines=(
+  'resultsstore_intake_received_total 3.0'
+  'resultsstore_intake_stored_total{order="in_order"} 1.0'
+  'resultsstore_intake_duplicate_total 1.0'
+  'resultsstore_intake_not_share_total{reason="not_json",status="unreadable"} 1.0'
+  'resultsstore_enrichment_applied_total 1.0'
+  'resultsstore_enrichment_applications_total{outcome="enriched"} 1.0'
+  'resultsstore_enrichment_applications_total{outcome="not_found"} 1.0'
+  'resultsstore_enrichment_skipped_total{reason="already_stored"} 1.0'
+)
+
+# True when the scrape holds every expected line.
+has_intake_metric_lines() {
+  local line
+  for line in "${intake_metric_lines[@]}"; do
+    printf '%s\n' "$scrape" | grep -qxF "$line" || return 1
+  done
+}
+
+# A counter can move a moment after its receipt settles, so one scrape can miss a line; the scrape is
+# retried until every line is there or the budget runs out, and then each line is checked.
+log "waiting for the intake metric lines (budget ${METRICS_BUDGET_SECONDS}s)"
+deadline=$((SECONDS + METRICS_BUDGET_SECONDS))
+while :; do
+  scrape=$(curl --silent --fail --max-time 5 "$PROMETHEUS_URL") || scrape=""
+  if has_intake_metric_lines || [ "$SECONDS" -ge "$deadline" ]; then
+    break
+  fi
+  sleep 1
+done
+for line in "${intake_metric_lines[@]}"; do
   if printf '%s\n' "$scrape" | grep -qxF "$line"; then
     log "ok: metric ${line}"
   else
