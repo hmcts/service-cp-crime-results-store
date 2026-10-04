@@ -27,6 +27,8 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
@@ -236,13 +238,16 @@ class AuditIT {
     /**
      * Pins a gap: the library resolves path parameters only where the document declares them inline, and the
      * share routes take {@code shareId} by {@code $ref} (as the contract jar does), so their request event has no
-     * {@code shareId}. Changing it is a contract change (Deferred).
+     * {@code shareId}. Changing it is a contract change (Deferred). Each share route: the share, its payload and
+     * its arrived text.
      */
-    @Test
-    void the_share_routes_request_event_should_not_carry_a_share_id_declared_by_reference() throws Exception {
+    @ParameterizedTest
+    @ValueSource(strings = {"", "/payload", "/payload/arrived"})
+    void the_share_routes_request_event_should_not_carry_a_share_id_declared_by_reference(final String route)
+            throws Exception {
         final UUID shareId = stored("");
 
-        final Exchange exchange = get("/results-store/v1/shares/" + shareId, caller(SYSTEM_USER));
+        final Exchange exchange = get("/results-store/v1/shares/" + shareId + route, caller(SYSTEM_USER));
 
         final JsonNode request = events(exchange, 2).stream().filter(event -> content(event).has("_payload"))
                 .findFirst().orElseThrow();

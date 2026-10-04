@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Stream;
@@ -521,6 +522,9 @@ class ReadApiIT {
     @Test
     void arrived_if_none_match_should_give_304() throws Exception {
         final String path = arrivedPath(stored("2026-10-02T09:00:00Z"));
+        final long durations = meters.get("resultsstore.read.duration").tag("endpoint", "arrived_payload").timer()
+                .count();
+        final long payloadBytes = meters.get("resultsstore.read.payload.bytes").summary().count();
         final String etag = get(path, Map.of(USER_ID_HEADER, SYSTEM_USER)).headers().firstValue("ETag").orElseThrow();
         final double notModified = requests("arrived_payload", "not_modified");
 
@@ -536,6 +540,35 @@ class ReadApiIT {
         assertThat(star.headers().allValues("ETag")).containsExactly(etag);
         assertThat(stale.statusCode()).isEqualTo(200);
         assertThat(requests("arrived_payload", "not_modified")).isEqualTo(notModified + 2);
+        assertThat(meters.get("resultsstore.read.duration").tag("endpoint", "arrived_payload").timer().count())
+                .as("one duration per arrived call").isEqualTo(durations + 4);
+        assertThat(meters.get("resultsstore.read.payload.bytes").summary().count())
+                .as("the payload meter moves on each body built").isGreaterThan(payloadBytes);
+    }
+
+    @Test
+    void an_arrived_text_that_does_not_parse_should_give_500_internal_error_and_never_the_text() throws Exception {
+        final String marker = "UNREADABLE-MARKER-" + UUID.randomUUID();
+        final String text = SampleShares.share(hearingId, DAY, "2026-10-02T09:00:00Z");
+        messages++;
+        final String messageId = "ID:read-" + messages;
+        receipts.recordArrival(SampleShares.arrival(messageId, text));
+        final StoreRequest request = SampleShares.request(messageId, text);
+        final String unreadable = "not json " + marker;
+        store.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(), request.sharedDays(),
+                PayloadChecksum.sha256Hex(unreadable), unreadable, request.projection()));
+        final double failed = requests("arrived_payload", "failed");
+
+        final HttpResponse<byte[]> response = get(arrivedPath(request.shareId()), Map.of(USER_ID_HEADER, SYSTEM_USER));
+
+        assertBounded(response, 500, "internal_error");
+        assertThat(new String(response.body(), StandardCharsets.UTF_8).contains(marker)).as("the text is echoed")
+                .isFalse();
+        assertThat(response.headers().map().keySet().stream()
+                .filter(name -> name.toLowerCase(Locale.ROOT).startsWith("results-store-")).toList())
+                .as("Results-Store-* headers").isEmpty();
+        assertThat(response.headers().firstValue("ETag")).isEmpty();
+        assertThat(requests("arrived_payload", "failed")).isEqualTo(failed + 1);
     }
 
     @Test
