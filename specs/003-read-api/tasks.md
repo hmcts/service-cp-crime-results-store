@@ -940,6 +940,26 @@ pins the audit behaviour; the smoke proves it in the compose stack.
     listed by the day form for 3 October with `sharedDayLondon` 2026-10-03 and `sharedDayUtc` 2026-10-02,
     absent for 2 October) and `each_day_of_a_multi_day_hearing_should_list_only_its_own_versions` (version
     numbers restart at 1 per day), driving the always-cover edges through HTTP. `ReadApiIT` 59, 0 failures.
+  - Codex review (phase C), rulings by the orchestrator:
+    - Fixed (MEDIUM): `ReadApiExceptionHandler.handleExceptionInternal` bypassed Spring's committed-response
+      guard. On a committed response it now logs the failure by exception class (with the canonical `shareId`
+      in the logging context when the path names one; never the message) and returns nothing, so nothing is
+      appended. `ReadApiExceptionHandlerTest.a_committed_response_should_be_left_as_it_is_and_the_failure_logged_
+      by_class` (RED: the handler returned the problem body).
+    - Fixed (MEDIUM): a `406` raised while Spring MVC chooses the handler never reaches
+      `ReadMetricsInterceptor.preHandle`, so `resultsstore.read.requests` did not move. The advice now counts a
+      request on a matched route whose handler never started (`ReadObserver.requestWithoutHandler`: the counter
+      only, no duration, as no handler started); the interceptor and the advice share one per-request marker
+      (`ReadMetricsInterceptor.claimCount`), so a request is counted once. contracts/metrics.md says so. RED:
+      `ContentNegotiationTest.accept_text_html_should_be_counted_once_as_bad_request` (wanted but not invoked),
+      `ReadApiIT.accept_text_html_should_count_one_bad_request_and_no_duration` (expected 1.0 but was 0.0), and
+      the advice, interceptor and observer unit cases.
+    - Declined (HIGH, "request audit events carry the caller's own query and path values"): those values are
+      the caller's own request parameters, which the audit library records by design (research R14, FR-051);
+      the service never copies stored payload into them, and the no-personal-data rule concerns data the
+      service holds. No code change; contracts/read-api.md §2.4 now states that request parameters a caller
+      sends are recorded in the audit request event as sent.
+    - Gate after the fixes: 1898 tests passed, 0 skipped; JaCoCo line 0.9974, branch 0.9738.
 
 - [X] T012 [US1] [US2] [US3] [US5] [US7] Smoke, compose and documents. Test first: extend scripts/container-smoke.sh so it fails on the pre-003 build, with the HTTP checks of spec FR-060 after the published share is stored (pull lists the `shareId` once the derived lag has passed; one share `200`; `/payload` `200` with `sha256sum` of the body equal to the unquoted `ETag` and `jq 'has("_metadata")'` false; `If-None-Match` `304`; day versions `200`; no `CJSCPPUID` `401`; the no-group `CJSCPPUID` `403`; `/results-store/v1/anything` `404` with reason `route_not_found` and no path in the body; a vendor `Accept` on pull still `200`; `resultsstore_read_requests_total` and `resultsstore_read_refused_total` present); and the review grep (RED: the hits before the edits) for `lowest sequence number`, `still-open write`, `library's default settings`, `include-payload-body`, `caller-supplied`, `carry no request or response bodies` across `specs/`, `.specify/memory/constitution.md` and `.claude/rules/design_rules.md`; then
   - docker-compose.yml (app service: `RESULTSSTORE_INTAKE_STORE_TRANSACTIONTIMEOUT`, `…_STATEMENTTIMEOUT`, `…_LOCKTIMEOUT`, `…_IDLEINTRANSACTIONTIMEOUT` through `${VAR:-default}` with short values (transaction 6 s, statement 2 s, lock 1 s, idle-in-transaction 1 s; derived lag 11 s), contracts/configuration.md *Compose*; `RESULTSSTORE_READ_PULL_VISIBILITYLAG` left unset), docker/wiremock/mappings/identity-stub.json (a low priority, so it is the default), docker/wiremock/mappings/identity-no-group.json (new: matched on `CJSCPPUID` `11111111-1111-4111-8111-111111111111`, priority 1, groups "Other Group");

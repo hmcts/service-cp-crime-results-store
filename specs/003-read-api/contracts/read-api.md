@@ -91,7 +91,8 @@ filter: it is counted, not audited. The payload endpoints' audit record holds a 
 (`{"payloadOmitted":true}`) in place of the payload body (D-AUDIT option 4); the store has asked the audit
 library's owners for a switch that does the same. (What the library records, as built: the caller, your
 `CPPCLIENTCORRELATIONID`, the query parameters, the path parameters the document declares inline, and the
-body; not the action.)
+body; not the action.) The query and path parameters you send are recorded in the audit request event as you
+sent them: they are your own request, not data the store holds, and the store copies nothing it holds into them.
 
 ---
 
