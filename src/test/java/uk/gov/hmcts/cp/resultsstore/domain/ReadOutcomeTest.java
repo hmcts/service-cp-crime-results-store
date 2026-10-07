@@ -21,9 +21,8 @@ class ReadOutcomeTest {
 
     @ParameterizedTest
     @EnumSource(ReadEndpoint.class)
-    void not_modified_should_apply_to_the_two_payload_endpoints_only(final ReadEndpoint endpoint) {
-        assertThat(ReadOutcome.NOT_MODIFIED.appliesTo(endpoint))
-                .isEqualTo(endpoint == ReadEndpoint.PAYLOAD || endpoint == ReadEndpoint.ARRIVED_PAYLOAD);
+    void not_modified_should_apply_to_the_payload_endpoint_only(final ReadEndpoint endpoint) {
+        assertThat(ReadOutcome.NOT_MODIFIED.appliesTo(endpoint)).isEqualTo(endpoint == ReadEndpoint.PAYLOAD);
     }
 
     @ParameterizedTest

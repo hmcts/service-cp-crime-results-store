@@ -100,12 +100,11 @@ class SharesControllerTest {
                 .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
 
         assertThat(implementations).containsExactly(SharesController.class.getName());
-        assertThat(shares).hasSize(5);
+        assertThat(shares).hasSize(4);
         assertThat(shares.values()).extracting(HandlerMethod::getBeanType).containsOnly(SharesController.class);
         assertThat(shares.keySet()).flatExtracting(info -> info.getPathPatternsCondition().getPatternValues())
                 .containsExactlyInAnyOrder(SharesApi.PATH_PULL_OR_SEARCH_SHARES, SharesApi.PATH_GET_SHARE,
-                        SharesApi.PATH_GET_SHARE_PAYLOAD, SharesApi.PATH_LIST_HEARING_DAY_SHARES,
-                        SharesApi.PATH_GET_SHARE_ARRIVED_PAYLOAD);
+                        SharesApi.PATH_GET_SHARE_PAYLOAD, SharesApi.PATH_LIST_HEARING_DAY_SHARES);
     }
 
     @Test

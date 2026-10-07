@@ -213,9 +213,8 @@ class NoPayloadInLogsIT {
     }
 
     /**
-     * Serving a payload (the working copy, a share whose text held an escaped NUL among them) and the arrived
-     * text on its own route (an enriched share among them, so the two bodies differ) logs no payload content at
-     * any level: the root logger is at DEBUG while the payloads are fetched.
+     * Serving a payload (the working copy, a share whose text held an escaped NUL and an enriched share among
+     * them) logs no payload content at any level: the root logger is at DEBUG while the payloads are fetched.
      */
     @Test
     void serving_a_payload_should_log_no_payload_marker_at_any_level() throws Exception {
@@ -236,11 +235,9 @@ class NoPayloadInLogsIT {
         root.setLevel(Level.DEBUG);
         try {
             for (final UUID shareId : shares) {
-                for (final String route : List.of("/payload", "/payload/arrived")) {
-                    final String body = mockMvc.perform(get("/results-store/v1/shares/" + shareId + route))
-                            .andReturn().getResponse().getContentAsString();
-                    assertThat(body.contains(MARKER)).as("the payload is served on " + route).isTrue();
-                }
+                final String body = mockMvc.perform(get("/results-store/v1/shares/" + shareId + "/payload"))
+                        .andReturn().getResponse().getContentAsString();
+                assertThat(body.contains(MARKER)).as("the payload is served").isTrue();
             }
         } finally {
             root.setLevel(level);

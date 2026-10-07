@@ -174,7 +174,7 @@ names a share id only).
 
 ## Phase: the contract
 
-- [ ] T004 [US2] The service follows the contract. ONE commit: the pin removes
+- [X] T004 [US2] The service follows the contract. ONE commit: the pin removes
   `getShareArrivedPayload` from `SharesApi`, so `SharesController`'s override and
   `SharesControllerTest`'s `PATH_GET_SHARE_ARRIVED_PAYLOAD` stop compiling, and
   `OpenApiContractDriftTest` is red whenever the yaml and the jar differ. Record the RED run on the
@@ -223,8 +223,34 @@ names a share id only).
     without the route).
   - Done when: `OpenApiContractDriftTest`, `OpenApiContractTest`, `ResultsStoreRulesTest`,
     `ApiRouteTest`, `ReadApiIT`, `AuthzIT`, `AuditIT`, `NoPayloadInLogsIT` green on the draft jar.
-  - RED:
-  - GREEN:
+  - Also in this commit: `ReadApiIT.payload_bytes_should_hash_to_the_etag_and_have_no_metadata_key` asserts
+    the form header absent (its T002 `working-copy` assertion cannot hold once `PayloadResponses` stops
+    sending it); the service yaml is the api commit's diff applied as is (one hunk re-wrapped by hand).
+  - RED (on the 0.2.0 jar, before any production change; one class per run):
+    `OpenApiDocumentTest`: `the_payload_operation_should_declare_no_payload_form_header() FAILED`
+    `Expecting actual: {"Cache-Control"=...} not to contain key: "Results-Store-Payload-Form"`;
+    `OpenApiContractTest`: `every_controller_mapping_should_be_described() FAILED` `Expected size: 4 but was: 5`;
+    `SharesControllerTest`: `the_controller_should_be_the_only_sharesapi_implementation_and_register_each_mapping_once() FAILED`
+    `Expected size: 4 but was: 5`;
+    `ApiRouteTest`: `every_route_should_name_its_endpoint_tag() FAILED` `Expecting actual: [PULL, SEARCH, SHARE,
+    PAYLOAD, DAY_VERSIONS, ARRIVED_PAYLOAD] to contain exactly (and in same order): [...]`;
+    `ResultsStoreRulesTest`: `the_arrived_payload_action_should_be_refused_for_both_groups() FAILED`
+    `Expecting value to be false but was true`;
+    `ReadEndpointTest`: `every_tag_should_come_from_the_fixed_list() FAILED` (`arrived_payload` still listed);
+    `ReadOutcomeTest`: `not_modified_should_apply_to_the_payload_endpoint_only(ReadEndpoint) > [6] endpoint =
+    ARRIVED_PAYLOAD FAILED` `expected: false but was: true`;
+    `MicrometerReadObserverTest`: `every_meter_and_tag_combination_should_be_registered_at_start() FAILED`
+    (`arrived_payload/not_modified` registered);
+    `SharePayloadControllerTest`: `the_payload_should_carry_no_payload_form_header() FAILED`;
+    `ReadApiIT`: `payload_bytes_should_hash_to_the_etag_and_have_no_metadata_key() FAILED`
+    `Expecting an empty Optional but was containing value: "working-copy"`;
+    `AuditIT`, `NoPayloadInLogsIT`: green (their changes only remove arrived cases).
+  - GREEN (on `rs-8fb8ea6`): `./gradlew test` over `OpenApiContractDriftTest`, `OpenApiContractTest`,
+    `OpenApiDocumentTest`, `ResultsStoreRulesTest`, `ApiRouteTest`, `ReadApiIT`, `AuthzIT`, `AuditIT`,
+    `NoPayloadInLogsIT`, `SharesControllerTest`, `ReadEndpointTest`, `ReadOutcomeTest`,
+    `MicrometerReadObserverTest`, `SharePayloadControllerTest`, `ContentNegotiationTest`,
+    `ShareParametersInterceptorTest`, `PayloadBodyFreeAuditPayloadGenerationServiceTest`,
+    `ActionHeaderFilterTest`: BUILD SUCCESSFUL, 422 tests, 0 failures, 0 skipped.
 
 ## Phase: the read side
 

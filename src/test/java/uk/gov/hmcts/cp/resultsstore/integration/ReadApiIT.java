@@ -44,7 +44,6 @@ import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
-import tools.jackson.databind.node.ObjectNode;
 import uk.gov.hmcts.cp.resultsstore.application.ExtractionSweep;
 import uk.gov.hmcts.cp.resultsstore.application.IntakeObserver;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
@@ -189,7 +188,6 @@ class ReadApiIT {
             case GET_SHARE -> SHARES + "/" + shareId;
             case GET_SHARE_PAYLOAD -> SHARES + "/" + shareId + "/payload";
             case LIST_HEARING_DAY_SHARES -> "/results-store/v1/hearings/" + hearingId + "/days/" + DAY + "/shares";
-            case GET_SHARE_ARRIVED_PAYLOAD -> SHARES + "/" + shareId + "/payload/arrived";
         };
     }
 
@@ -431,7 +429,7 @@ class ReadApiIT {
             assertThat(MAPPER.readTree(response.body()).has("hearing")).isTrue();
             assertThat(response.headers().firstValue("Content-Length"))
                     .contains(Integer.toString(response.body().length));
-            assertThat(response.headers().firstValue("Results-Store-Payload-Form")).contains("working-copy");
+            assertThat(response.headers().firstValue("Results-Store-Payload-Form")).isEmpty();
         }
     }
 
@@ -447,101 +445,17 @@ class ReadApiIT {
         assertThat(response.headers().allValues("ETag")).containsExactly(etag);
     }
 
-    /** Phase D: an enriched share, so the working copy and the arrived text differ. */
-    private UUID storedEnriched(final String text) {
-        messages++;
-        final String messageId = "ID:read-" + messages;
-        receipts.recordArrival(SampleShares.arrival(messageId, text));
-        final StoreRequest request = SampleShares.enrichedRequest(messageId, text,
-                SampleShares.finalised("Conditional discharge"));
-        store.store(request);
-        return request.shareId();
-    }
-
-    private String arrivedPath(final UUID shareId) {
-        return SHARES + "/" + shareId + "/payload/arrived";
-    }
-
+    /** The arrived text's route is withdrawn (spec 005 FR-007): refused as any unmapped path. */
     @Test
-    void arrived_should_serve_both_groups_and_refuse_a_caller_in_neither() throws Exception {
+    void the_removed_arrived_path_should_be_404_route_not_found_and_counted() throws Exception {
         final UUID shareId = stored("2026-10-02T09:00:00Z");
-
-        for (final String user : List.of(SYSTEM_USER, SECOND_LINE_USER)) {
-            final HttpResponse<byte[]> response = get(arrivedPath(shareId), Map.of(USER_ID_HEADER, user));
-            assertThat(response.statusCode()).as(user).isEqualTo(200);
-            assertThat(response.headers().firstValue("Results-Store-Payload-Form")).as(user).contains("arrived-text");
-        }
-        assertBounded(get(arrivedPath(shareId), Map.of(USER_ID_HEADER, NO_GROUP_USER)), 403, "forbidden");
-        assertBounded(get(arrivedPath(shareId), Map.of()), 401, "unauthenticated");
-        assertBounded(get(arrivedPath(UUID.randomUUID()), Map.of(USER_ID_HEADER, SYSTEM_USER)), 404,
-                "share_not_found");
-        assertBounded(get(SHARES + "/1-1-1-1-1/payload/arrived", Map.of(USER_ID_HEADER, SYSTEM_USER)), 400,
-                "invalid_share_id");
-    }
-
-    @Test
-    void arrived_body_parsed_should_equal_the_published_message_without_metadata() throws Exception {
-        final String text = SampleShares.shareWithApplication(hearingId, DAY, "2026-10-02T09:00:00Z",
-                UUID.randomUUID().toString());
-        final UUID shareId = storedEnriched(text);
-        final JsonNode published = MAPPER.readTree(text);
-        ((ObjectNode) published).remove("_metadata");
-
-        final HttpResponse<byte[]> response = get(arrivedPath(shareId), Map.of(USER_ID_HEADER, SYSTEM_USER));
-        assertThat(response.statusCode()).as("status").isEqualTo(200);
-        final HttpResponse<byte[]> payload = get(SHARES + "/" + shareId + "/payload",
-                Map.of(USER_ID_HEADER, SYSTEM_USER));
-        final String etag = response.headers().firstValue("ETag").orElseThrow();
-        final String storedChecksum = jdbc.sql("SELECT payload_sha256 FROM hearing_share WHERE share_id = :id")
-                .param("id", shareId).query(String.class).single();
-        final JsonNode body = MAPPER.readTree(response.body());
-
-        assertThat(body.equals(published)).as("arrived body equals the published message without _metadata")
-                .isTrue();
-        assertThat(body.has("_metadata")).as("has _metadata").isFalse();
-        assertThat(body.get("hearing").get("courtApplications").get(0).has("judicialResults"))
-                .as("application results added").isFalse();
-        assertThat(MAPPER.readTree(payload.body()).get("hearing").get("courtApplications").get(0)
-                .has("judicialResults")).as("the working copy is enriched").isTrue();
-        assertThat(etag).isEqualTo("\"" + PayloadChecksum.sha256Hex(response.body()) + "\"");
-        assertThat(etag).doesNotContain(storedChecksum);
-        assertThat(etag).isNotEqualTo(payload.headers().firstValue("ETag").orElseThrow());
-        assertThat(response.headers().firstValue("Content-Type")).contains("application/json");
-        assertThat(response.headers().firstValue("Content-Length")).contains(Integer.toString(response.body().length));
-        assertThat(response.headers().firstValue("Results-Store-Share-Id")).contains(shareId.toString());
-        assertThat(response.headers().firstValue("Results-Store-Hearing-Id")).contains(hearingId.toString());
-        assertThat(response.headers().firstValue("Results-Store-Hearing-Day")).contains(DAY);
-        assertThat(response.headers().firstValue("Results-Store-Shared-Time")).contains("2026-10-02T09:00:00.000000Z");
-        assertThat(response.headers().firstValue("Results-Store-Enrichment-Applied")).contains("true");
-        assertThat(response.headers().firstValue("Results-Store-Payload-Form")).contains("arrived-text");
-        assertThat(response.headers().firstValue("Cache-Control")).contains("no-store");
-    }
-
-    @Test
-    void arrived_if_none_match_should_give_304() throws Exception {
-        final String path = arrivedPath(stored("2026-10-02T09:00:00Z"));
-        final long durations = meters.get("resultsstore.read.duration").tag("endpoint", "arrived_payload").timer()
+        final double before = meters.get("resultsstore.read.refused").tag("reason", "route_not_found").counter()
                 .count();
-        final long payloadBytes = meters.get("resultsstore.read.payload.bytes").summary().count();
-        final String etag = get(path, Map.of(USER_ID_HEADER, SYSTEM_USER)).headers().firstValue("ETag").orElseThrow();
-        final double notModified = requests("arrived_payload", "not_modified");
 
-        final HttpResponse<byte[]> response = get(path, Map.of(USER_ID_HEADER, SYSTEM_USER, "If-None-Match", etag));
-        final HttpResponse<byte[]> star = get(path, Map.of(USER_ID_HEADER, SYSTEM_USER, "If-None-Match", "*"));
-        final HttpResponse<byte[]> stale = get(path, Map.of(USER_ID_HEADER, SYSTEM_USER, "If-None-Match",
-                "\"" + "0".repeat(64) + "\""));
-
-        assertThat(response.statusCode()).isEqualTo(304);
-        assertThat(response.body()).isEmpty();
-        assertThat(response.headers().allValues("ETag")).containsExactly(etag);
-        assertThat(star.statusCode()).isEqualTo(304);
-        assertThat(star.headers().allValues("ETag")).containsExactly(etag);
-        assertThat(stale.statusCode()).isEqualTo(200);
-        assertThat(requests("arrived_payload", "not_modified")).isEqualTo(notModified + 2);
-        assertThat(meters.get("resultsstore.read.duration").tag("endpoint", "arrived_payload").timer().count())
-                .as("one duration per arrived call").isEqualTo(durations + 4);
-        assertThat(meters.get("resultsstore.read.payload.bytes").summary().count())
-                .as("the payload meter moves on each body built").isGreaterThan(payloadBytes);
+        assertBounded(get(SHARES + "/" + shareId + "/payload/arrived", Map.of(USER_ID_HEADER, SYSTEM_USER)), 404,
+                "route_not_found");
+        assertThat(meters.get("resultsstore.read.refused").tag("reason", "route_not_found").counter().count())
+                .isEqualTo(before + 1);
     }
 
     @Test

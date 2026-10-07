@@ -40,8 +40,7 @@ class MicrometerReadObserverTest {
         final List<String> expectedPairs = new ArrayList<>();
         for (final ReadEndpoint endpoint : ReadEndpoint.values()) {
             for (final ReadOutcome outcome : ReadOutcome.values()) {
-                if (outcome != ReadOutcome.NOT_MODIFIED || endpoint == ReadEndpoint.PAYLOAD
-                        || endpoint == ReadEndpoint.ARRIVED_PAYLOAD) {
+                if (outcome != ReadOutcome.NOT_MODIFIED || endpoint == ReadEndpoint.PAYLOAD) {
                     expectedPairs.add(endpoint.tag() + "/" + outcome.tag());
                 }
             }
@@ -92,19 +91,6 @@ class MicrometerReadObserverTest {
         assertThat(registry.get(PAYLOAD_BYTES).summary().count()).isOne();
         assertThat(registry.get(PAYLOAD_BYTES).summary().totalAmount()).isEqualTo(39_000.0);
         assertThat(registry.find(REQUESTS).counters()).extracting(Counter::count).containsOnlyOnce(1.0);
-    }
-
-    @Test
-    void arrived_payload_should_be_registered_with_not_modified() {
-        assertThat(registry.find(REQUESTS).tag("endpoint", "arrived_payload").counters())
-                .extracting(counter -> counter.getId().getTag("outcome"))
-                .containsExactlyInAnyOrder("ok", "not_modified", "bad_request", "not_found", "unavailable", "failed");
-
-        observer.request(ReadEndpoint.ARRIVED_PAYLOAD, ReadOutcome.NOT_MODIFIED, Duration.ofMillis(5));
-
-        assertThat(registry.get(REQUESTS).tag("endpoint", "arrived_payload").tag("outcome", "not_modified").counter()
-                .count()).isOne();
-        assertThat(registry.get(DURATION).tag("endpoint", "arrived_payload").timer().count()).isOne();
     }
 
     @Test

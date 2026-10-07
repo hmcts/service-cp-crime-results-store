@@ -62,12 +62,6 @@ public class SharesController implements SharesApi {
     }
 
     @Override
-    public ResponseEntity<byte[]> getShareArrivedPayload(final UUID shareId, final String ifNoneMatch) {
-        // As the payload: Spring answers If-None-Match from the entity's ETag; only "*" is answered here.
-        return PayloadResponses.answer(service.arrivedPayload(shareId), ifNoneMatch);
-    }
-
-    @Override
     public ResponseEntity<DayVersions> listHearingDayShares(final UUID hearingId, final LocalDate hearingDay) {
         return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
                 .body(ShareResponseMapper.dayVersions(service.dayVersions(hearingId, hearingDay)));

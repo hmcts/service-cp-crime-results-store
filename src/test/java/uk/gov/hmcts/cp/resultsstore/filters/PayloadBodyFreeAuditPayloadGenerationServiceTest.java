@@ -41,7 +41,7 @@ class PayloadBodyFreeAuditPayloadGenerationServiceTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"})
+    @EnumSource(value = ApiRoute.class, names = "GET_SHARE_PAYLOAD")
     void the_payload_routes_should_be_replaced_by_the_marker(final ApiRoute route) {
         for (final String headerName : new String[] {"CPP-ACTION", "cpp-action"}) {
             final AuditPayload payload = service.generatePayload(response(headerName, route.action()));
@@ -54,7 +54,7 @@ class PayloadBodyFreeAuditPayloadGenerationServiceTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"},
+    @EnumSource(value = ApiRoute.class, names = "GET_SHARE_PAYLOAD",
             mode = EnumSource.Mode.EXCLUDE)
     void every_other_route_should_be_left_to_the_library(final ApiRoute route) {
         final ObjectNode ours = service.generatePayload(response("CPP-ACTION", route.action())).content();

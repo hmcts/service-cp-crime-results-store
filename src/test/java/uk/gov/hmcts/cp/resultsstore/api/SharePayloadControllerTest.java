@@ -22,7 +22,6 @@ import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.support.ShareViews;
@@ -34,8 +33,6 @@ import uk.gov.hmcts.cp.resultsstore.support.ShareViews;
 class SharePayloadControllerTest {
 
     private static final String PAYLOAD_PATH = "/results-store/v1/shares/" + ShareViews.SHARE_ID + "/payload";
-
-    private static final String ARRIVED_PATH = PAYLOAD_PATH + "/arrived";
 
     /** Spacing, key order and escapes Jackson would change if it wrote the body: "é" and a raw "\u00e9". */
     private static final byte[] BODY = ("{\"hearing\": {\"id\": \"x\", \"note\": \"caf\u00e9 \\u00e9\"}, "
@@ -105,7 +102,7 @@ class SharePayloadControllerTest {
     }
 
     @Test
-    void identity_enrichment_and_form_headers_should_be_present() throws Exception {
+    void identity_and_enrichment_headers_should_be_present() throws Exception {
         final MockHttpServletResponse response = fetch(null);
 
         assertThat(response.getHeader("Results-Store-Share-Id")).isEqualTo(ShareViews.SHARE_ID.toString());
@@ -113,63 +110,12 @@ class SharePayloadControllerTest {
         assertThat(response.getHeader("Results-Store-Hearing-Day")).isEqualTo("2026-10-02");
         assertThat(response.getHeader("Results-Store-Shared-Time")).isEqualTo("2026-10-02T16:41:07.500000Z");
         assertThat(response.getHeader("Results-Store-Enrichment-Applied")).isEqualTo("true");
-        assertThat(response.getHeader("Results-Store-Payload-Form")).isEqualTo("working-copy");
     }
 
+    /** The form header went with the arrived text (spec 005 FR-006). */
     @Test
-    void the_arrived_text_form_should_be_named_in_its_header() throws Exception {
-        when(service.payload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(BODY, ETAG, ShareViews.SHARE_ID,
-                ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.parse("2026-10-02T16:41:07Z"), false,
-                PayloadForm.ARRIVED_TEXT));
-
-        final MockHttpServletResponse response = fetch(null);
-
-        assertThat(response.getHeader("Results-Store-Payload-Form")).isEqualTo("arrived-text");
-        assertThat(response.getHeader("Results-Store-Enrichment-Applied")).isEqualTo("false");
-    }
-
-    /** Phase D: the arrived text goes through the same response, with its own form. */
-    @Test
-    void arrived_body_should_be_byte_identical_to_the_service_bytes_with_form_arrived_text() throws Exception {
-        when(service.arrivedPayload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(BODY, ETAG,
-                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY,
-                Instant.parse("2026-10-02T16:41:07.5Z"), true, PayloadForm.ARRIVED_TEXT));
-
-        final MockHttpServletResponse response = mvc.perform(get(ARRIVED_PATH)).andReturn().getResponse();
-        final MockHttpServletResponse notModified = mvc.perform(get(ARRIVED_PATH).header("If-None-Match", ETAG))
-                .andReturn().getResponse();
-        final MockHttpServletResponse star = mvc.perform(get(ARRIVED_PATH).header("If-None-Match", "*"))
-                .andReturn().getResponse();
-
-        assertThat(response.getStatus()).isEqualTo(200);
-        assertThat(response.getContentAsByteArray()).isEqualTo(BODY);
-        assertThat(response.getHeaders("ETag")).containsExactly(ETAG);
-        assertThat(response.getHeader("Results-Store-Payload-Form")).isEqualTo("arrived-text");
-        assertThat(response.getHeader("Results-Store-Enrichment-Applied")).isEqualTo("true");
-        assertThat(response.getHeader("Results-Store-Share-Id")).isEqualTo(ShareViews.SHARE_ID.toString());
-        assertThat(response.getHeader("Results-Store-Hearing-Id")).isEqualTo(ShareViews.HEARING_ID.toString());
-        assertThat(response.getHeader("Results-Store-Hearing-Day")).isEqualTo("2026-10-02");
-        assertThat(response.getHeader("Results-Store-Shared-Time")).isEqualTo("2026-10-02T16:41:07.500000Z");
-        assertThat(response.getHeader("Cache-Control")).isEqualTo("no-store");
-        assertThat(response.getContentType()).isEqualTo("application/json");
-        assertThat(response.getContentLength()).isEqualTo(BODY.length);
-        assertThat(notModified.getStatus()).isEqualTo(304);
-        assertThat(notModified.getContentAsByteArray()).isEmpty();
-        assertThat(star.getStatus()).isEqualTo(304);
-        assertThat(star.getHeaders("ETag")).containsExactly(ETAG);
-    }
-
-    @Test
-    void an_unreadable_arrived_text_should_be_500_internal_error_with_the_bounded_body() throws Exception {
-        when(service.arrivedPayload(ShareViews.SHARE_ID))
-                .thenThrow(new EnvelopeMetadata.UnreadablePayloadException("JsonParseException"));
-
-        final MockHttpServletResponse response = mvc.perform(get(ARRIVED_PATH)).andReturn().getResponse();
-
-        assertThat(response.getStatus()).isEqualTo(500);
-        assertThat(response.getContentType()).isEqualTo("application/problem+json");
-        assertThat(JsonMapper.builder().build().readTree(response.getContentAsByteArray()).get("reason").asString())
-                .isEqualTo("internal_error");
+    void the_payload_should_carry_no_payload_form_header() throws Exception {
+        assertThat(fetch(null).getHeaderNames()).doesNotContain("Results-Store-Payload-Form");
     }
 
     @Test

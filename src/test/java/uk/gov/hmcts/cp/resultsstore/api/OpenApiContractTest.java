@@ -72,7 +72,7 @@ class OpenApiContractTest {
 
     @Test
     void every_controller_mapping_should_be_described() {
-        assertThat(operations()).hasSize(5).allSatisfy(operation -> {
+        assertThat(operations()).hasSize(4).allSatisfy(operation -> {
             assertThat(operation.getAnnotation(RequestMapping.class).method()).containsExactly(RequestMethod.GET);
             assertThat(describedGets()).containsKey(path(operation));
             assertThat(describedGets().get(path(operation)).getOperationId()).isEqualTo(operation.getName());
