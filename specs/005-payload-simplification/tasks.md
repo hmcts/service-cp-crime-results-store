@@ -351,9 +351,13 @@ names a share id only).
 
 ## After the api release (the orchestrator's step)
 
-- [ ] T008 Pin `api-results-store = "0.3.0"` in gradle/libs.versions.toml (comment updated);
+- [X] T008 Pin `api-results-store = "0.3.0"` in gradle/libs.versions.toml (comment updated);
   `./gradlew validateApiSpecVersions` and the full build green; `OpenApiContractDriftTest` green
   against the released jar. Commit `build(read): take the released read API contract 0.3.0`.
+  - Done 2026-10-07: api `main` fast-forwarded to 8fb8ea6 and Release `v0.3.0` published `0.3.0` to
+    hmcts-lib; `./gradlew --refresh-dependencies validateApiSpecVersions build pmdMain pmdTest
+    jacocoTestReport`: BUILD SUCCESSFUL, 1932 tests, 0 failures, `OpenApiContractDriftTest` green
+    against the released jar.
 
 ## Dependencies
 
