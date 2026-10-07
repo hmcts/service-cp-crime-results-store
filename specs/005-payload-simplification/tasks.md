@@ -30,7 +30,7 @@ names a share id only).
 
 ## Phase: the write side
 
-- [ ] T001 [US1] `NulSafety.strip` (unit only). Seam first so the tests compile:
+- [X] T001 [US1] `NulSafety.strip` (unit only). Seam first so the tests compile:
   `public static String strip(final String text) { return text; }` in
   src/main/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafety.java. Tests in
   src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/NulSafetyTest.java:
@@ -53,8 +53,13 @@ names a share id only).
     `isJsonbSafe` and its tests stay until T002. Class javadoc rewritten: what the strip removes
     and why (`jsonb` refuses them; the text column keeps them).
   - Done when: `NulSafetyTest` green; `./gradlew test --tests '*NulSafetyTest'` quoted red then green.
-  - RED:
-  - GREEN:
+  - RED: `./gradlew test --tests '*NulSafetyTest.strip_should_remove*'` against the seam:
+    `strip_should_remove_the_nul_escape_and_each_unpaired_surrogate_escape [1] text = "\\u0000", expected = "" FAILED`
+    `AssertionFailedError: expected: "" but was: "\u0000"` (and `[2] expected: "xy" but was: "x\u0000y"`, ...);
+    `strip_should_be_idempotent [14] text = "\\u0000" FAILED` (the stripped text still holds an escape
+    `jsonb` refuses); 54 tests completed, 14 failed (`failFast`).
+  - GREEN: `./gradlew test --tests '*NulSafetyTest'`: BUILD SUCCESSFUL, 78 tests, 0 failures, 0 skipped;
+    `./gradlew test`: BUILD SUCCESSFUL, 2025 tests, 0 failures.
 
 - [ ] T002 [US1] Store the stripped working copy for every share. Tests first:
   - src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java:

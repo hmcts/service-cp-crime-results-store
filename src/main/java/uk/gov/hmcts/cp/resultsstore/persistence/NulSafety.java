@@ -1,14 +1,16 @@
 package uk.gov.hmcts.cp.resultsstore.persistence;
 
 /**
- * Whether PostgreSQL {@code jsonb} can hold a payload's parsed copy (research R8, FR-015).
+ * The escapes PostgreSQL {@code jsonb} refuses, removed from the working copy (spec 005 FR-001).
  *
  * <p>{@code jsonb} refuses the escape {@code \u0000} and an escaped UTF-16 surrogate that is not half
- * of a pair (a high one followed at once by a low one). The text column takes both, so such a payload
- * is stored as text with no parsed copy. The scan reads escapes as JSON does: a backslash and the
- * character after it are one escape, so an escaped backslash followed by {@code u0000} is plain text.
- * Raw characters are not checked: the parser has already refused a raw U+0000, and the text arrived
- * as a Java string.
+ * of a pair (a high one followed at once by a low one). The text column takes both, so
+ * {@code payload_text} keeps them; the working copy is written without them, so every share has one.
+ * Removal is plain removal: no replacement character, and nothing else changes. The scan reads escapes
+ * as JSON does: a backslash and the character after it are one escape, so an escaped backslash
+ * followed by {@code u0000} is plain text. A removed escape starts and ends on an escape boundary, so
+ * removing one never makes another, and stripping twice changes nothing more. Raw characters are not
+ * checked: the parser has already refused a raw U+0000, and the text arrived as a Java string.
  */
 public final class NulSafety {
 
@@ -23,6 +25,32 @@ public final class NulSafety {
 
     private NulSafety() {
         // Static functions only.
+    }
+
+    /**
+     * The text with the escapes {@code jsonb} refuses removed.
+     *
+     * @param text a JSON text
+     * @return the text without them
+     */
+    public static String strip(final String text) {
+        final StringBuilder kept = new StringBuilder(text.length());
+        int index = 0;
+        while (index < text.length()) {
+            if (text.charAt(index) == BACKSLASH) {
+                final int unit = unicodeEscape(text, index);
+                final boolean storable = isStorable(text, index, unit);
+                final int length = stripLength(unit, storable);
+                if (storable) {
+                    kept.append(text, index, Math.min(index + length, text.length()));
+                }
+                index += length;
+            } else {
+                kept.append(text.charAt(index));
+                index++;
+            }
+        }
+        return kept.toString();
     }
 
     /**
@@ -57,6 +85,11 @@ public final class NulSafety {
             storable = true;
         }
         return storable;
+    }
+
+    /** A kept surrogate pair is two escapes; any other unit escape is one, kept or not. */
+    private static int stripLength(final int unit, final boolean storable) {
+        return storable && Character.isHighSurrogate((char) unit) ? 2 * ESCAPE_LENGTH : escapeLength(unit);
     }
 
     /** The other escapes are two characters long; a short or missing one is passed over. */
