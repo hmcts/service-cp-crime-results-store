@@ -178,4 +178,5 @@ declares four operations.
 | D-ENRICHED | Keep the enriched-copy refusal and the `unstorable_results` re-run? | No. The removal applies to the enriched copy too; there is nothing left to refuse (FR-004) |
 | D-FORM-HEADER | Keep `Results-Store-Payload-Form` with one value? | No. Removed from the contract with the arrived operation (FR-006, FR-007) |
 | D-SCHEMA | Add `NOT NULL` to `payload_json`? | No. No Flyway change; the sweep's text fallback stays for a pre-005 row (FR-008) |
+| D-LONE-SURROGATE | Jackson writes a lone surrogate in a progression result as a raw UTF-16 unit, not an escape, so the strip cannot see it on the enriched copy; the JDBC encoder writes `?` in its place | Left as is: pre-existing, theoretical, `payload_text` unaffected. A raw-surrogate pass in the strip only if the guarantee must be literal |
 | D-BUMP | MINOR or MAJOR? | MINOR, 2.3.0: the store's own code still refuses nothing; the database's limit is named, not a rule reversed |

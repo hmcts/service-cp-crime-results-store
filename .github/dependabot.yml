@@ -11,6 +11,10 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # Held at the audit starter's version (build.gradle): a newer parser leaves a response $ref
+      # unresolved, so OpenApiDocumentTest would read the document differently from the runtime.
+      - dependency-name: "io.swagger.parser.v3:swagger-parser"
     groups:
       all-dependencies:
         patterns:

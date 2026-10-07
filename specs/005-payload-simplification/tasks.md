@@ -55,6 +55,10 @@ names a share id only).
     `isJsonbSafe` and its tests stay until T002. Class javadoc rewritten: what the strip removes
     and why (`jsonb` refuses them; the text column keeps them).
   - Done when: `NulSafetyTest` green; `./gradlew test --tests '*NulSafetyTest'` quoted red then green.
+  - Build note (outside the task list): `main` took dependabot's swagger-parser 2.1.48 (#7) on
+    2026-10-07; it leaves a response `$ref` unresolved, so `OpenApiDocumentTest` read the document
+    differently from the audit filter at runtime. Held at the audit starter's 2.1.20 in build.gradle
+    (commit c667e3d) and ignored in `.github/dependabot.yml`.
   - RED: `./gradlew test --tests '*NulSafetyTest.strip_should_remove*'` against the seam:
     `strip_should_remove_the_nul_escape_and_each_unpaired_surrogate_escape [1] text = "\\u0000", expected = "" FAILED`
     `AssertionFailedError: expected: "" but was: "\u0000"` (and `[2] expected: "xy" but was: "x\u0000y"`, ...);

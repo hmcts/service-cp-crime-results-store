@@ -231,7 +231,7 @@ public class JdbcShareStore implements ShareStore {
         final AtomicLong insertSent = new AtomicLong();
         final StoreResult committed;
         try {
-            committed = storeTransaction.execute(status -> storeLocked(request, insertSent));
+            committed = storeTransaction.execute(_ -> storeLocked(request, insertSent));
         } catch (final DataAccessException | TransactionException failure) {
             throw RetryableFailures.classify(IntakeStage.STORE, failure);
         }

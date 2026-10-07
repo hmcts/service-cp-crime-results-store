@@ -8,7 +8,8 @@ package uk.gov.hmcts.cp.resultsstore.persistence;
  * {@code payload_text} keeps them; the working copy is written without them, so every share has one.
  * Removal is plain removal: no replacement character, and nothing else changes. The scan reads escapes
  * as JSON does: a backslash and the character after it are one escape, so an escaped backslash
- * followed by {@code u0000} is plain text. A removed escape starts and ends on an escape boundary, so
+ * followed by {@code u0000} is plain text. In a JSON text the parser has accepted, where every
+ * unicode escape has its four hex digits, a removed escape starts and ends on an escape boundary, so
  * removing one never makes another, and stripping twice changes nothing more. Raw characters are not
  * checked: the parser has already refused a raw U+0000, and the text arrived as a Java string.
  */

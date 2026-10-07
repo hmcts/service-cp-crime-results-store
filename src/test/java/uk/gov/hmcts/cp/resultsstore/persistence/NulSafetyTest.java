@@ -31,6 +31,7 @@ class NulSafetyTest {
         "{\"a\":\"\\u0001\"}",
         // A trailing backslash or a short escape cannot be a NUL escape.
         "\\",
+        "\\u",
         "\\u00",
         // A unicode escape with a non-hex digit is malformed, so passed over.
         "{\"a\":\"\\uZZZZ\"}",
@@ -52,6 +53,10 @@ class NulSafetyTest {
             Arguments.of("\\uD800\\u0041", "\\u0041"),
             Arguments.of("\\uD800\\n", "\\n"),
             Arguments.of("\\uD800\\u0000\\uDC00", ""),
+            // An unpaired high escape before a short escape, a raw pair, or at the end of the text; a low one alone.
+            Arguments.of("\\uD800\\u00", "\\u00"),
+            Arguments.of("\\uD800\uD800\uDC00", "\uD800\uDC00"),
+            Arguments.of("\\uDC00", ""),
             Arguments.of("{\"a\":\"\\\\\\u0000\"}", "{\"a\":\"\\\\\"}"));
     }
 
