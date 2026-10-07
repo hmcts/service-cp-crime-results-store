@@ -156,6 +156,8 @@ Support staff see how many reads each endpoint served and with what outcome, how
 
 ### User Story 8 - A consumer fetches the text as it arrived, without the envelope metadata (Priority: P8, phase D)
 
+*Amended by spec 005*: phase D is withdrawn; no consumer took the endpoint up, and the arrived text stays in the store for support (specs/005-payload-simplification FR-007).
+
 Probation (S10) builds today's EXT view from the raw event, before enrichment. It fetches `GET /shares/{shareId}/payload/arrived` and gets the text hearing sent, with `_metadata` removed, and an `ETag` that is the SHA-256 of exactly the bytes it received.
 
 **Why this priority**: It serves one consumer's ask. D-RAW is accepted (E2); it is its own phase so phases A to C never wait on it.
@@ -247,6 +249,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 **Payload**
 
 - **FR-033**: `GET /shares/{shareId}/payload` MUST return, as `application/json`, the exact UTF-8 bytes of the working copy **without its `_metadata` member**, as the database writes it as text (E8). When the working copy is empty it MUST return `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text (002 FR-041, as amended by 003). If that text ever fails to parse, the answer MUST be `500 internal_error`, never the text with `_metadata`.
+  *Amended by spec 005*: every share has a working copy; the `payload_text` fallback and its `500` case are withdrawn, and so is the `Results-Store-Payload-Form` header of FR-035 (specs/005-payload-simplification FR-006).
 - **FR-034**: The `ETag` MUST be strong and quoted: the lower-case SHA-256 hex of exactly the bytes in the body. `payload_sha256` MUST never be offered as this endpoint's `ETag`.
 - **FR-035**: The response MUST carry `Results-Store-Share-Id`, `Results-Store-Hearing-Id`, `Results-Store-Hearing-Day`, `Results-Store-Shared-Time`, `Results-Store-Enrichment-Applied` (`true` or `false`), `Results-Store-Payload-Form` (`working-copy` or `arrived-text`) and `Cache-Control: no-store`.
 - **FR-036**: `If-None-Match` matching the current `ETag` (weak comparison; a list or `*` accepted) MUST give `304` with exactly one `ETag` header and no body.
@@ -258,6 +261,7 @@ Probation (S10) builds today's EXT view from the raw event, before enrichment. I
 **Arrived text (phase D; D-RAW accepted, E2)**
 
 - **FR-041**: `GET /shares/{shareId}/payload/arrived` MUST return `payload_text` parsed by the service, with `_metadata` removed, written back as JSON text: the text as it arrived, without the envelope metadata. It MUST have its own action and allow rule. Its `ETag` MUST be the quoted lower-case SHA-256 hex of exactly the bytes served; It is not offered as, nor to be compared with, `payload_sha256` (that checksum is over the text as it arrived); the two coincide only for a compact message that held no `_metadata`. It MUST carry the same headers as FR-035 with `Results-Store-Payload-Form: arrived-text`, and FR-036 and FR-037 apply to it.
+  *Amended by spec 005*: withdrawn. The route, its action, rule, query and meters are removed; a request for it is `404 route_not_found` (specs/005-payload-simplification FR-007).
 
 **Errors**
 

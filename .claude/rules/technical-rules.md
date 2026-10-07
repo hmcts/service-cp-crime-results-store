@@ -31,7 +31,8 @@ private JdbcShareStore store;
 - **The arrived text stays as received.** Keep the exact text in `payload_text`, with the checksum
   over it. Parse it into a Jackson tree (`tools.jackson`, Jackson 3) to read the identity fields,
   add the intake enrichment and extract the indexed columns; that tree, stored as `payload_json`,
-  is the working copy the read API serves (constitution Principle II). Never bind the whole
+  is the working copy the read API serves (constitution Principle II); the `\u0000` escape and
+  unpaired surrogate escapes are removed from the working copy only. Never bind the whole
   hearing payload to a typed model, and never re-serialise a tree in place of `payload_text`
 - What this service *produces* (API responses) is typed records
 - Use sealed interfaces for polymorphic types (e.g. intake outcomes)

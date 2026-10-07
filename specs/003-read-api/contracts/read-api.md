@@ -283,6 +283,8 @@ the same shares for the same days, clock changes included.
 
 ### 4.4 The payload: `GET /results-store/v1/shares/{shareId}/payload`
 
+*Amended by spec 005*: the body is always the working copy (every share has one) and the `Results-Store-Payload-Form` header is withdrawn (specs/005-payload-simplification FR-006).
+
 **Body.** The payload the store holds, as `application/json` (no charset parameter; UTF-8),
 **without the message envelope's metadata**:
 
@@ -340,6 +342,8 @@ upgrade, compare content, not bytes.
 - No visibility lag.
 
 ### 4.6 The arrived text: `GET /results-store/v1/shares/{shareId}/payload/arrived`
+
+*Amended by spec 005*: this endpoint is withdrawn (contract `0.3.0`); a request for it is `404 route_not_found` (specs/005-payload-simplification FR-007).
 
 Built in phase D of spec 003 (operation `getShareArrivedPayload`; action
 `results-store.get-share-arrived-payload`, with its own allow rule admitting "System Users" and "Second

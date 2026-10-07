@@ -310,7 +310,7 @@ names a share id only).
   - GREEN: `[container-smoke] PASS: readiness reported UP within the 60s budget`;
     `[container-smoke] PASS: intake stored the share enriched and the read API served it to admitted callers only`.
 
-- [ ] T007 [US1] [US2] The documents (spec FR-009, FR-010). .specify/memory/constitution.md:
+- [X] T007 [US1] [US2] The documents (spec FR-009, FR-010). .specify/memory/constitution.md:
   version 2.2.0 → 2.3.0 (MINOR); Principle II reworded: the working copy is the text parsed, with
   the finalised application results set in at intake and with the `\u0000` escape and every
   unpaired surrogate escape removed, so every stored share has a working copy; that removal is the
@@ -340,6 +340,10 @@ names a share id only).
   §4.4 (the form header) and §4.6 (the arrived text, withdrawn); specs/003-read-api/contracts/metrics.md
   (`arrived_payload`). No code change; exempt from TDD; one commit `docs(spec): ...`.
   - Done when: every file above carries the note; `grep -rn "parsed.copy.skipped\|get-share-arrived-payload\|Payload-Form" src scripts` is empty; the constitution footer reads 2.3.0.
+  - Result: every file above carries its note; the grep is empty over `src/main` and `scripts`, and over
+    `src/test` finds only the four negative assertions T004 itself asks for (`OpenApiDocumentTest`,
+    `ResultsStoreRulesTest`, `SharePayloadControllerTest`, `ReadApiIT`: the header absent, the action
+    refused); the constitution footer reads 2.3.0.
 
 ## After the api release (the orchestrator's step)
 

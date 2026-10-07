@@ -42,6 +42,8 @@ a value of `ApplicationLookupOutcome`.
 | `resultsstore.enrichment.skipped` | `reason` = `disabled` \| `already_stored` \| `unstorable_results` | a share needing lookups made none because enrichment is off (`disabled`) or the share was already stored (`already_stored`); or the enriched copy could not be held and the arrived copy was stored instead (`unstorable_results`) | FR-005, FR-006, FR-031 |
 | `resultsstore.enrichment.applied` | — | a share was stored with `enrichment_applied = true` (after commit) | FR-030 |
 
+*Amended by spec 005*: the `unstorable_results` reason is withdrawn; the store refuses no enriched copy (specs/005-payload-simplification FR-004).
+
 A share with no application needing a lookup moves none of these.
 
 ## New timer

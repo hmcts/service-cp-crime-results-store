@@ -150,6 +150,7 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 
 - A message with no broker message id: it is keyed by `sha256:<checksum of its text>` and counted.
 - A payload containing the character `\u0000`: the text is stored; the parsed copy is left empty; a counter goes up.
+  *Amended by spec 005*: the parsed copy is stored with the escape removed; nothing is counted (specs/005-payload-simplification FR-001, FR-005).
 - A share sent between 00:00 and 01:00 BST: `shared_day_london` and `shared_day_utc` differ, and both are stored. Both clock-change days are covered.
 - `sharedTime` written with different numbers of fraction digits for the same instant (for example `…50.706Z` and `…50.7060Z`): see FR-012.
 - A defendant with no `isYouth` (for example a company): the share's youth flag is empty (unknown), not false.
@@ -187,6 +188,7 @@ Support staff see counts of messages received, shares stored, non-shares, duplic
 - **FR-015**: The payload MUST be stored as the exact text that arrived, with its size in bytes, and a parsed copy. If the text contains `\u0000`, the parsed copy MUST be left empty and a counter MUST go up. Nothing in 001 reads the parsed copy.
   *Amended by spec 003*: the read API serves the working copy (the parsed copy as spec 002 made it) without `_metadata`, and the text, likewise without it, when the working copy is empty (specs/003-read-api FR-033).
   - *Amended by spec 002* (see [spec 002, *Changes to spec 001*](../002-enrichment/spec.md#changes-to-spec-001)): the parsed copy is no longer unread. It holds the enriched working copy, is permanent, and is the copy key details are read from. The text stays exactly as it arrived.
+  - *Amended by spec 005* (specs/005-payload-simplification FR-001 to FR-005): the `\u0000` escape and unpaired surrogate escapes are removed from the parsed copy, so it is never left empty; the counter is withdrawn. A text the database still cannot hold as `jsonb` fails like any database error.
 - **FR-016**: The share MUST hold `payload_sha256`: the SHA-256 of the stored text in UTF-8, as 64 hex characters.
   - *Amended by spec 002* (see [spec 002, *Changes to spec 001*](../002-enrichment/spec.md#changes-to-spec-001)): unchanged in meaning; `payload_sha256` is over the arrived text, never the enriched working copy.
 - **FR-017**: The share MUST hold `shared_at` (from `sharedTime`), `shared_day_london` (its date by the UK clock), `shared_day_utc` (its UTC date), `stored_at` (the database clock when the row is inserted) and `stored_seq` (*given by the database when the share is inserted*; it only goes up and may have gaps).

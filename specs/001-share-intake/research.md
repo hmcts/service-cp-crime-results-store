@@ -238,6 +238,8 @@ binding to a typed model (the technical rules forbid it).
 
 ## R8. `\u0000`, raw NUL and the parsed `jsonb` copy
 
+*Amended by spec 005* (specs/005-payload-simplification FR-001 to FR-005): `NulSafety.strip` removes the escaped `\u0000` and each unpaired surrogate escape from the parsed copy before the one payload insert, so `payload_json` is never NULL; the savepoint, the class-22 handling and `resultsstore.intake.parsed.copy.skipped` are withdrawn. Any other `jsonb` refusal fails the store transaction as a retryable database failure. The raw U+0000 rule below is unchanged.
+
 **Decision.**
 - **Escaped `\u0000` inside JSON** (six characters): valid JSON that PostgreSQL `jsonb` refuses
   ("unsupported Unicode escape sequence"). Before the payload insert, `NulSafety` checks the text

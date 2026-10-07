@@ -80,10 +80,12 @@ planned.
 
 1. `payload_text` and `payload_sha256` describe the arrived message, byte for byte (SC-006).
 2. `enrichment_applied = true` implies `payload_json IS NOT NULL` (SC-007).
+   *Amended by spec 005*: `payload_json IS NOT NULL` for every share written by the service (specs/005-payload-simplification SC-001).
 3. `enrichment_applied = true` implies at least one `hearing.courtApplications[]` element of
    `payload_json` has a non-empty `judicialResults` that the arrived text did not have.
 4. When `enrichment_applied = false` and `payload_json IS NOT NULL`, `payload_json` equals
    `CAST(payload_text AS jsonb)`.
+   *Amended by spec 005*: `payload_json` equals the text with the `\u0000` escape and unpaired surrogate escapes removed, cast to `jsonb`; the text itself is not cast, since a text holding them cannot be (specs/005-payload-simplification FR-001).
 5. No result in an added `judicialResults` array has `amendmentDate`, `amendmentReason` or
    `amendmentReasonId` at its top level.
 6. Apart from added or filled `judicialResults` arrays of court applications, `payload_json` has the

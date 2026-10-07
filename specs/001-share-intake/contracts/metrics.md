@@ -28,6 +28,8 @@ Rules (FR-040, Principle XI):
 | `resultsstore.sweep.rows` | `outcome` = `fixed` \| `failed_again` \| `skipped` \| `error` \| `cancelled` | the sweep finishes one row (`fixed`: re-read and set `OK`; `failed_again`: still unreadable, or the row's own failure (a missing payload row, JSON that does not read, the extractor throwing) recorded as an `UNEXPECTED` attempt; `skipped`: another pod changed it first; `error`: an operational failure, the database failing the payload read or the row's write (the store transaction) throwing, so its projection was left as it was, no attempt was spent and only the try (`projection_tried_at`) was recorded; `cancelled`: the sweep was stopping (`stop()` asked, or the thread interrupted), so no transaction was opened for the row, or a failure met while stopping was put down to the stop, with nothing written and no attempt spent). Every row is counted once, after its transactions end. Sweep failures never move `resultsstore.intake.failed` | FR-037, FR-038 |
 | `resultsstore.sweep.rounds.failed` | — | a sweep round throws before its rows are worked (the candidate read), or with an `Error` (then thrown on: the schedule ends and its liveness contributor goes `DOWN`, quickstart §6); a row's own failures never reach it | FR-037 |
 
+*Amended by spec 005*: `resultsstore.intake.parsed.copy.skipped` is withdrawn; every share has a working copy (specs/005-payload-simplification FR-005).
+
 `cause` comes from the SQLSTATE: `55P03` → `lock_timeout`; `57014` → `statement_timeout`; any
 other `DataAccessException` → `database`; anything else → `other`.
 
