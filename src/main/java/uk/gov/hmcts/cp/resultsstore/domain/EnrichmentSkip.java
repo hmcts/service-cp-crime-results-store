@@ -11,9 +11,7 @@ public enum EnrichmentSkip {
     /** Enrichment is switched off. */
     DISABLED,
     /** The share was already stored, so its lookups were not made again. */
-    ALREADY_STORED,
-    /** The database could not hold the enriched copy; the arrived copy was stored instead. */
-    UNSTORABLE_RESULTS;
+    ALREADY_STORED;
 
     /** The {@code reason} tag. */
     public String tag() {

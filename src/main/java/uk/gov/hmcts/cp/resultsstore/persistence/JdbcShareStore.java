@@ -261,7 +261,7 @@ public class JdbcShareStore implements ShareStore {
             chain.join(identity, request.shareId(), place);
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
-            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), false,
+            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(),
                     request.enrichmentApplied(), Duration.ZERO);
         }
         return result;

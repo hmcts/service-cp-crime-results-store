@@ -145,7 +145,7 @@ class JdbcShareStoreIT {
 
         final Map<String, Object> share = share(request.shareId());
         assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
-                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, false, Duration.ZERO));
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, Duration.ZERO));
         assertThat(share)
                 .containsEntry("hearing_id", hearingId)
                 .containsEntry("hearing_day", Date.valueOf(HEARING_DAY))
@@ -249,7 +249,7 @@ class JdbcShareStoreIT {
 
         final Map<String, Object> share = share(request.shareId());
         assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
-                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, true, Duration.ZERO));
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, true, Duration.ZERO));
         assertThat(share)
                 .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
                 .containsEntry("enrichment_applied", true);

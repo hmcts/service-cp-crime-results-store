@@ -138,7 +138,7 @@ names a share id only).
     --tests '*JdbcShareQueriesIT' --tests '*ReadApiIT' --tests '*NulSafetyTest' --tests '*NoPayloadInLogsIT'`:
     BUILD SUCCESSFUL, 240 tests, 0 failures, 0 skipped.
 
-- [ ] T003 [US1] Remove the skip and refusal types. Tests first:
+- [X] T003 [US1] Remove the skip and refusal types. Tests first:
   - src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java: drop
     `resultsstore.intake.parsed.copy.skipped` and the `unstorable_results` reason from the
     `containsExactly` lists, the event rows and `everyEventWithEveryValue`. RED (the meter is still
@@ -161,8 +161,16 @@ names a share id only).
     Same commit: every `new Stored(` call site (`IntakeServiceTest`, `JdbcShareStoreIT`,
     `JdbcShareStore`) and the switch arm in `persistence/ShareChainIT` (about line 177).
   - Done when: the named classes green.
-  - RED:
-  - GREEN:
+  - RED (one class per run): `MicrometerIntakeObserverTest`:
+    `no_tag_in_the_registry_should_hold_a_value_off_the_lists_an_id_or_a_date() FAILED`
+    `[reason] Expecting SetN: [...] to contain: ["unstorable_results"]` (the reason is still registered);
+    `EnrichmentSkipTest`: `every_tag_should_come_from_the_fixed_list() FAILED`
+    `Expecting actual: ["disabled", "already_stored", "unstorable_results"] to contain exactly (and in same order):
+    ["disabled", "already_stored"]`; `IntakeServiceTest` green already (the new
+    `an_enriched_store_failure_should_be_counted_once_at_store_and_rethrown_after_one_store` included).
+  - GREEN: `./gradlew test --tests '*.MicrometerIntakeObserverTest' --tests '*.EnrichmentSkipTest'
+    --tests '*.IntakeServiceTest' --tests '*JdbcShareStoreIT' --tests '*ShareChainIT'`: BUILD SUCCESSFUL,
+    105 tests, 0 failures, 0 skipped.
 
 ## Phase: the contract
 

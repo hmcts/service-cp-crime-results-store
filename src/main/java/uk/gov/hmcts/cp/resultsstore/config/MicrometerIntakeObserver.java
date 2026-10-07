@@ -45,8 +45,6 @@ public class MicrometerIntakeObserver implements IntakeObserver {
 
     private static final String MESSAGE_ID_MISSING_METER = PREFIX + "intake.message.id.missing";
 
-    private static final String PARSED_COPY_SKIPPED_METER = PREFIX + "intake.parsed.copy.skipped";
-
     private static final String EXTRACTION_FAILED_METER = PREFIX + "extraction.failed";
 
     private static final String SWEEP_ROWS_METER = PREFIX + "sweep.rows";
@@ -85,7 +83,7 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     public MicrometerIntakeObserver(final MeterRegistry registry) {
         this.registry = registry;
         Arrays.stream(new String[] {RECEIVED_METER, DUPLICATE_METER, ALREADY_SETTLED_METER, MESSAGE_ID_MISSING_METER,
-                        PARSED_COPY_SKIPPED_METER, SWEEP_ROUNDS_FAILED_METER, APPLIED_METER, OVERRUN_METER})
+                        SWEEP_ROUNDS_FAILED_METER, APPLIED_METER, OVERRUN_METER})
                 .forEach(name -> Counter.builder(name).register(registry));
         Arrays.stream(ShareOrder.values()).forEach(order -> {
             stored(order);
@@ -139,11 +137,6 @@ public class MicrometerIntakeObserver implements IntakeObserver {
     @Override
     public void duplicate() {
         registry.counter(DUPLICATE_METER).increment();
-    }
-
-    @Override
-    public void parsedCopySkipped() {
-        registry.counter(PARSED_COPY_SKIPPED_METER).increment();
     }
 
     @Override

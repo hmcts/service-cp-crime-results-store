@@ -47,9 +47,6 @@ public interface IntakeObserver {
     /** A share already stored was dropped. */
     void duplicate();
 
-    /** A stored payload's parsed copy was left empty (FR-015). */
-    void parsedCopySkipped();
-
     /**
      * Key details could not be read, and the {@code FAILED} row that says so is committed: a share
      * stored at intake, or a row the sweep retried.
