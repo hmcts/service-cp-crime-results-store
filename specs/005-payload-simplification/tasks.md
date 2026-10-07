@@ -292,7 +292,7 @@ names a share id only).
 
 ## Phase: the smoke and the documents
 
-- [ ] T006 [US1] [US2] The compose smoke. scripts/container-smoke.sh: delete the arrived block (the
+- [X] T006 [US1] [US2] The compose smoke. scripts/container-smoke.sh: delete the arrived block (the
   `stored_checksum` line through the Second Line Support arrived check) and the
   `resultsstore_read_requests_total{endpoint="arrived_payload",...}` metric line; the header comment
   no longer names the arrived text; add a refusal check that
@@ -301,8 +301,14 @@ names a share id only).
   check on `/payload`; **keep** `bool_and(p.payload_json IS NOT NULL)`; if the smoke publishes a
   `\u0000` share, assert it is served from its working copy. RED: the arrived block fails on the
   T005 image (quoted); GREEN: `./scripts/container-smoke.sh` prints `PASS` (quoted).
-  - RED:
-  - GREEN:
+  - There was no `Results-Store-Payload-Form` check on `/payload` left to delete (only the arrived block's),
+    and the smoke publishes no `\u0000` share; the new refusal makes `route_not_found` 2, so its metric line
+    expects `2.0`.
+  - RED (the 004/005 image, the script unchanged): `[container-smoke] FAIL: arrived: 200: expected '200', found
+    '404'` ... `FAIL: metric line missing: resultsstore_read_requests_total{endpoint="arrived_payload",
+    outcome="not_modified"} 1.0`; `[container-smoke] FAIL: 13 read API check(s) failed`.
+  - GREEN: `[container-smoke] PASS: readiness reported UP within the 60s budget`;
+    `[container-smoke] PASS: intake stored the share enriched and the read API served it to admitted callers only`.
 
 - [ ] T007 [US1] [US2] The documents (spec FR-009, FR-010). .specify/memory/constitution.md:
   version 2.2.0 → 2.3.0 (MINOR); Principle II reworded: the working copy is the text parsed, with

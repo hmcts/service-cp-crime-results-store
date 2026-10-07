@@ -5,14 +5,13 @@
 # publish a real-shaped hearing-resulted message to the compose broker, the same message again and
 # an unreadable one, and check the rows they leave. Then enrichment (spec 002 FR-039, SC-010): the
 # share carries two court applications without results, which the progression stub in
-# docker/wiremock/mappings/progression-application.json answers, and the working copy, the arrived
-# text and the stub's request count are checked. Then the read API over HTTP (spec 003 FR-060), with
-# CJSCPPUID as the gateway would send it: pull lists the share once the derived visibility lag (11 s with
-# the compose intake timeouts) has passed; one share; the payload, whose SHA-256 equals its unquoted ETag
-# and which holds no _metadata; If-None-Match 304; the text as it arrived (phase D: before enrichment, no
-# _metadata, its SHA-256 equal to its ETag and not the stored checksum, 304); the day's versions; the bounded
-# 401, 403 and 404 bodies; a vendor Accept still 200; and the read meters. Tears the stack down on every
-# exit path, success or failure.
+# docker/wiremock/mappings/progression-application.json answers, and the working copy, the text as it
+# arrived (in the store) and the stub's request count are checked. Then the read API over HTTP (spec 003
+# FR-060), with CJSCPPUID as the gateway would send it: pull lists the share once the derived visibility
+# lag (11 s with the compose intake timeouts) has passed; one share; the payload, whose SHA-256 equals its
+# unquoted ETag and which holds no _metadata; If-None-Match 304; the day's versions; the bounded 401, 403
+# and 404 bodies, the withdrawn arrived-text path among the 404s (spec 005); a vendor Accept still 200;
+# and the read meters. Tears the stack down on every exit path, success or failure.
 #
 # This is the local equivalent of the "Container smoke" step in
 # .github/workflows/ci-build-publish.yml; both run this same script, so the two cannot drift.
@@ -426,31 +425,6 @@ check "payload: Cache-Control" "no-store" "$(header Cache-Control)"
 check "payload: If-None-Match gives 304" "304" \
   "$(call "/shares/${share_id}/payload" "${as_system[@]}" --header "If-None-Match: ${etag}")"
 
-# The text as it arrived (phase D): before enrichment, without _metadata, hashed to its own ETag, which is
-# never the stored checksum (that is over the text with _metadata).
-stored_checksum=$(query "SELECT payload_sha256 FROM hearing_share WHERE share_id = '${share_id}'")
-check "arrived: 200" "200" "$(call "/shares/${share_id}/payload/arrived" "${as_system[@]}")"
-# A missing header must fail its checks, not stop the script under pipefail.
-arrived_etag=$(header ETag || true)
-check "arrived: SHA-256 of the body equals the unquoted ETag" "${arrived_etag//\"/}" \
-  "$(sha256sum "$WORK_DIR/body" | cut -d ' ' -f 1)"
-check "arrived: the ETag is not the stored checksum" "true" \
-  "$([ -n "$stored_checksum" ] && [ -n "$arrived_etag" ] && [ "${arrived_etag//\"/}" != "$stored_checksum" ] \
-    && echo true || echo false)"
-check "arrived: no _metadata" "false" "$(jq 'has("_metadata")' "$WORK_DIR/body" 2> /dev/null)"
-check "arrived: the hearing it holds" "$HEARING_ID" "$(jq -r '.hearing.id' "$WORK_DIR/body" 2> /dev/null)"
-check "arrived: its first application without the results added at intake" "true" \
-  "$(jq '.hearing.courtApplications[0] | type == "object" and (has("judicialResults") | not)' \
-    "$WORK_DIR/body" 2> /dev/null)"
-check "arrived: Content-Type" "application/json" "$(header Content-Type || true)"
-check "arrived: Results-Store-Payload-Form" "arrived-text" "$(header Results-Store-Payload-Form || true)"
-check "arrived: Results-Store-Enrichment-Applied" "true" "$(header Results-Store-Enrichment-Applied || true)"
-check "arrived: Cache-Control" "no-store" "$(header Cache-Control || true)"
-check "arrived: If-None-Match gives 304" "304" \
-  "$(call "/shares/${share_id}/payload/arrived" "${as_system[@]}" --header "If-None-Match: ${arrived_etag}")"
-check "arrived for a Second Line Support caller: 200" "200" \
-  "$(call "/shares/${share_id}/payload/arrived" --header "CJSCPPUID: ${SECOND_LINE_USER}")"
-
 check "day versions: 200" "200" \
   "$(call "/hearings/${HEARING_ID}/days/${HEARING_DAY}/shares" "${as_system[@]}")"
 check "day versions: the one share, latest, version 1" "${share_id}|true|1" \
@@ -461,6 +435,9 @@ check_refusal "no CJSCPPUID" "401" "unauthenticated" "$(call "/shares/${share_id
 check_refusal "a caller in neither group" "403" "forbidden" \
   "$(call "/shares/${share_id}" --header "CJSCPPUID: ${NO_GROUP_USER}")"
 check_refusal "an unmapped path" "404" "route_not_found" "$(call '/anything' "${as_system[@]}")"
+# The arrived text's route is withdrawn (spec 005 FR-007, FR-011): refused as any unmapped path.
+check_refusal "the withdrawn arrived-text path" "404" "route_not_found" \
+  "$(call "/shares/${share_id}/payload/arrived" "${as_system[@]}")"
 check "a vendor Accept on pull: 200" "200" "$(call '/shares?storedAfterSeq=0' "${as_system[@]}" \
   --header 'Accept: application/vnd.results-store.get-share-payload+json')"
 check "a vendor Accept on pull: answered as application/json" "application/json" "$(header Content-Type)"
@@ -468,8 +445,7 @@ check "a vendor Accept on pull: answered as application/json" "application/json"
 scrape=$(curl --silent --fail --max-time 5 "$PROMETHEUS_URL") || scrape=""
 for line in 'resultsstore_read_requests_total{endpoint="share",outcome="ok"} 2.0' \
     'resultsstore_read_requests_total{endpoint="payload",outcome="not_modified"} 1.0' \
-    'resultsstore_read_requests_total{endpoint="arrived_payload",outcome="not_modified"} 1.0' \
-    'resultsstore_read_refused_total{reason="route_not_found"} 1.0' \
+    'resultsstore_read_refused_total{reason="route_not_found"} 2.0' \
     'resultsstore_read_refused_total{reason="unauthenticated"} 1.0' \
     'resultsstore_read_refused_total{reason="forbidden"} 1.0' \
     'resultsstore_intake_visibility_overrun_total 0.0'; do
