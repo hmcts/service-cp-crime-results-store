@@ -41,7 +41,6 @@ import org.springframework.web.servlet.resource.NoResourceFoundException;
 import uk.gov.hmcts.cp.resultsstore.application.BadParameterException;
 import uk.gov.hmcts.cp.resultsstore.application.NotFoundException;
 import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadEndpoint;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
@@ -146,8 +145,7 @@ class ReadApiExceptionHandlerTest {
         request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE, Map.of("shareId", shareId));
         try (CapturedLog log = CapturedLog.forClass(ReadApiExceptionHandler.class)) {
             assertProblem(handler.internalError(new IllegalStateException(SECRET), request), 500, "internal_error");
-            assertProblem(handler.internalError(new EnvelopeMetadata.UnreadablePayloadException(SECRET), request), 500,
-                    "internal_error");
+            assertProblem(handler.internalError(new RuntimeException(SECRET), request), 500, "internal_error");
 
             assertThat(log.events()).hasSize(2).allSatisfy(event -> {
                 assertThat(event.getFormattedMessage()).doesNotContain(SECRET);
@@ -156,7 +154,7 @@ class ReadApiExceptionHandlerTest {
             });
             assertThat(log.events()).extracting(ILoggingEvent::getFormattedMessage).containsExactly(
                     "Read request failed: java.lang.IllegalStateException",
-                    "Read request failed: " + EnvelopeMetadata.UnreadablePayloadException.class.getName());
+                    "Read request failed: java.lang.RuntimeException");
         }
     }
 

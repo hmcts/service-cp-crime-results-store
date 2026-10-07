@@ -55,8 +55,6 @@ class MicrometerIntakeObserverTest {
 
     private static final String MESSAGE_ID_MISSING = "resultsstore.intake.message.id.missing";
 
-    private static final String PARSED_COPY_SKIPPED = "resultsstore.intake.parsed.copy.skipped";
-
     private static final String EXTRACTION_FAILED = "resultsstore.extraction.failed";
 
     private static final String SWEEP_ROWS = "resultsstore.sweep.rows";
@@ -83,7 +81,7 @@ class MicrometerIntakeObserverTest {
             "status", Set.of("unreadable", "no_identity"),
             "reason", Set.of("not_text_message", "nul_character", "not_json", "not_object", "missing_hearing_id",
                     "invalid_hearing_id", "missing_hearing_day", "invalid_hearing_day", "missing_shared_time",
-                    "invalid_shared_time", "disabled", "already_stored", "unstorable_results"),
+                    "invalid_shared_time", "disabled", "already_stored"),
             "stage", Set.of("receipt", "store", "enrich", "intake", "sweep"),
             "cause", Set.of("lock_timeout", "statement_timeout", "database", "other", "progression_rejected",
                     "progression_refused", "progression_unavailable", "progression_unreachable",
@@ -108,10 +106,10 @@ class MicrometerIntakeObserverTest {
                         Collectors.mapping(MicrometerIntakeObserverTest::tags, Collectors.toSet())));
 
         assertThat(registered).containsOnlyKeys(RECEIVED, STORED, NOT_SHARE, DUPLICATE, ALREADY_SETTLED, FAILED,
-                MESSAGE_ID_MISSING, PARSED_COPY_SKIPPED, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG,
+                MESSAGE_ID_MISSING, EXTRACTION_FAILED, SWEEP_ROWS, SWEEP_ROUNDS_FAILED, LAG,
                 APPLICATIONS, LOOKUP, SKIPPED, APPLIED, OVERRUN);
         for (final String untagged : List.of(RECEIVED, DUPLICATE, ALREADY_SETTLED, MESSAGE_ID_MISSING,
-                PARSED_COPY_SKIPPED, SWEEP_ROUNDS_FAILED, APPLIED, OVERRUN)) {
+                SWEEP_ROUNDS_FAILED, APPLIED, OVERRUN)) {
             assertThat(registered.get(untagged)).as(untagged).containsExactly(Map.of());
         }
         final Set<Map<String, String>> orders = Set.of(Map.of("order", "in_order"), Map.of("order", "out_of_order"));
@@ -142,7 +140,7 @@ class MicrometerIntakeObserverTest {
                 Map.of(OUTCOME, "not_found"), Map.of(OUTCOME, "not_finalised"), Map.of(OUTCOME, "no_results"),
                 Map.of(OUTCOME, "failed"));
         assertThat(registered.get(SKIPPED)).containsExactlyInAnyOrder(Map.of("reason", "disabled"),
-                Map.of("reason", "already_stored"), Map.of("reason", "unstorable_results"));
+                Map.of("reason", "already_stored"));
         assertThat(registry.find(LOOKUP).timers()).hasSize(5);
         assertThat(registry.find(LAG).timers()).hasSize(2);
         assertThat(registry.find(STORED).counters()).hasSize(2);
@@ -161,7 +159,6 @@ class MicrometerIntakeObserverTest {
                 event("stored out of order", o -> o.stored(true, Duration.ofSeconds(1)), STORED,
                         "order", "out_of_order"),
                 event("duplicate", IntakeObserver::duplicate, DUPLICATE),
-                event("parsed copy skipped", IntakeObserver::parsedCopySkipped, PARSED_COPY_SKIPPED),
                 event("extraction failed at intake",
                         o -> o.extractionFailed(ExtractionStage.INTAKE, ExtractionFailureKind.WRONG_TYPE),
                         EXTRACTION_FAILED, "stage", "intake", "kind", "wrong_type"),
@@ -181,8 +178,8 @@ class MicrometerIntakeObserverTest {
                         APPLICATIONS, OUTCOME, "enriched"),
                 event("application with an invalid id", o -> o.applicationLookedUp(ApplicationLookupOutcome.INVALID_ID),
                         APPLICATIONS, OUTCOME, "invalid_id"),
-                event("enrichment skipped", o -> o.enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS), SKIPPED,
-                        "reason", "unstorable_results"),
+                event("enrichment skipped", o -> o.enrichmentSkipped(EnrichmentSkip.ALREADY_STORED), SKIPPED,
+                        "reason", "already_stored"),
                 event("enrichment applied", IntakeObserver::enrichmentApplied, APPLIED),
                 event("visibility overrun", IntakeObserver::visibilityOverrun, OVERRUN));
     }
@@ -284,7 +281,6 @@ class MicrometerIntakeObserverTest {
         observer.messageIdMissing();
         observer.alreadySettled();
         observer.duplicate();
-        observer.parsedCopySkipped();
         observer.sweepRoundFailed();
         observer.stored(true, Duration.ofSeconds(2));
         observer.stored(false, Duration.ofSeconds(2));

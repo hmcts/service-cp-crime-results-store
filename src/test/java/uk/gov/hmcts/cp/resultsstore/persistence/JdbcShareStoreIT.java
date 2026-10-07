@@ -20,7 +20,6 @@ import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import javax.sql.DataSource;
 import org.junit.jupiter.api.AfterEach;
@@ -39,8 +38,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.support.TransactionCallback;
-import org.springframework.transaction.support.TransactionOperations;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.ApplicationAnswer;
@@ -54,7 +51,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
-import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
 import uk.gov.hmcts.cp.resultsstore.domain.DefendantRef;
 import uk.gov.hmcts.cp.resultsstore.domain.ExtractionFailureKind;
@@ -81,18 +77,15 @@ class JdbcShareStoreIT {
 
     private static final String APPLICATION_ID = "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d";
 
-    /** Data-model invariant 2: the flag never true with no working copy. */
-    private static final String FLAG_WITHOUT_COPY = """
-            SELECT count(*) FROM hearing_share s JOIN hearing_share_payload p USING (share_id)
-             WHERE s.enrichment_applied AND p.payload_json IS NULL
+    /** Data-model invariant 2 (spec 005): every share has a working copy. */
+    private static final String NO_WORKING_COPY = """
+            SELECT count(*) FROM hearing_share_payload WHERE payload_json IS NULL
             """;
 
-    /** Data-model invariant 4, guarded so a text jsonb cannot hold is never cast. */
-    private static final String UNENRICHED_COPY_DIFFERS = """
-            SELECT count(*) FROM hearing_share s JOIN hearing_share_payload p USING (share_id)
+    /** Data-model invariant 4: the unenriched shares, whose copy is their text stripped. */
+    private static final String UNENRICHED_TEXTS = """
+            SELECT s.share_id, p.payload_text FROM hearing_share s JOIN hearing_share_payload p USING (share_id)
              WHERE NOT s.enrichment_applied
-               AND CASE WHEN p.payload_json IS NOT NULL THEN p.payload_json <> CAST(p.payload_text AS jsonb)
-                        ELSE FALSE END
             """;
 
     private final ShareIdentityParser parser = new ShareIdentityParser(JsonMapper.builder().build());
@@ -129,8 +122,18 @@ class JdbcShareStoreIT {
 
     @AfterEach
     void dataModelInvariantsHold() {
-        assertThat(jdbc.sql(FLAG_WITHOUT_COPY).query(Integer.class).single()).isZero();
-        assertThat(jdbc.sql(UNENRICHED_COPY_DIFFERS).query(Integer.class).single()).isZero();
+        assertThat(jdbc.sql(NO_WORKING_COPY).query(Integer.class).single()).isZero();
+        final List<Map.Entry<UUID, String>> unenriched = jdbc.sql(UNENRICHED_TEXTS)
+                .query((row, rowNumber) -> Map.entry(row.getObject(1, UUID.class), row.getString(2)))
+                .list();
+        for (final Map.Entry<UUID, String> share : unenriched) {
+            // Compared in the database; a failure names the share id only, never the payload.
+            assertThat(jdbc.sql("""
+                    SELECT payload_json = CAST(:copy AS jsonb) FROM hearing_share_payload WHERE share_id = :shareId
+                    """).param("copy", NulSafety.strip(share.getValue())).param("shareId", share.getKey())
+                    .query(Boolean.class).single())
+                    .as("unenriched working copy of share %s", share.getKey()).isTrue();
+        }
     }
 
     @Test
@@ -142,7 +145,7 @@ class JdbcShareStoreIT {
 
         final Map<String, Object> share = share(request.shareId());
         assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
-                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, false, Duration.ZERO));
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, Duration.ZERO));
         assertThat(share)
                 .containsEntry("hearing_id", hearingId)
                 .containsEntry("hearing_day", Date.valueOf(HEARING_DAY))
@@ -246,7 +249,7 @@ class JdbcShareStoreIT {
 
         final Map<String, Object> share = share(request.shareId());
         assertThat(result).usingRecursiveComparison().ignoringFields("insertToCommit")
-                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, false, true, Duration.ZERO));
+                .isEqualTo(new Stored(request.shareId(), instant(share, "stored_at"), false, true, Duration.ZERO));
         assertThat(share)
                 .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
                 .containsEntry("enrichment_applied", true);
@@ -277,35 +280,32 @@ class JdbcShareStoreIT {
     }
 
     @Test
-    void enriched_copy_holding_an_escaped_nul_should_be_refused_before_any_transaction_and_write_nothing() {
+    void enriched_copy_holding_an_escaped_nul_should_be_stored_stripped_with_the_flag_true() {
         final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, SHARED_TIME, APPLICATION_ID);
         final StoreRequest request = enriched("ID:1", text, SampleShares.finalised("a\\u0000b"));
         assertThat(request.enrichmentApplied()).isTrue();
-        final AtomicInteger transactions = new AtomicInteger();
-        final TransactionTemplate template = new TransactionTemplate(transactionManager);
-        final TransactionOperations counting = new TransactionOperations() {
-            @Override
-            public <T> T execute(final TransactionCallback<T> action) {
-                transactions.incrementAndGet();
-                return template.execute(action);
-            }
-        };
-        final JdbcShareStore counted = new JdbcShareStore(jdbc, counting, receipts, JdbcShareStore.Timeouts.DEFAULTS);
 
-        final StoreResult result = counted.store(request);
+        final StoreResult result = store.store(request);
 
-        assertThat(result).isEqualTo(new EnrichedCopyRefused());
-        assertThat(transactions).hasValue(0);
-        assertNothingWritten();
+        assertThat(result).isInstanceOfSatisfying(Stored.class,
+                stored -> assertThat(stored.enrichmentApplied()).isTrue());
+        assertThat(share(request.shareId()))
+                .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
+                .containsEntry("enrichment_applied", true);
+        assertThat(workingCopy(request.shareId(), text, NulSafety.strip(request.parsedCopy())))
+                .containsEntry("text_matches", true)
+                .containsEntry("working_matches", true)
+                .containsEntry("results", 1);
+        assertThat(receipt("ID:1")).containsEntry("status", "STORED");
     }
 
     @Test
-    void enriched_copy_the_database_refuses_should_roll_back_and_leave_the_connection_usable() throws SQLException {
+    void enriched_copy_the_database_refuses_should_throw_retryable_and_leave_the_connection_usable()
+            throws SQLException {
         final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, SHARED_TIME, APPLICATION_ID);
-        // Passes the escape check, but jsonb refuses the number as out of range (SQLSTATE 22003).
+        // jsonb refuses the number as out of range (SQLSTATE 22003): a database failure like any other.
         final StoreRequest request = enriched("ID:1", text, new ApplicationAnswer.Found(parser.readTree(
                 "{\"applicationStatus\":\"FINALISED\",\"judicialResults\":[{\"big\":1e1000000}]}")));
-        assertThat(NulSafety.isJsonbSafe(request.parsedCopy())).isTrue();
         // One pooled connection for both calls; closing the wrapper hands it back to the pool.
         try (SingleConnectionDataSource single = new SingleConnectionDataSource(dataSource.getConnection(), true)) {
             final JdbcClient singleJdbc = JdbcClient.create(single);
@@ -314,10 +314,11 @@ class JdbcShareStoreIT {
             final JdbcShareStore onOneConnection = new JdbcShareStore(singleJdbc, singleTransaction,
                     new JdbcReceiptStore(singleJdbc, singleTransaction), JdbcShareStore.Timeouts.DEFAULTS);
 
-            final StoreResult refused = onOneConnection.store(request);
-
-            assertThat(refused).isEqualTo(new EnrichedCopyRefused());
+            assertThatThrownBy(() -> onOneConnection.store(request))
+                    .isInstanceOfSatisfying(RetryableIntakeException.class,
+                            failure -> assertThat(failure.getStage()).isEqualTo(IntakeStage.STORE));
             assertNothingWritten();
+
             final StoreResult rerun = onOneConnection.store(SampleShares.request("ID:1", text));
             assertThat(rerun).isInstanceOfSatisfying(Stored.class,
                     stored -> assertThat(stored.enrichmentApplied()).isFalse());
@@ -401,12 +402,15 @@ class JdbcShareStoreIT {
     }
 
     @Test
-    void payload_for_extraction_should_fall_back_to_the_text_when_there_is_no_working_copy() {
+    void payload_for_extraction_of_a_text_with_an_escaped_nul_should_be_its_stripped_working_copy() {
         final String text = SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME, "false", "a\\u0000b");
         final StoreRequest request = received("ID:1", text);
         store.store(request);
 
-        assertThat(store.payloadForExtraction(request.shareId()).equals(text)).isTrue();
+        final String copy = store.payloadForExtraction(request.shareId());
+
+        // Compared as booleans, so a failure prints no payload.
+        assertThat(parser.readTree(copy).equals(parser.readTree(NulSafety.strip(text)))).isTrue();
     }
 
     @Test
@@ -451,43 +455,39 @@ class JdbcShareStoreIT {
 
     @ParameterizedTest
     @ValueSource(strings = {"a\\u0000b", "\\uD800", "\\udc00x"})
-    void payload_that_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy(final String note) {
+    void payload_with_an_escaped_nul_or_unpaired_surrogate_should_store_its_text_unchanged_and_the_stripped_working_copy(
+            final String note) {
         final String text = SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME, "false", note);
         final StoreRequest request = received("ID:1", text);
 
         final StoreResult result = store.store(request);
 
-        assertThat(result).isInstanceOfSatisfying(Stored.class, stored -> {
-            assertThat(stored.parsedCopySkipped()).isTrue();
-            assertThat(stored.enrichmentApplied()).isFalse();
-        });
-        assertThat(payload(request.shareId(), text))
+        assertThat(result).isInstanceOfSatisfying(Stored.class,
+                stored -> assertThat(stored.enrichmentApplied()).isFalse());
+        assertThat(workingCopy(request.shareId(), text, NulSafety.strip(text)))
                 .containsEntry("text_matches", true)
-                .containsEntry("parsed_matches", null);
+                .containsEntry("text_bytes", text.getBytes(StandardCharsets.UTF_8).length)
+                .containsEntry("database_sha256", PayloadChecksum.sha256Hex(text))
+                .containsEntry("working_matches", true);
         assertThat(share(request.shareId()))
+                .containsEntry("payload_sha256", PayloadChecksum.sha256Hex(text))
                 .containsEntry("projection_status", "OK")
                 .containsEntry("enrichment_applied", false);
     }
 
-    /** JSON the parser takes but {@code jsonb} refuses past the escape check: numbers out of its range. */
+    /** JSON the parser takes but {@code jsonb} refuses: numbers out of its range, a database failure. */
     @ParameterizedTest
     @ValueSource(strings = {"1e1000000", "-1e1000000", "1e-1000000"})
-    void payload_whose_number_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy(final String number) {
+    void payload_whose_number_jsonb_refuses_should_throw_retryable_at_store_and_leave_nothing(final String number) {
         final String text = SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME)
                 .replace("\"isReshare\":false", "\"isReshare\":false,\"big\":" + number);
-        assertThat(NulSafety.isJsonbSafe(text)).isTrue();
         final StoreRequest request = received("ID:1", text);
 
-        final StoreResult result = store.store(request);
+        assertThatThrownBy(() -> store.store(request))
+                .isInstanceOfSatisfying(RetryableIntakeException.class,
+                        failure -> assertThat(failure.getStage()).isEqualTo(IntakeStage.STORE));
 
-        assertThat(result).isInstanceOfSatisfying(Stored.class,
-                stored -> assertThat(stored.parsedCopySkipped()).isTrue());
-        assertThat(payload(request.shareId(), text))
-                .containsEntry("text_matches", true)
-                .containsEntry("parsed_matches", null);
-        assertThat(defendants(request.shareId())).hasSize(1);
-        assertThat(day()).containsEntry("latest_share_id", request.shareId()).containsEntry("share_count", 1);
-        assertThat(receipt("ID:1")).containsEntry("status", "STORED").containsEntry("share_id", request.shareId());
+        assertNothingWritten();
     }
 
     @Test
@@ -557,50 +557,27 @@ class JdbcShareStoreIT {
     }
 
     /**
-     * The parsed-copy savepoint swallows only a data exception (SQLSTATE class 22). A test-only trigger
-     * refuses the payload row with its parsed copy as a statement timeout, which must fail the whole
-     * transaction rather than be stored as text with no parsed copy.
+     * A test-only trigger refuses every payload row as a statement timeout: the store transaction fails
+     * as a whole, for an arrived and an enriched copy alike, with nothing written.
      */
-    @Test
-    void parsed_copy_failure_that_is_not_a_data_exception_should_leave_nothing_and_the_receipt_received() {
-        final StoreRequest request = received("ID:1", SampleShares.share(hearingId, HEARING_DAY, SHARED_TIME));
-
-        assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(request);
-
-        assertNothingWritten();
-    }
-
-    /**
-     * Only a data exception (SQLSTATE class 22) on the enriched copy is "refused". A statement timeout
-     * on the same insert is an operational failure: it must escape as a retryable store failure, not
-     * turn into a silent fallback to the arrived copy.
-     */
-    @Test
-    void enriched_copy_failure_that_is_not_a_data_exception_should_throw_retryable_and_leave_nothing() {
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    void payload_insert_failure_should_throw_retryable_and_leave_nothing(final boolean withEnrichment) {
         final String text = SampleShares.shareWithApplication(hearingId, HEARING_DAY, SHARED_TIME, APPLICATION_ID);
-        final StoreRequest request = enriched("ID:1", text, SampleShares.finalised("Granted"));
-        assertThat(request.enrichmentApplied()).isTrue();
-
-        assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(request);
-
-        assertNothingWritten();
-    }
-
-    /** A test-only trigger refuses any payload row with a parsed copy as a statement timeout (57014). */
-    private void assertStatementTimeoutWhenThePayloadRowHasAParsedCopy(final StoreRequest request) {
+        final StoreRequest request = withEnrichment
+                ? enriched("ID:1", text, SampleShares.finalised("Granted"))
+                : received("ID:1", text);
+        assertThat(request.enrichmentApplied()).isEqualTo(withEnrichment);
         jdbc.sql("""
-                CREATE FUNCTION test_refuse_parsed_copy() RETURNS trigger LANGUAGE plpgsql AS $$
+                CREATE FUNCTION test_refuse_payload() RETURNS trigger LANGUAGE plpgsql AS $$
                 BEGIN
-                    IF NEW.payload_json IS NOT NULL THEN
-                        RAISE EXCEPTION 'test timeout' USING ERRCODE = '57014';
-                    END IF;
-                    RETURN NEW;
+                    RAISE EXCEPTION 'test timeout' USING ERRCODE = '57014';
                 END $$
                 """).update();
         try {
             jdbc.sql("""
-                    CREATE TRIGGER test_refuse_parsed_copy_tg BEFORE INSERT ON hearing_share_payload
-                        FOR EACH ROW EXECUTE FUNCTION test_refuse_parsed_copy()
+                    CREATE TRIGGER test_refuse_payload_tg BEFORE INSERT ON hearing_share_payload
+                        FOR EACH ROW EXECUTE FUNCTION test_refuse_payload()
                     """).update();
 
             assertThatThrownBy(() -> store.store(request))
@@ -609,9 +586,11 @@ class JdbcShareStoreIT {
                         assertThat(failure.getFailureCause()).isEqualTo(IntakeFailureCause.STATEMENT_TIMEOUT);
                     });
         } finally {
-            jdbc.sql("DROP TRIGGER IF EXISTS test_refuse_parsed_copy_tg ON hearing_share_payload").update();
-            jdbc.sql("DROP FUNCTION test_refuse_parsed_copy()").update();
+            jdbc.sql("DROP TRIGGER IF EXISTS test_refuse_payload_tg ON hearing_share_payload").update();
+            jdbc.sql("DROP FUNCTION test_refuse_payload()").update();
         }
+
+        assertNothingWritten();
     }
 
     @Test
@@ -638,19 +617,23 @@ class JdbcShareStoreIT {
         assertThat(receipt("ID:1")).containsEntry("status", "RECEIVED").containsEntry("share_id", null);
     }
 
-    /** The payload row against the working copy, compared in the database so a failure prints no payload. */
+    /**
+     * The payload row against the working copy, compared in the database so a failure prints no payload.
+     * {@code parsed_matches} compares it with the arrived text stripped, bound, never cast from the column.
+     */
     private Map<String, Object> workingCopy(final UUID shareId, final String text, final String parsedCopy) {
         return jdbc.sql("""
                 SELECT payload_text = :text AS text_matches, text_bytes,
                        encode(sha256(convert_to(payload_text, 'UTF8')), 'hex') AS database_sha256,
                        payload_json = CAST(:parsedCopy AS jsonb) AS working_matches,
-                       payload_json = CAST(payload_text AS jsonb) AS parsed_matches,
+                       payload_json = CAST(:arrivedCopy AS jsonb) AS parsed_matches,
                        jsonb_array_length(payload_json -> 'hearing' -> 'courtApplications' -> 0 -> 'judicialResults')
                            AS results,
                        jsonb_exists(payload_json -> 'hearing' -> 'courtApplications' -> 0 -> 'judicialResults' -> 0,
                            'amendmentDate') AS amended
                   FROM hearing_share_payload WHERE share_id = :shareId
-                """).param("text", text).param("parsedCopy", parsedCopy).param("shareId", shareId)
+                """).param("text", text).param("parsedCopy", parsedCopy)
+                .param("arrivedCopy", NulSafety.strip(text)).param("shareId", shareId)
                 .query().singleRow();
     }
 
@@ -669,14 +652,17 @@ class JdbcShareStoreIT {
                 .param("shareId", shareId).query().singleRow();
     }
 
-    /** The payload row, its text compared in the database so a failure never prints the payload. */
+    /**
+     * The payload row, its text compared in the database so a failure never prints the payload; the
+     * working copy against the text stripped, bound as a parameter.
+     */
     private Map<String, Object> payload(final UUID shareId, final String text) {
         return jdbc.sql("""
                 SELECT payload_text = :text AS text_matches, text_bytes,
-                       CASE WHEN payload_json IS NOT NULL THEN payload_json = CAST(payload_text AS jsonb) END
-                           AS parsed_matches
+                       payload_json = CAST(:copy AS jsonb) AS parsed_matches
                   FROM hearing_share_payload WHERE share_id = :shareId
-                """).param("text", text).param("shareId", shareId).query().singleRow();
+                """).param("text", text).param("copy", NulSafety.strip(text)).param("shareId", shareId)
+                .query().singleRow();
     }
 
     private List<List<Object>> defendants(final UUID shareId) {

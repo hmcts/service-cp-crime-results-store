@@ -3,7 +3,6 @@ package uk.gov.hmcts.cp.resultsstore.application;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -28,15 +27,12 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.api.ProblemReason;
 import uk.gov.hmcts.cp.resultsstore.application.ShareQueries.PullRows;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService.SearchRequest;
 import uk.gov.hmcts.cp.resultsstore.domain.DayYouthFilter;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata.UnreadablePayloadException;
 import uk.gov.hmcts.cp.resultsstore.domain.KeyDetails;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.ProjectionStatus;
 import uk.gov.hmcts.cp.resultsstore.domain.SearchCursor;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareView;
@@ -53,7 +49,6 @@ class ShareReadServiceTest {
 
     private static final Instant VISIBLE_UP_TO = Instant.parse("2026-10-03T17:58:30Z");
 
-    private static final JsonMapper JSON = JsonMapper.builder().build();
 
     @Mock
     private ShareQueries queries;
@@ -351,7 +346,7 @@ class ShareReadServiceTest {
         @Test
         void payload_etag_should_be_the_quoted_sha256_of_exactly_the_bytes_returned() {
             final String body = "{\"name\":\"Zoë £ 𝄞\",\"n\":1.50}";
-            final StoredPayload stored = payload(body, PayloadForm.WORKING_COPY);
+            final StoredPayload stored = payload(body);
             when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
 
             final ServedPayload served = service().payload(stored.shareId());
@@ -364,25 +359,10 @@ class ShareReadServiceTest {
         }
 
         @Test
-        void the_arrived_text_form_should_be_served_without_metadata_and_hashed_after_the_strip() {
-            final String text = "{\"_metadata\":{\"id\":\"m\"},\"hearing\":{\"id\":\"h\"},\"note\":\"a\\u0000b\"}";
-            final StoredPayload stored = payload(text, PayloadForm.ARRIVED_TEXT);
-            when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
-
-            final ServedPayload served = service().payload(stored.shareId());
-
-            assertThat(JSON.readTree(served.body()).has("_metadata")).as("has _metadata").isFalse();
-            assertThat(JSON.readTree(served.body()).has("hearing")).as("has hearing").isTrue();
-            assertThat(served.etag()).isEqualTo("\"" + PayloadChecksum.sha256Hex(served.body()) + "\"")
-                    .isNotEqualTo("\"" + PayloadChecksum.sha256Hex(text) + "\"");
-            assertThat(served.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
-        }
-
-        @Test
         void a_working_copy_should_be_served_as_read() {
             // The database already removed _metadata; the service neither parses nor rewrites the text.
             final String body = "{\"b\": 1, \"a\": {\"_metadata\": 2}}";
-            final StoredPayload stored = payload(body, PayloadForm.WORKING_COPY);
+            final StoredPayload stored = payload(body);
             when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
 
             final ServedPayload served = service().payload(stored.shareId());
@@ -392,28 +372,12 @@ class ShareReadServiceTest {
         }
 
         @Test
-        void an_arrived_text_that_fails_to_parse_should_be_internal_error_never_the_text() {
-            final StoredPayload stored = payload("secret-marker-41 not json", PayloadForm.ARRIVED_TEXT);
-            when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
-
-            assertThatThrownBy(() -> service().payload(stored.shareId()))
-                    .isInstanceOf(UnreadablePayloadException.class)
-                    .satisfies(failure -> assertThat(failure.getMessage()).doesNotContain("secret-marker-41"));
-            verify(observer, never()).payloadBytes(anyLong());
-        }
-
-        @Test
-        void payload_form_should_follow_the_stored_form() {
-            final StoredPayload working = payload("{}", PayloadForm.WORKING_COPY);
-            final StoredPayload arrived = payload("{}", PayloadForm.ARRIVED_TEXT);
+        void the_served_payload_should_carry_the_stored_share_s_facts() {
+            final StoredPayload working = payload("{}");
             when(queries.payload(working.shareId())).thenReturn(Optional.of(working));
-            when(queries.payload(arrived.shareId())).thenReturn(Optional.of(arrived));
 
             final ServedPayload servedWorking = service().payload(working.shareId());
-            final ServedPayload servedArrived = service().payload(arrived.shareId());
 
-            assertThat(servedWorking.form()).isEqualTo(PayloadForm.WORKING_COPY);
-            assertThat(servedArrived.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
             assertThat(servedWorking.shareId()).isEqualTo(working.shareId());
             assertThat(servedWorking.hearingId()).isEqualTo(working.hearingId());
             assertThat(servedWorking.hearingDay()).isEqualTo(working.hearingDay());
@@ -432,71 +396,6 @@ class ShareReadServiceTest {
     }
 
     @Nested
-    @DisplayName("arrived text")
-    class Arrived {
-
-        private static final String TEXT = "{\"_metadata\":{\"id\":\"m\",\"context\":{\"user\":\"u\"}},"
-                + "\"hearing\":{\"id\":\"h\",\"note\":\"a\\u0000b\"},\"hearingDay\":\"2026-10-02\",\"n\":1.50}";
-
-        @Test
-        void arrived_body_should_have_no_metadata_and_its_etag_should_be_the_sha256_of_the_served_bytes() {
-            final StoredPayload stored = payload(TEXT, PayloadForm.ARRIVED_TEXT);
-            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
-
-            final ServedPayload served = service().arrivedPayload(stored.shareId());
-
-            assertThat(JSON.readTree(served.body()).has("_metadata")).as("has _metadata").isFalse();
-            assertThat(JSON.readTree(served.body()).get("hearing").get("note").asString()).as("note kept")
-                    .isEqualTo("a\u0000b");
-            assertThat(JSON.readTree(served.body()).propertyNames()).as("member order")
-                    .containsExactly("hearing", "hearingDay", "n");
-            assertThat(new String(served.body(), StandardCharsets.UTF_8)).as("decimal kept as written")
-                    .contains("\"n\":1.50");
-            assertThat(served.etag()).isEqualTo("\"" + PayloadChecksum.sha256Hex(served.body()) + "\"")
-                    .matches("^\"[0-9a-f]{64}\"$");
-            assertThat(served.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
-            assertThat(served.shareId()).isEqualTo(stored.shareId());
-            assertThat(served.hearingId()).isEqualTo(stored.hearingId());
-            assertThat(served.hearingDay()).isEqualTo(stored.hearingDay());
-            assertThat(served.sharedTime()).isEqualTo(stored.sharedTime());
-            assertThat(served.enrichmentApplied()).as("enrichment as stored").isTrue();
-            verify(observer).payloadBytes(served.length());
-            verify(queries, never()).payload(any());
-        }
-
-        @Test
-        void arrived_etag_should_never_equal_payload_sha256() {
-            final StoredPayload stored = payload(TEXT, PayloadForm.ARRIVED_TEXT);
-            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
-            final String payloadSha256 = PayloadChecksum.sha256Hex(TEXT);
-
-            final ServedPayload served = service().arrivedPayload(stored.shareId());
-
-            assertThat(served.etag()).isNotEqualTo("\"" + payloadSha256 + "\"").doesNotContain(payloadSha256);
-        }
-
-        @Test
-        void an_unreadable_arrived_text_should_be_internal_error_never_the_text() {
-            final StoredPayload stored = payload("secret-marker-43 not json", PayloadForm.ARRIVED_TEXT);
-            when(queries.arrivedText(stored.shareId())).thenReturn(Optional.of(stored));
-
-            assertThatThrownBy(() -> service().arrivedPayload(stored.shareId()))
-                    .isInstanceOf(UnreadablePayloadException.class)
-                    .satisfies(failure -> assertThat(failure.getMessage()).doesNotContain("secret-marker-43"));
-            verify(observer, never()).payloadBytes(anyLong());
-        }
-
-        @Test
-        void an_unknown_share_should_be_share_not_found() {
-            final UUID shareId = UUID.randomUUID();
-            when(queries.arrivedText(shareId)).thenReturn(Optional.empty());
-
-            assertThatThrownBy(() -> service().arrivedPayload(shareId)).isInstanceOf(NotFoundException.class)
-                    .hasMessage("share_not_found");
-        }
-    }
-
-    @Nested
     @DisplayName("the observer")
     class Observer {
 
@@ -504,7 +403,7 @@ class ShareReadServiceTest {
         void page_items_and_payload_bytes_should_be_reported_to_the_observer() {
             when(queries.pull(any(), eq(LAG))).thenReturn(new PullRows(VISIBLE_UP_TO, 9L, views(1, 2, 3)));
             when(queries.search(any())).thenReturn(views(4));
-            final StoredPayload stored = payload("{\"é\":1}", PayloadForm.WORKING_COPY);
+            final StoredPayload stored = payload("{\"é\":1}");
             when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
             final Instant from = Instant.parse("2026-01-01T00:00:00Z");
 
@@ -520,7 +419,7 @@ class ShareReadServiceTest {
         @ParameterizedTest
         @ValueSource(ints = {1, 3})
         void served_payloads_should_compare_by_their_bytes(final int copies) {
-            final StoredPayload stored = payload("{}", PayloadForm.WORKING_COPY);
+            final StoredPayload stored = payload("{}");
             when(queries.payload(stored.shareId())).thenReturn(Optional.of(stored));
             final List<ServedPayload> served = new ArrayList<>();
             for (int i = 0; i < copies; i++) {
@@ -566,8 +465,8 @@ class ShareReadServiceTest {
         return views;
     }
 
-    private static StoredPayload payload(final String body, final PayloadForm form) {
+    private static StoredPayload payload(final String body) {
         return new StoredPayload(UUID.randomUUID(), UUID.randomUUID(), LocalDate.parse("2026-10-02"),
-                Instant.parse("2026-10-02T09:00:00Z"), true, body, form);
+                Instant.parse("2026-10-02T09:00:00Z"), true, body);
     }
 }

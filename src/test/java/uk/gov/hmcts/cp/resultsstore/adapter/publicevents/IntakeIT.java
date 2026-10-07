@@ -582,23 +582,31 @@ class IntakeIT {
     }
 
     @Test
-    void results_jsonb_cannot_hold_should_store_the_arrived_copy_with_the_flag_false_and_count_it() {
+    void results_holding_an_escaped_nul_should_be_stored_stripped_with_the_flag_true_and_counted_applied() {
         final UUID applicationId = UUID.randomUUID();
         progression.answer(applicationId, okJson("{\"courtApplication\":{\"id\":\"" + applicationId
                 + "\",\"applicationStatus\":\"FINALISED\",\"judicialResults\":[{\"label\":\"a\\u0000b\"}]}}"));
-        final double skippedBefore = count(SKIPPED, "reason", "unstorable_results");
+        final double skippedBefore = skipsCounted();
         final double appliedBefore = count(APPLIED);
         final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
 
         broker.publish(SampleShares.HEARING_RESULTED, text);
 
         final UUID shareId = awaitStored(text);
-        assertThat(share(shareId)).containsEntry("enrichment_applied", false);
-        assertThat(payload(shareId, text)).containsEntry("arrived_matches", true);
-        assertThat(count(SKIPPED, "reason", "unstorable_results") - skippedBefore).isEqualTo(1.0);
-        assertThat(count(APPLIED)).isEqualTo(appliedBefore);
+        assertThat(share(shareId)).containsEntry("enrichment_applied", true);
+        assertThat(payload(shareId, text))
+                .containsEntry("text_matches", true)
+                .containsEntry("results", 1)
+                .containsEntry("label", "ab");
+        assertThat(count(APPLIED) - appliedBefore).isEqualTo(1.0);
+        assertThat(skipsCounted()).isEqualTo(skippedBefore);
         assertThat(receiptOf(hearingId)).containsEntry("attempts", 1);
         assertEveryReceiptSettled();
+    }
+
+    /** Every enrichment skip, whatever its reason. */
+    private double skipsCounted() {
+        return meters.find(SKIPPED).counters().stream().mapToDouble(Counter::count).sum();
     }
 
     /** Progression's answer: the application {@code FINALISED} with one result carrying the amendment fields. */

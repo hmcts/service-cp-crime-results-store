@@ -50,8 +50,8 @@ public interface ShareStore {
 
     /**
      * A share's working copy for extraction, the one payload read the sweep makes: {@code payload_json}
-     * as text, or {@code payload_text} when {@code payload_json} is NULL (text {@code jsonb} cannot hold)
-     * (specs/002-enrichment FR-033). Every indexed column is derived from it, so a re-extraction indexes
+     * as text, or {@code payload_text} for a row stored without a copy before spec 005
+     * (specs/002-enrichment FR-033; specs/005-payload-simplification FR-008). Every indexed column is derived from it, so a re-extraction indexes
      * what an enriched share's working copy holds, not only what arrived. Read outside any transaction:
      * it never changes.
      *

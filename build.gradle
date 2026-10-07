@@ -103,8 +103,9 @@ dependencies {
 
   // Parses results-store-openapi.yaml in OpenApiDocumentTest as the audit library parses it at
   // runtime. The audit starter already brings this version onto the runtime classpath; declared here
-  // so the test can compile against it.
-  testImplementation 'io.swagger.parser.v3:swagger-parser:2.1.48'
+  // so the test can compile against it. Keep it at the audit starter's version: 2.1.48 leaves a
+  // response $ref unresolved, so the test would read the document differently from the runtime.
+  testImplementation 'io.swagger.parser.v3:swagger-parser:2.1.20'
 }
 
 // Keep legacy javax.jms off the classpath beside Spring Boot 4's jakarta.jms. artemis-jms-client is

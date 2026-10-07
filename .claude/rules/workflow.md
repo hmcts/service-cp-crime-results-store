@@ -56,7 +56,10 @@ A change ships only when all applicable gates are green:
    and the message text, counted and acknowledged. It is never dead-lettered. Nothing else in the
    payload is validated.
 2. **Never-refuse gate.** A share with its identity is always stored. An extraction failure marks
-   the row `projection_status = FAILED`; it never drops the share. Proven by test.
+   the row `projection_status = FAILED`; it never drops the share. Proven by test. The store's own
+   code validates and refuses nothing. A text the database itself cannot hold as `jsonb` (a number
+   beyond its numeric range) fails like any database error: retried by the broker, then
+   dead-lettered after its attempts.
 3. **Transaction gate.** Receipt in its own transaction first; then one store transaction for
    everything that makes the share queryable; the message is acknowledged only after that commit.
    The progression lookup runs between the two, never inside a transaction. Proven by test.

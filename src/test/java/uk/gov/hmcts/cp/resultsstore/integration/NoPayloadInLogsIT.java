@@ -34,17 +34,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import uk.gov.hmcts.cp.resultsstore.adapter.publicevents.HearingResultedEventListener;
 import uk.gov.hmcts.cp.resultsstore.application.RetryableIntakeException;
-import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.config.PublicEventsConfig;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcReceiptStore;
 import uk.gov.hmcts.cp.resultsstore.persistence.JdbcShareStore;
 import uk.gov.hmcts.cp.resultsstore.support.EmbeddedBrokerSupport;
@@ -217,10 +213,8 @@ class NoPayloadInLogsIT {
     }
 
     /**
-     * Serving a payload, in both forms (the working copy, and the arrived text when the working copy is empty),
-     * and the arrived text on its own route (an enriched share among them, so the two bodies differ), logs no
-     * payload content at any level: the root logger is at DEBUG while the payloads are fetched. A stored text
-     * that does not parse gives the arrived route's {@code 500}, which names the exception class only.
+     * Serving a payload (the working copy, a share whose text held an escaped NUL and an enriched share among
+     * them) logs no payload content at any level: the root logger is at DEBUG while the payloads are fetched.
      */
     @Test
     void serving_a_payload_should_log_no_payload_marker_at_any_level() throws Exception {
@@ -237,53 +231,25 @@ class NoPayloadInLogsIT {
         receiptStore.recordArrival(SampleShares.arrival("ID:serve-enriched", enriched));
         shareStore.store(SampleShares.enrichedRequest("ID:serve-enriched", enriched, SampleShares.finalised(MARKER)));
         shares.add(SampleShares.read(enriched).identity().shareId());
-        final UUID unreadable = storedWithUnreadableText();
         final Level level = root.getLevel();
         root.setLevel(Level.DEBUG);
-        final String unreadableBody;
-        final int unreadableStatus;
         try {
             for (final UUID shareId : shares) {
-                for (final String route : List.of("/payload", "/payload/arrived")) {
-                    final String body = mockMvc.perform(get("/results-store/v1/shares/" + shareId + route))
-                            .andReturn().getResponse().getContentAsString();
-                    assertThat(body.contains(MARKER)).as("the payload is served on " + route).isTrue();
-                }
+                final String body = mockMvc.perform(get("/results-store/v1/shares/" + shareId + "/payload"))
+                        .andReturn().getResponse().getContentAsString();
+                assertThat(body.contains(MARKER)).as("the payload is served").isTrue();
             }
-            final MockHttpServletResponse failed = mockMvc.perform(get("/results-store/v1/shares/" + unreadable + "/payload/arrived"))
-                    .andReturn().getResponse();
-            unreadableStatus = failed.getStatus();
-            unreadableBody = failed.getContentAsString();
         } finally {
             root.setLevel(level);
         }
 
-        assertThat(unreadableStatus).as("an unreadable arrived text").isEqualTo(500);
-        assertThat(unreadableBody.contains(MARKER)).as("the unreadable text is echoed").isFalse();
         final List<ILoggingEvent> lines = captured();
         assertThat(lines.stream().filter(line -> line.getLevel() == Level.DEBUG).count())
                 .as("lines at DEBUG").isPositive();
-        assertThat(lines.stream().map(ILoggingEvent::getFormattedMessage).toList())
-                .as("the 500 names the exception class")
-                .contains("Read request failed: " + EnvelopeMetadata.UnreadablePayloadException.class.getName());
         // Named by logger and level only, so a failure never prints the text it found.
         assertThat(lines.stream().filter(line -> everythingIn(line).contains(MARKER))
                 .map(line -> line.getLoggerName() + " " + line.getLevel()).toList())
                 .as("loggers whose lines carry payload text").isEmpty();
-    }
-
-    /**
-     * A share whose stored text is not JSON: the identity is a real share's, the text holds the marker. The store
-     * keeps it with no working copy, as it keeps any text {@code jsonb} refuses.
-     */
-    private UUID storedWithUnreadableText() {
-        final String text = SampleShares.share(UUID.randomUUID(), DAY, "2026-10-02T19:30:00.000Z");
-        receiptStore.recordArrival(SampleShares.arrival("ID:serve-unreadable", text));
-        final StoreRequest request = SampleShares.request("ID:serve-unreadable", text);
-        final String unreadable = "not json " + MARKER;
-        shareStore.store(new StoreRequest(request.messageId(), request.identity(), request.shareId(),
-                request.sharedDays(), PayloadChecksum.sha256Hex(unreadable), unreadable, request.projection()));
-        return request.shareId();
     }
 
     @Test

@@ -8,7 +8,7 @@ import org.springframework.http.ResponseEntity;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 
 /**
- * The payload's and the arrived text's {@code 200} (FR-033 to FR-037, FR-041; research R10, R11, R19): the
+ * The payload's {@code 200} (FR-033 to FR-037; research R10, R11; specs/005-payload-simplification FR-006): the
  * exact bytes as a {@code byte[]}, written by {@code ByteArrayHttpMessageConverter}, never parsed or re-written; a
  * strong {@code ETag} over them, from which Spring answers {@code If-None-Match} with a {@code 304} carrying
  * exactly one {@code ETag}; the store's own facts as {@code Results-Store-*} headers; {@code Cache-Control:
@@ -30,9 +30,6 @@ public final class PayloadResponses {
 
     /** {@code Results-Store-Enrichment-Applied}. */
     public static final String ENRICHMENT_APPLIED = "Results-Store-Enrichment-Applied";
-
-    /** {@code Results-Store-Payload-Form}. */
-    public static final String PAYLOAD_FORM = "Results-Store-Payload-Form";
 
     private PayloadResponses() {
         // Static functions only.
@@ -72,7 +69,6 @@ public final class PayloadResponses {
                 .header(HEARING_DAY, payload.hearingDay().toString())
                 .header(SHARED_TIME, InstantFormat.format(payload.sharedTime()))
                 .header(ENRICHMENT_APPLIED, Boolean.toString(payload.enrichmentApplied()))
-                .header(PAYLOAD_FORM, payload.form().headerValue())
                 .body(payload.body());
     }
 

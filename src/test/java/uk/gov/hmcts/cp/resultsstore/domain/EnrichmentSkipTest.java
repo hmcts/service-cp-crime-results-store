@@ -14,8 +14,7 @@ class EnrichmentSkipTest {
     @ParameterizedTest
     @CsvSource({
         "DISABLED, disabled",
-        "ALREADY_STORED, already_stored",
-        "UNSTORABLE_RESULTS, unstorable_results"
+        "ALREADY_STORED, already_stored"
     })
     void reason_should_have_its_lower_case_tag(final EnrichmentSkip reason, final String tag) {
         assertThat(reason.tag()).isEqualTo(tag);
@@ -24,6 +23,6 @@ class EnrichmentSkipTest {
     @Test
     void every_tag_should_come_from_the_fixed_list() {
         assertThat(Arrays.stream(EnrichmentSkip.values()).map(EnrichmentSkip::tag))
-                .containsExactly("disabled", "already_stored", "unstorable_results");
+                .containsExactly("disabled", "already_stored");
     }
 }

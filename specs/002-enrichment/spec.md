@@ -204,6 +204,7 @@ Support staff see how many applications were looked up and with what outcome, ho
 - **FR-017**: `payload_json` MUST hold the enriched working copy (the arrived payload when nothing was added). It is permanent: it is no longer a copy that may be dropped after NFT. Key details and the defendant index MUST be read from the enriched copy.
 - **FR-018**: `enrichment_applied` MUST be true only when at least one application received results, and MUST be fixed at insert (001 FR-044). It MUST never be true while `payload_json` is empty.
 - **FR-019**: If the enriched copy cannot be held in `payload_json` (for example `\u0000`, or the database refuses it as invalid data inside the store transaction), the store MUST roll the store transaction back and run it once more with the arrived copy and `enrichment_applied` false, counted `unstorable_results`. `payload_json` MUST be empty only if the arrived copy cannot be held either (001 FR-015).
+  *Amended by spec 005* (specs/005-payload-simplification FR-004): the enriched copy goes through the same escape removal and the same insert; the re-run with the arrived copy and `unstorable_results` are withdrawn.
 - **FR-020**: The store MUST NOT store a share half-enriched. Either every lookup the share needs has answered, or nothing is stored.
 
 **Errors**
@@ -239,6 +240,7 @@ Support staff see how many applications were looked up and with what outcome, ho
 - **FR-029**: A lookup timer MUST record each progression call's duration, tagged by outcome. It is recorded when the call ends, not after a commit; the metrics contract MUST state this exception to 001 FR-040.
 - **FR-030**: An enriched-shares counter MUST go up by one per share stored with `enrichment_applied` true, after the store transaction commits, using the flag actually stored.
 - **FR-031**: The `unstorable_results` fallback MUST be counted.
+  *Amended by spec 005*: withdrawn with the fallback (specs/005-payload-simplification FR-004).
 - **FR-032**: Every new tag MUST come from a fixed, small list (001 FR-040). Log lines MAY hold the application id; they MUST NOT hold a response body, part of one, or the system user id.
 
 **Sweep and extraction**
@@ -262,6 +264,7 @@ Support staff see how many applications were looked up and with what outcome, ho
 - **FR-040**: Nothing in 002 serves a payload. Spec 003 MUST follow FR-041.
 - **FR-041**: The read API MUST serve `payload_json`, with the `ETag` computed over the exact bytes served; and MUST serve `payload_text` when `payload_json` is empty.
   *Amended by spec 003* (E8): the served bytes are the working copy **without `_metadata`** (`(payload_json - '_metadata')::text`), or `payload_text` parsed with `_metadata` removed when the working copy is empty; the `ETag` is over exactly those bytes (specs/003-read-api FR-033, FR-034).
+  *Amended by spec 005*: every share has a working copy, so the read API serves `payload_json` alone; the `payload_text` fallback is withdrawn (specs/005-payload-simplification FR-006).
 
 ### Changes to spec 001
 

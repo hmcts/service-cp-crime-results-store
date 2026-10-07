@@ -77,7 +77,7 @@ class ShareParametersInterceptorTest {
 
     /** Every route that takes a share id refuses a non-canonical one and any query parameter (phase D included). */
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"})
+    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD"})
     void a_share_route_should_refuse_a_bad_share_id_and_any_query_parameter(final ApiRoute route) throws Exception {
         final String path = ApiRouteSamples.samplePath(route);
         final MockHttpServletRequest badId = request(path.replace(ApiRouteSamples.SHARE_ID, "1-1-1-1-1"), null);

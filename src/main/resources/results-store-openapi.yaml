@@ -124,12 +124,11 @@ paths:
       operationId: getSharePayload
       summary: The payload the store holds for one share, without the envelope metadata
       description: >-
-        Action results-store.get-share-payload. The working copy (the message as hearing sent it, with any
-        finalised court-application results from progression added at intake), or the text as it arrived
-        when the database could not hold a working copy, in both cases without the message envelope's
-        `_metadata` member. The ETag is the SHA-256 of exactly the bytes of this body. It is not offered as,
-        nor to be compared with, the store's stored checksum of the arrived message, which is over the text
-        as it arrived. Send If-None-Match with an ETag you hold for a 304.
+        Action results-store.get-share-payload. The working copy: the message as hearing sent it, with any
+        finalised court-application results from progression added at intake, without the message
+        envelope's `_metadata` member. The ETag is the SHA-256 of exactly the bytes of this body. It is not
+        offered as, nor to be compared with, the store's stored checksum of the arrived message, which is
+        over the text as it arrived. Send If-None-Match with an ETag you hold for a 304.
       parameters:
         - $ref: '#/components/parameters/ShareId'
         - name: If-None-Match
@@ -168,11 +167,6 @@ paths:
               description: Whether finalised application results were added at intake.
               schema:
                 type: boolean
-            Results-Store-Payload-Form:
-              description: working-copy, or arrived-text when the working copy is empty.
-              schema:
-                type: string
-                enum: [working-copy, arrived-text]
             Cache-Control:
               description: Always no-store.
               schema:
@@ -189,111 +183,9 @@ paths:
                 type: string
                 format: binary
                 description: >-
-                  The working copy's exact bytes (or the arrived text, when the working copy is empty), without
-                  `_metadata`: a JSON object with top level `hearing`, `hearingDay`, `sharedTime` and
-                  `isReshare`, served byte for byte and not validated by the store. The ETag is the SHA-256
-                  over exactly these bytes.
-        '304':
-          description: The If-None-Match matched. No body; only the ETag is promised.
-          headers:
-            ETag:
-              $ref: '#/components/headers/ETag'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthenticated'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '405':
-          $ref: '#/components/responses/MethodNotAllowed'
-        '406':
-          $ref: '#/components/responses/NotAcceptable'
-        '415':
-          $ref: '#/components/responses/UnsupportedContentType'
-        '500':
-          $ref: '#/components/responses/InternalError'
-        '503':
-          $ref: '#/components/responses/StoreUnavailable'
-
-  /results-store/v1/shares/{shareId}/payload/arrived:
-    get:
-      tags: [shares]
-      operationId: getShareArrivedPayload
-      summary: The text of one share as it arrived, before enrichment, without the envelope metadata
-      description: >-
-        Action results-store.get-share-arrived-payload. The message as hearing sent it, before any
-        court-application results were added, without the message envelope's `_metadata` member. The store
-        parses the text, removes `_metadata` and writes it back as JSON, so it is not byte-identical to what
-        hearing sent: key order and values are hearing's; spacing and escape forms are the store's. The ETag
-        is the SHA-256 of exactly the bytes of this body. It is not offered as, nor to be compared with, the
-        store's stored checksum of the arrived message, which is over the text as it arrived; the two
-        coincide only for a compact message that held no `_metadata`. Send If-None-Match with an ETag you
-        hold for a 304.
-      parameters:
-        - $ref: '#/components/parameters/ShareId'
-        - name: If-None-Match
-          in: header
-          required: false
-          description: One or more ETags, weak or strong, or `*`.
-          schema:
-            type: string
-      responses:
-        '200':
-          description: The arrived text as application/json (UTF-8), without `_metadata`.
-          headers:
-            ETag:
-              $ref: '#/components/headers/ETag'
-            Results-Store-Share-Id:
-              description: The share id.
-              schema:
-                type: string
-                format: uuid
-            Results-Store-Hearing-Id:
-              description: The hearing id.
-              schema:
-                type: string
-                format: uuid
-            Results-Store-Hearing-Day:
-              description: The hearing day, yyyy-MM-dd.
-              schema:
-                type: string
-                format: date
-            Results-Store-Shared-Time:
-              description: sharedTime, UTC, six fraction digits.
-              schema:
-                type: string
-                format: date-time
-            Results-Store-Enrichment-Applied:
-              description: Whether finalised application results were added to the working copy at intake.
-              schema:
-                type: boolean
-            Results-Store-Payload-Form:
-              description: Always arrived-text on this route.
-              schema:
-                type: string
-                enum: [arrived-text]
-            Cache-Control:
-              description: Always no-store.
-              schema:
-                type: string
-                enum: [no-store]
-            Content-Length:
-              description: The body's byte count. No Content-Encoding; no chunked transfer.
-              schema:
-                type: integer
-                format: int64
-          content:
-            application/json:
-              schema:
-                type: string
-                format: binary
-                description: >-
-                  The text as it arrived, without `_metadata`, written back as JSON by the
-                  store: a JSON object with top level `hearing`, `hearingDay`, `sharedTime`
-                  and `isReshare`, served byte for byte. The ETag is the SHA-256 over
-                  exactly these bytes.
+                  The working copy's exact bytes, without `_metadata`: a JSON object with top level `hearing`,
+                  `hearingDay`, `sharedTime` and `isReshare`, served byte for byte and not validated by the
+                  store. The ETag is the SHA-256 over exactly these bytes.
         '304':
           description: The If-None-Match matched. No body; only the ETag is promised.
           headers:

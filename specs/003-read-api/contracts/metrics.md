@@ -46,6 +46,8 @@ line points here, and this file stays as the record of the change.
 | `resultsstore.read.refused` | `reason` = `route_not_found` \| `method_not_allowed` \| `unsupported_content_type` \| `unauthenticated` \| `forbidden` \| `connector_rejected` | a request is refused before it reaches the audit filter: by this service's filters (`404` and `405` before authorisation, `415` after it; counted by the filter), by the authorisation library (`401`, `403`; counted by the service's error controller when the library's `sendError` lands on `/error`), or by the HTTP connector before the service sees it (`400 bad_request` from the host's error report, `api/ProblemErrorReportValve`: an encoded slash or backslash, a NUL, a malformed escape, a character outside the standard set; counted as `connector_rejected` once the report's body has been written). These requests are not audited, so this counter is their only record in this service. Every refusal is counted after its body is written; a body that cannot be written (the client has gone) is not counted | FR-051, FR-055 |
 | `resultsstore.intake.visibility.overrun` | — | after a store transaction's commit returns, when its time from sending the share insert to the commit returning was at or above the pull visibility lag. Evidence that the pull-safety assumption was broken: **alert on any increase**. Not counted: a duplicate or a refused copy (nothing visible was inserted), and a commit the client never sees return (D-OVERRUN = yes, E4). The threshold is the effective lag, 90 s by default | FR-020 |
 
+*Amended by spec 005*: `endpoint=arrived_payload` is withdrawn with its route; `not_modified` applies to `payload` only (specs/005-payload-simplification FR-007).
+
 ## Timers
 
 | Name | Tags | Records | FR |

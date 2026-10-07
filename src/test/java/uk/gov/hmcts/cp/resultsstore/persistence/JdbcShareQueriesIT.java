@@ -44,7 +44,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareQueries.PullRows;
 import uk.gov.hmcts.cp.resultsstore.application.StoreRequest;
 import uk.gov.hmcts.cp.resultsstore.domain.DayYouthFilter;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.ProjectionStatus;
 import uk.gov.hmcts.cp.resultsstore.domain.SearchCursor;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareView;
@@ -608,7 +607,6 @@ class JdbcShareQueriesIT {
 
             final StoredPayload payload = present(queries.payload(request.shareId()));
 
-            assertThat(payload.form()).isEqualTo(PayloadForm.WORKING_COPY);
             assertThat(PayloadChecksum.sha256Hex(payload.body())).as("body hash")
                     .isEqualTo(PayloadChecksum.sha256Hex(databaseText));
             assertThat(JSON.readTree(payload.body()).has("_metadata")).as("has _metadata").isFalse();
@@ -621,41 +619,18 @@ class JdbcShareQueriesIT {
         }
 
         @Test
-        void payload_should_return_payload_text_and_the_arrived_form_when_the_working_copy_is_null() {
+        void payload_of_a_text_with_an_escaped_nul_should_return_the_stripped_working_copy() {
             final String text = SampleShares.share(UUID.randomUUID(), "2026-10-02", "2026-10-02T14:19:50.706Z",
                     "false", "a\\u0000b");
             final StoreRequest request = received(text);
             store.store(request);
+            final String strippedText = jdbc.sql("SELECT (CAST(:copy AS jsonb) - '_metadata')::text")
+                    .param("copy", NulSafety.strip(text)).query(String.class).single();
 
             final StoredPayload payload = present(queries.payload(request.shareId()));
 
-            assertThat(payload.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
             assertThat(PayloadChecksum.sha256Hex(payload.body())).as("body hash")
-                    .isEqualTo(PayloadChecksum.sha256Hex(text));
-        }
-
-        /** Phase D: {@code payload_text} as stored, whatever the working copy, with the identity columns. */
-        @Test
-        void arrived_text_should_return_payload_text_with_the_identity_columns() {
-            final String text = SampleShares.shareWithApplication(UUID.randomUUID(), "2026-10-02",
-                    "2026-10-02T14:19:50.706Z", UUID.randomUUID().toString());
-            final String messageId = "ID:" + UUID.randomUUID();
-            receipts.recordArrival(SampleShares.arrival(messageId, text));
-            final StoreRequest request = SampleShares.enrichedRequest(messageId, text,
-                    SampleShares.finalised("Conditional discharge"));
-            store.store(request);
-
-            final StoredPayload arrived = present(queries.arrivedText(request.shareId()));
-
-            assertThat(request.enrichmentApplied()).as("the working copy was enriched").isTrue();
-            assertThat(arrived.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
-            assertThat(PayloadChecksum.sha256Hex(arrived.body())).as("body hash")
-                    .isEqualTo(PayloadChecksum.sha256Hex(text));
-            assertThat(arrived.shareId()).isEqualTo(request.shareId());
-            assertThat(arrived.hearingId()).isEqualTo(request.identity().hearingId());
-            assertThat(arrived.hearingDay()).isEqualTo(LocalDate.parse("2026-10-02"));
-            assertThat(arrived.sharedTime()).isEqualTo(Instant.parse("2026-10-02T14:19:50.706Z"));
-            assertThat(arrived.enrichmentApplied()).isTrue();
+                    .isEqualTo(PayloadChecksum.sha256Hex(strippedText));
         }
 
         @Test
@@ -664,7 +639,6 @@ class JdbcShareQueriesIT {
 
             assertThat(queries.share(UUID.randomUUID())).isEmpty();
             assertThat(queries.payload(UUID.randomUUID())).isEmpty();
-            assertThat(queries.arrivedText(UUID.randomUUID())).isEmpty();
             assertThat(queries.dayVersions(UUID.randomUUID(), LocalDate.parse("2026-10-02"))).isEmpty();
         }
 

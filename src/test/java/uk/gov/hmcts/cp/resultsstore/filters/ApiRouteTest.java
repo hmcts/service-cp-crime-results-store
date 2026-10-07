@@ -86,6 +86,7 @@ class ApiRouteTest {
         "/results-store/V1/shares/" + SHARE_ID,
         "/results-store/v1/shares/" + SHARE_ID + "/Payload",
         "/results-store/v1/shares/" + SHARE_ID + "/payload/",
+        "/results-store/v1/shares/" + SHARE_ID + "/payload/arrived",
         "/results-store/v1/shares/" + SHARE_ID + "/payload/arrived/",
         "/results-store/v1/shares/" + SHARE_ID + "/payload/Arrived",
         "/results-store/v1/shares/" + SHARE_ID + "/payload/arrived;v=1",
@@ -117,29 +118,13 @@ class ApiRouteTest {
                 .doesNotHaveDuplicates()
                 .containsExactly("results-store.pull-shares", "results-store.search-shares",
                         "results-store.get-share", "results-store.get-share-payload",
-                        "results-store.list-hearing-day-shares", "results-store.get-share-arrived-payload");
+                        "results-store.list-hearing-day-shares");
     }
 
     /** The {@code endpoint} tag each route's read meters carry (contracts/metrics.md). */
     @Test
     void every_route_should_name_its_endpoint_tag() {
         assertThat(Arrays.stream(ApiRoute.values()).map(ApiRoute::endpoint)).containsExactly(ReadEndpoint.PULL,
-                ReadEndpoint.SEARCH, ReadEndpoint.SHARE, ReadEndpoint.PAYLOAD, ReadEndpoint.DAY_VERSIONS,
-                ReadEndpoint.ARRIVED_PAYLOAD);
-    }
-
-    /** The arrived text (phase D): its own template, action and endpoint tag, apart from the payload's. */
-    @Test
-    void the_arrived_path_should_resolve_to_its_own_action_and_tag_and_not_to_the_payload() {
-        final PathContainer arrived = path("/results-store/v1/shares/" + SHARE_ID + "/payload/arrived");
-
-        final Optional<ApiRoute> route = ApiRoute.resolve("GET", arrived, name -> false);
-
-        assertThat(route.map(ApiRoute::action)).contains("results-store.get-share-arrived-payload");
-        assertThat(route.map(ApiRoute::template)).contains("/results-store/v1/shares/{shareId}/payload/arrived");
-        assertThat(route.map(ApiRoute::endpoint)).contains(ReadEndpoint.ARRIVED_PAYLOAD);
-        assertThat(ApiRoute.allowedMethods(arrived)).containsExactly("GET");
-        assertThat(ApiRoute.resolve("GET", path("/results-store/v1/shares/" + SHARE_ID + "/payload"), name -> false)
-                .map(ApiRoute::action)).contains("results-store.get-share-payload");
+                ReadEndpoint.SEARCH, ReadEndpoint.SHARE, ReadEndpoint.PAYLOAD, ReadEndpoint.DAY_VERSIONS);
     }
 }

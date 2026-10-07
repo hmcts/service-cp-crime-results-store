@@ -238,11 +238,10 @@ class AuditIT {
     /**
      * Pins a gap: the library resolves path parameters only where the document declares them inline, and the
      * share routes take {@code shareId} by {@code $ref} (as the contract jar does), so their request event has no
-     * {@code shareId}. Changing it is a contract change (Deferred). Each share route: the share, its payload and
-     * its arrived text.
+     * {@code shareId}. Changing it is a contract change (Deferred). Each share route: the share and its payload.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"", "/payload", "/payload/arrived"})
+    @ValueSource(strings = {"", "/payload"})
     void the_share_routes_request_event_should_not_carry_a_share_id_declared_by_reference(final String route)
             throws Exception {
         final UUID shareId = stored("");
@@ -259,26 +258,6 @@ class AuditIT {
         final UUID shareId = stored(MARKER);
 
         final Exchange exchange = get("/results-store/v1/shares/" + shareId + "/payload", caller(SYSTEM_USER));
-
-        assertThat(exchange.response().statusCode()).isEqualTo(200);
-        assertThat(new String(exchange.response().body(), StandardCharsets.UTF_8)).contains(MARKER);
-        final List<JsonNode> events = events(exchange, 2);
-        assertThat(responseEvents(events)).singleElement()
-                .satisfies(event -> assertThat(content(event).path("payloadOmitted").asBoolean()).isTrue());
-        // Named by count only, so a failure prints no payload content.
-        assertThat(events.stream().filter(event -> event.toString().contains(MARKER)).count())
-                .as("events carrying payload content").isZero();
-        assertThat(events.stream().filter(event -> event.toString().contains("prosecutionCases")).count())
-                .as("events carrying payload content").isZero();
-    }
-
-    /** Phase D: the arrived text's response event carries the marker too (the override keys on the derived action). */
-    @Test
-    void arrived_response_event_should_carry_the_marker() throws Exception {
-        final UUID shareId = stored(MARKER);
-
-        final Exchange exchange = get("/results-store/v1/shares/" + shareId + "/payload/arrived", caller(SYSTEM_USER,
-                "CPP-ACTION", "results-store.get-share"));
 
         assertThat(exchange.response().statusCode()).isEqualTo(200);
         assertThat(new String(exchange.response().body(), StandardCharsets.UTF_8)).contains(MARKER);

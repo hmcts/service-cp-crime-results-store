@@ -27,7 +27,6 @@ import uk.gov.hmcts.cp.resultsstore.application.BadParameterException;
 import uk.gov.hmcts.cp.resultsstore.application.NotFoundException;
 import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.domain.CanonicalUuid;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
 import uk.gov.hmcts.cp.resultsstore.openapi.model.ProblemDetail;
@@ -131,7 +130,7 @@ public class ReadApiExceptionHandler extends ResponseEntityExceptionHandler {
     }
 
     /**
-     * Anything else, {@link EnvelopeMetadata.UnreadablePayloadException} included: {@code 500 internal_error}.
+     * Anything else: {@code 500 internal_error}.
      *
      * @param exception the failure
      * @param request   the request, for the {@code shareId} its path names

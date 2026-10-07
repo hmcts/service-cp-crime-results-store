@@ -32,7 +32,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
-import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
 import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
@@ -233,7 +232,7 @@ class IntakeServiceTest {
         @Test
         void a_stored_share_at_the_threshold_should_count_one_overrun() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false,
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false,
                     OVERRUN_THRESHOLD));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
@@ -247,7 +246,7 @@ class IntakeServiceTest {
         @Test
         void a_stored_share_above_the_threshold_should_count_one_overrun() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false,
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false,
                     OVERRUN_THRESHOLD.plusSeconds(30)));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
@@ -258,7 +257,7 @@ class IntakeServiceTest {
         @Test
         void a_stored_share_below_the_threshold_should_count_none() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false,
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false,
                     OVERRUN_THRESHOLD.minusNanos(1)));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
@@ -267,15 +266,12 @@ class IntakeServiceTest {
         }
 
         @Test
-        void a_duplicate_or_refused_copy_should_never_count() {
+        void a_duplicate_should_never_count() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             when(shareStore.store(any())).thenReturn(new Duplicate(SHARE_ID));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
-            when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused());
-            assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE)))
-                    .isInstanceOf(IllegalStateException.class);
             verify(observer, never()).visibilityOverrun();
         }
 
@@ -293,7 +289,7 @@ class IntakeServiceTest {
         void receive_should_store_after_the_receipt_and_report_after_the_store_returns() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             final Instant storedAt = SHARED_AT.plusSeconds(3);
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, storedAt, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, storedAt, false, false, Duration.ZERO));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -309,7 +305,7 @@ class IntakeServiceTest {
         @Test
         void receive_should_hand_the_store_the_share_as_received_with_its_key_details() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -330,7 +326,7 @@ class IntakeServiceTest {
         @Test
         void receive_with_unreadable_key_details_should_still_store_and_report_the_failure_after() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             final IntakeResult result = service().receive(
                     IntakeCommand.ofText(MESSAGE_ID, 1, SHARE_WITH_A_BAD_COURT_CENTRE));
@@ -346,21 +342,11 @@ class IntakeServiceTest {
         @Test
         void receive_of_a_late_share_should_report_it_out_of_order_with_a_lag_never_below_zero() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT.minusSeconds(5), true, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT.minusSeconds(5), true, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
             verify(observer).stored(true, Duration.ZERO);
-        }
-
-        @Test
-        void receive_whose_parsed_copy_was_skipped_should_report_it() {
-            when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, true, false, Duration.ZERO));
-
-            service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
-
-            verify(observer).parsedCopySkipped();
         }
 
         @Test
@@ -382,7 +368,7 @@ class IntakeServiceTest {
         @Test
         void redelivery_whose_receipt_is_still_received_should_store_again() {
             when(receipts.recordArrival(any())).thenReturn(received(false));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(MESSAGE_ID, 2, SHARE));
 
@@ -417,7 +403,7 @@ class IntakeServiceTest {
             final String key = "sha256:" + PayloadChecksum.sha256Hex(SHARE);
             when(receipts.recordArrival(any())).thenReturn(
                     new ReceiptState(key, ReceiptStatus.RECEIVED, null, 1, true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             final IntakeResult result = service().receive(IntakeCommand.ofText(null, 1, SHARE));
 
@@ -431,7 +417,7 @@ class IntakeServiceTest {
         @Test
         void receive_of_a_message_with_an_id_should_not_report_a_missing_id() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, SHARE));
 
@@ -446,7 +432,7 @@ class IntakeServiceTest {
         @Test
         void share_with_no_application_needing_results_should_make_no_check_no_call_and_count_nothing() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
             final String text = shareWith("{\"id\": \"" + APP_A + "\", \"judicialResults\": [{\"label\": \"own\"}]}");
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
@@ -500,7 +486,7 @@ class IntakeServiceTest {
         @Test
         void enrichment_off_should_make_no_check_no_call_and_count_disabled() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             final IntakeService service = serviceWithoutProgression();
             service.receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A))));
@@ -514,7 +500,7 @@ class IntakeServiceTest {
         @Test
         void enrichment_off_with_only_invalid_ids_should_count_nothing_and_store_the_flag_false() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             serviceWithoutProgression().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
                     shareWith("{\"id\": \"not-a-uuid\"}")));
@@ -534,7 +520,7 @@ class IntakeServiceTest {
             when(progression.find(UUID.fromString(APP_B))).thenReturn(new ApplicationAnswer.NotFound());
             when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
             when(mockedExtractor.extract(any())).thenReturn(new Projection.Extracted(KeyDetails.NONE, List.of(), false));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, true, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, true, Duration.ZERO));
             final String text = shareWith(application(APP_B) + ", " + application(APP_A) + ", "
                     + application(APP_B.toUpperCase(Locale.ROOT)));
 
@@ -562,7 +548,7 @@ class IntakeServiceTest {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
             when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, true, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, true, Duration.ZERO));
             final String text = shareWith(application(APP_A));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, text));
@@ -584,7 +570,7 @@ class IntakeServiceTest {
             when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
             when(progression.find(UUID.fromString(APP_A))).thenReturn(listed());
             when(progression.find(UUID.fromString(APP_B))).thenReturn(new ApplicationAnswer.NotFound());
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A) + ", "
                     + application(APP_B))));
@@ -604,7 +590,7 @@ class IntakeServiceTest {
         @Test
         void application_with_an_invalid_id_should_be_counted_with_no_call_and_no_timer() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith("{\"id\": \"not-a-uuid\"}, {}")));
 
@@ -619,7 +605,7 @@ class IntakeServiceTest {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
             when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
-            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
+            when(shareStore.store(any())).thenReturn(new Stored(SHARE_ID, SHARED_AT, false, false, Duration.ZERO));
 
             service().receive(IntakeCommand.ofText(MESSAGE_ID, 1, shareWith(application(APP_A))));
 
@@ -628,57 +614,22 @@ class IntakeServiceTest {
         }
 
         @Test
-        void enriched_copy_refused_should_be_stored_once_more_with_the_arrived_copy_and_counted() {
+        void an_enriched_store_failure_should_be_counted_once_at_store_and_rethrown_after_one_store() {
             when(receipts.recordArrival(any())).thenReturn(received(true));
             when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
             when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
-            when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused(),
-                    new Stored(SHARE_ID, SHARED_AT, false, false, false, Duration.ZERO));
-            final Projection fromEnriched = new Projection.Extracted(KeyDetails.NONE, List.of(), true);
-            final Projection fromArrived = new Projection.Extracted(KeyDetails.NONE, List.of(), false);
-            when(mockedExtractor.extract(any())).thenReturn(fromEnriched, fromArrived);
-            final String text = shareWith(application(APP_A));
-
-            final IntakeResult result = serviceWithAMockedExtractor().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
-                    text));
-
-            assertThat(result.outcome()).isEqualTo(IntakeOutcome.STORED);
-            final ArgumentCaptor<StoreRequest> requests = ArgumentCaptor.forClass(StoreRequest.class);
-            final ArgumentCaptor<JsonNode> extracted = ArgumentCaptor.forClass(JsonNode.class);
-            final InOrder order = inOrder(mockedExtractor, shareStore, observer);
-            order.verify(mockedExtractor).extract(extracted.capture());
-            order.verify(shareStore).store(any());
-            order.verify(observer).enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS);
-            order.verify(mockedExtractor).extract(extracted.capture());
-            order.verify(shareStore).store(any());
-            assertThat(extracted.getAllValues().get(0).path("hearing").path("courtApplications").get(0)
-                    .has("judicialResults")).isTrue();
-            assertThat(extracted.getAllValues().get(1)).isEqualTo(PARSER.readTree(text));
-            assertThat(extracted.getAllValues().get(1).path("hearing").path("courtApplications").get(0)
-                    .has("judicialResults")).isFalse();
-            verify(shareStore, times(2)).store(requests.capture());
-            assertThat(requests.getAllValues().get(0).enrichmentApplied()).isTrue();
-            assertThat(requests.getAllValues().get(0).projection()).isSameAs(fromEnriched);
-            assertThat(requests.getAllValues().get(1).projection()).isSameAs(fromArrived);
-            assertThat(requests.getAllValues().get(1).parsedCopy()).isSameAs(text);
-            assertThat(requests.getAllValues().get(1).enrichmentApplied()).isFalse();
-            assertThat(requests.getAllValues().get(1).text()).isSameAs(text);
-            verify(progression, times(1)).find(any());
-            verify(observer, never()).enrichmentApplied();
-        }
-
-        @Test
-        void enriched_copy_refused_again_should_not_be_run_a_third_time_but_counted_and_thrown() {
-            when(receipts.recordArrival(any())).thenReturn(received(true));
-            when(shareStore.storedShareId(any())).thenReturn(Optional.empty());
-            when(progression.find(UUID.fromString(APP_A))).thenReturn(finalised());
-            when(shareStore.store(any())).thenReturn(new EnrichedCopyRefused());
+            final RetryableIntakeException failure = new RetryableIntakeException(IntakeStage.STORE,
+                    IntakeFailureCause.DATABASE, new SQLException("refused"));
+            when(shareStore.store(any())).thenThrow(failure);
 
             assertThatThrownBy(() -> service().receive(IntakeCommand.ofText(MESSAGE_ID, 1,
-                    shareWith(application(APP_A))))).isInstanceOf(IllegalStateException.class);
+                    shareWith(application(APP_A))))).isSameAs(failure);
 
-            verify(shareStore, times(2)).store(any());
-            verify(observer).intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
+            final ArgumentCaptor<StoreRequest> request = ArgumentCaptor.forClass(StoreRequest.class);
+            verify(shareStore, times(1)).store(request.capture());
+            assertThat(request.getValue().enrichmentApplied()).isTrue();
+            verify(observer, times(1)).intakeFailed(IntakeStage.STORE, IntakeFailureCause.DATABASE);
+            verify(observer, never()).enrichmentApplied();
         }
 
         @Test

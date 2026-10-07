@@ -13,12 +13,10 @@ import java.util.UUID;
  * @param hearingDay        its hearing day
  * @param sharedTime        its stored {@code shared_at}
  * @param enrichmentApplied whether intake added application results to the working copy
- * @param body              the text as read: the working copy already without {@code _metadata}, or the
- *                          arrived text still with it
- * @param form              which of the two {@code body} is
+ * @param body              the working copy as read, already without {@code _metadata}
  */
 public record StoredPayload(UUID shareId, UUID hearingId, LocalDate hearingDay, Instant sharedTime,
-        boolean enrichmentApplied, String body, PayloadForm form) {
+        boolean enrichmentApplied, String body) {
 
     /** Checks that every value is present. */
     public StoredPayload {
@@ -27,6 +25,5 @@ public record StoredPayload(UUID shareId, UUID hearingId, LocalDate hearingDay, 
         Objects.requireNonNull(hearingDay, "hearingDay");
         Objects.requireNonNull(sharedTime, "sharedTime");
         Objects.requireNonNull(body, "body");
-        Objects.requireNonNull(form, "form");
     }
 }

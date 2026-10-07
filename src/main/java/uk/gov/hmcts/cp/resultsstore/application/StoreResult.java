@@ -5,8 +5,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /** What one store transaction did. */
-public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Duplicate,
-        StoreResult.EnrichedCopyRefused {
+public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Duplicate {
 
     /**
      * The share was stored and its receipt marked {@code STORED}.
@@ -14,13 +13,12 @@ public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Dupl
      * @param shareId           the share id
      * @param storedAt          {@code stored_at}
      * @param outOfOrder        whether a later share of the day was stored first
-     * @param parsedCopySkipped whether the payload's parsed copy was left empty (FR-015)
      * @param enrichmentApplied the {@code enrichment_applied} actually stored (specs/002-enrichment FR-030)
      * @param insertToCommit    from sending the share insert to the commit returning, on a monotonic clock: at
      *                          least the time the share's number was held open (specs/003-read-api FR-020)
      */
-    record Stored(UUID shareId, Instant storedAt, boolean outOfOrder, boolean parsedCopySkipped,
-            boolean enrichmentApplied, Duration insertToCommit) implements StoreResult {
+    record Stored(UUID shareId, Instant storedAt, boolean outOfOrder, boolean enrichmentApplied,
+            Duration insertToCommit) implements StoreResult {
 
         /**
          * The same result with its measured time.
@@ -29,7 +27,7 @@ public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Dupl
          * @return the result
          */
         public Stored withInsertToCommit(final Duration measured) {
-            return new Stored(shareId, storedAt, outOfOrder, parsedCopySkipped, enrichmentApplied, measured);
+            return new Stored(shareId, storedAt, outOfOrder, enrichmentApplied, measured);
         }
     }
 
@@ -39,13 +37,5 @@ public sealed interface StoreResult permits StoreResult.Stored, StoreResult.Dupl
      * @param existingShareId the stored share's id (FR-012)
      */
     record Duplicate(UUID existingShareId) implements StoreResult {
-    }
-
-    /**
-     * The enriched copy cannot be held in {@code payload_json}: nothing was written, the receipt is
-     * still {@code RECEIVED}, and the caller stores the arrived copy instead (specs/002-enrichment
-     * FR-019, research R18).
-     */
-    record EnrichedCopyRefused() implements StoreResult {
     }
 }

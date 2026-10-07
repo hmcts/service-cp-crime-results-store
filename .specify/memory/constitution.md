@@ -1,6 +1,49 @@
 <!--
 SYNC IMPACT REPORT
 ==================
+Version change: 2.2.0 → 2.3.0 (2026-10-07, spec 005 payload simplification)
+Bump rationale: MINOR. The store's own code still refuses nothing; the
+                database's limit is named, not a rule reversed (spec 005
+                D-BUMP). Principle II: the working copy is the text parsed,
+                enriched, with the \u0000 escape and every unpaired
+                surrogate escape removed (the one exception to "nothing else
+                is added, removed or changed"), so every stored share has a
+                working copy; the read API serves the working copy only, and
+                the text fallback and the arrived-text endpoint are
+                withdrawn. Principle V: a text the database itself cannot
+                hold as jsonb fails like any database error and ends on the
+                dead-letter queue after the broker's attempts (D-NUMBER).
+
+Principles changed in 2.3.0:
+  II.   The Payload Is the Source of Truth - the two escapes jsonb refuses
+        are removed from the working copy; every share has one; the read API
+        serves it alone (no text fallback, no arrived-text endpoint)
+  V.    Never Refuse to Store - the store's own code validates and refuses
+        nothing; a text the database cannot hold as jsonb is a database
+        failure, retried by the broker, then dead-lettered
+Principles unchanged: I, III, IV, VI, VII, VIII, IX, X, XI, XII.
+
+Templates checked (2.3.0):
+  ✅ .specify/templates/plan-template.md      - no change needed
+  ✅ .specify/templates/spec-template.md      - no change needed
+  ✅ .specify/templates/tasks-template.md     - no change needed
+  ✅ .claude/rules/workflow.md                - gate 2 gains the Principle V
+                                                sentence
+  ✅ .claude/rules/design_rules.md            - the read API table (the
+                                                arrived row withdrawn) and
+                                                the hearing_share_payload row
+  ✅ .claude/rules/technical-rules.md         - the arrived-text bullet
+  ✅ specs/001-share-intake, specs/002-enrichment, specs/003-read-api -
+                                                "Amended by spec 005" notes
+
+Follow-up TODOs (2.3.0):
+  - Spec 004 (unbuilt) planned 2.3.0 and contract v0.3.0 for itself; it
+    renumbers to 2.4.0 and v0.4.0 when it is built.
+  - Before the service change is released, every deployed environment is
+    checked for payload_json IS NULL rows (spec 005 Out of scope).
+
+Previous change, kept for the record:
+
 Version change: 2.1.0 → 2.2.0 (2026-10-04, spec 003 read API)
 Bump rationale: MINOR. Materially wider guidance, no rule reversed.
                 Principle VII: the action is derived for every request
@@ -191,17 +234,17 @@ included, in `payload_text`. The payload checksum is SHA-256 over that text.
 Beside it the store keeps one working copy, `payload_json`: that text parsed,
 with the finalised application results from progression set into
 `courtApplications[].judicialResults` at intake, each result without
-`amendmentDate`, `amendmentReason` and `amendmentReasonId`. Nothing else in
-the content is added, removed or changed. The working copy is held as jsonb,
-which keeps content but not key order, spacing or duplicate keys.
+`amendmentDate`, `amendmentReason` and `amendmentReasonId`, and with the
+`\u0000` escape and every unpaired surrogate escape removed, which jsonb
+cannot hold; so every stored share has a working copy. That removal is the
+one exception: nothing else in the content is added, removed or changed. The
+working copy is held as jsonb, which keeps content but not key order, spacing
+or duplicate keys.
 
-Every indexed column is read from the working copy (from the text when the
-working copy is empty), and can be rebuilt from it if the extraction rules
-change. The read API serves the working copy without the message envelope's
-metadata (`_metadata`), and the text, likewise without it, when the working
-copy is empty; and, on its own endpoint, the text as it arrived, likewise
-without the envelope metadata. No read-API response carries `_metadata` or a
-value taken from it.
+Every indexed column is read from the working copy, and can be rebuilt from
+it if the extraction rules change. The read API serves the working copy
+without the message envelope's metadata (`_metadata`). No read-API response
+carries `_metadata` or a value taken from it.
 
 **Rationale**: if the columns can always be rebuilt from the payload, an
 extraction bug is a re-run, not a data loss. Keeping the text as it arrived
@@ -244,7 +287,10 @@ Nothing else is validated, and the payload is not checked against a schema.
 If extracting the
 indexed columns fails, the share is still stored and the row is marked
 (`projection_status = FAILED`) for the sweep to retry. Extraction failure
-never drops a share.
+never drops a share. The store's own code validates and refuses nothing. A
+text the database itself cannot hold as `jsonb` (a number beyond its numeric
+range) fails like any database error: retried by the broker, then
+dead-lettered after its attempts.
 
 **Rationale**: a share the store refuses is a share no consumer will ever
 see. A share stored with a failed extraction can be fixed later.
@@ -479,4 +525,4 @@ match.
 - Reviewers block a merge that breaks a NON-NEGOTIABLE principle without a
   written waiver.
 
-**Version**: 2.2.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-04
+**Version**: 2.3.0 | **Ratified**: 2026-10-01 | **Last Amended**: 2026-10-07

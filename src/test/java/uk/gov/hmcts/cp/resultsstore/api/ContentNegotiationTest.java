@@ -37,7 +37,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.application.SearchPage;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
 import uk.gov.hmcts.cp.resultsstore.filters.ActionRequestWrapper;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
@@ -89,12 +88,7 @@ class ContentNegotiationTest {
                 List.of(ShareViews.complete()));
         when(service.payload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(
                 "{}".getBytes(StandardCharsets.UTF_8), "\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"",
-                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false,
-                PayloadForm.WORKING_COPY));
-        when(service.arrivedPayload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(
-                "{}".getBytes(StandardCharsets.UTF_8), "\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"",
-                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false,
-                PayloadForm.ARRIVED_TEXT));
+                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false));
     }
 
     private static String path(final ApiRoute route) {
@@ -158,12 +152,10 @@ class ContentNegotiationTest {
     }
 
     @ParameterizedTest
-    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD", "GET_SHARE_ARRIVED_PAYLOAD"})
+    @EnumSource(value = ApiRoute.class, names = {"GET_SHARE", "GET_SHARE_PAYLOAD"})
     void an_error_should_be_application_json_whatever_accept_says(final ApiRoute route) throws Exception {
         when(service.share(ShareViews.SHARE_ID)).thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
         when(service.payload(ShareViews.SHARE_ID)).thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
-        when(service.arrivedPayload(ShareViews.SHARE_ID))
-                .thenThrow(new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
 
         for (final String accept : new String[] {"application/json", "application/problem+json", "*/*",
             "application/vnd.x+json"}) {

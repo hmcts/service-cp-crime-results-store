@@ -17,9 +17,7 @@ public enum ReadEndpoint {
     /** {@code GET /results-store/v1/shares/{shareId}/payload}. */
     PAYLOAD,
     /** {@code GET /results-store/v1/hearings/{hearingId}/days/{hearingDay}/shares}. */
-    DAY_VERSIONS,
-    /** {@code GET /results-store/v1/shares/{shareId}/payload/arrived}: the text as it arrived (phase D). */
-    ARRIVED_PAYLOAD;
+    DAY_VERSIONS;
 
     /** The {@code endpoint} tag. */
     public String tag() {

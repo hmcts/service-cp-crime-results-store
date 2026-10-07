@@ -12,7 +12,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.NotShare;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Reading;
 import uk.gov.hmcts.cp.resultsstore.application.ShareIdentityParser.Share;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Duplicate;
-import uk.gov.hmcts.cp.resultsstore.application.StoreResult.EnrichedCopyRefused;
 import uk.gov.hmcts.cp.resultsstore.application.StoreResult.Stored;
 import uk.gov.hmcts.cp.resultsstore.domain.ApplicationLookupOutcome;
 import uk.gov.hmcts.cp.resultsstore.domain.EnrichmentSkip;
@@ -39,8 +38,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
  * details are read, with no transaction open: the applications needing results are found; if there
  * are any and enrichment is on, a read-only check finds whether the share is already stored, and if not,
  * progression is asked about each, one at a time, in array order. Any lookup failure fails the attempt,
- * so a share is never stored half-enriched. The key details are read from the working copy. If the
- * store refuses the enriched copy, the store transaction runs once more with the arrived copy.
+ * so a share is never stored half-enriched. The key details are read from the working copy, which
+ * is stored as it is: the store refuses nothing (specs/005-payload-simplification FR-004).
  */
 public class IntakeService {
 
@@ -160,27 +159,13 @@ public class IntakeService {
         final Enrichment enrichment = enrich(share, text);
         // Read before the store transaction opens, so a bad field never holds the lock (FR-021).
         final Projection projection = extractor.extract(enrichment.tree());
-        StoreResult result = counted(IntakeStage.STORE, () -> shareStore.store(request(messageId, identity, text,
-                enrichment.parsedCopy(), enrichment.applied(), projection)));
-        Projection storedProjection = projection;
-        if (result instanceof EnrichedCopyRefused) {
-            // Once only: the arrived copy, its own key details and the flag false (FR-019).
-            observer.enrichmentSkipped(EnrichmentSkip.UNSTORABLE_RESULTS);
-            storedProjection = extractor.extract(share.body());
-            final Projection arrived = storedProjection;
-            result = counted(IntakeStage.STORE,
-                    () -> shareStore.store(request(messageId, identity, text, text, false, arrived)));
-        }
+        final StoreResult result = counted(IntakeStage.STORE, () -> shareStore.store(request(messageId, identity,
+                text, enrichment.parsedCopy(), enrichment.applied(), projection)));
         return switch (result) {
-            case Stored stored -> stored(stored, messageId, identity, storedProjection);
+            case Stored stored -> stored(stored, messageId, identity, projection);
             case Duplicate duplicate -> {
                 observer.duplicate();
                 yield result(IntakeOutcome.DUPLICATE, messageId, duplicate.existingShareId(), identity);
-            }
-            case EnrichedCopyRefused _ -> {
-                // The arrived copy was refused as enriched: a defect, never run a third time.
-                observer.intakeFailed(IntakeStage.STORE, IntakeFailureCause.OTHER);
-                throw new IllegalStateException("the arrived copy was refused as an enriched copy");
             }
         };
     }
@@ -255,14 +240,11 @@ public class IntakeService {
         final Duration lag = Duration.between(identity.sharedAt(), stored.storedAt());
         // A clock ahead of the store's would give a negative lag; a timer takes none (research R22).
         observer.stored(stored.outOfOrder(), lag.isNegative() ? Duration.ZERO : lag);
-        if (stored.parsedCopySkipped()) {
-            observer.parsedCopySkipped();
-        }
         if (projection instanceof Projection.Failed failed) {
             observer.extractionFailed(ExtractionStage.INTAKE, failed.kind());
         }
         if (stored.enrichmentApplied()) {
-            // From the flag actually stored, so the fallback never counts (FR-030).
+            // From the flag actually stored (FR-030).
             observer.enrichmentApplied();
         }
         if (stored.insertToCommit().compareTo(overrunAt) >= 0) {
