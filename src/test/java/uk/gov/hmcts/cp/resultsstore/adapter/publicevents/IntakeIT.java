@@ -586,7 +586,7 @@ class IntakeIT {
         final UUID applicationId = UUID.randomUUID();
         progression.answer(applicationId, okJson("{\"courtApplication\":{\"id\":\"" + applicationId
                 + "\",\"applicationStatus\":\"FINALISED\",\"judicialResults\":[{\"label\":\"a\\u0000b\"}]}}"));
-        final double skippedBefore = skipped();
+        final double skippedBefore = skipsCounted();
         final double appliedBefore = count(APPLIED);
         final String text = shareWith("{\"id\":\"" + applicationId + "\"}");
 
@@ -599,13 +599,13 @@ class IntakeIT {
                 .containsEntry("results", 1)
                 .containsEntry("label", "ab");
         assertThat(count(APPLIED) - appliedBefore).isEqualTo(1.0);
-        assertThat(skipped()).isEqualTo(skippedBefore);
+        assertThat(skipsCounted()).isEqualTo(skippedBefore);
         assertThat(receiptOf(hearingId)).containsEntry("attempts", 1);
         assertEveryReceiptSettled();
     }
 
     /** Every enrichment skip, whatever its reason. */
-    private double skipped() {
+    private double skipsCounted() {
         return meters.find(SKIPPED).counters().stream().mapToDouble(Counter::count).sum();
     }
 
