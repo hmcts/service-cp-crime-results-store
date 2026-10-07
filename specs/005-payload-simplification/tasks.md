@@ -63,7 +63,7 @@ names a share id only).
   - GREEN: `./gradlew test --tests '*NulSafetyTest'`: BUILD SUCCESSFUL, 78 tests, 0 failures, 0 skipped;
     `./gradlew test`: BUILD SUCCESSFUL, 2025 tests, 0 failures.
 
-- [ ] T002 [US1] Store the stripped working copy for every share. Tests first:
+- [X] T002 [US1] Store the stripped working copy for every share. Tests first:
   - src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareStoreIT.java:
     `payload_with_an_escaped_nul_or_unpaired_surrogate_should_store_its_text_unchanged_and_the_stripped_working_copy`
     replaces `payload_that_jsonb_refuses_should_be_stored_as_text_with_no_parsed_copy` (same three
@@ -119,8 +119,24 @@ names a share id only).
     ("or `payload_text` for a row stored without a copy before spec 005"); `application/StoreRequest`
     `@param parsedCopy` ("the store removes the escapes `jsonb` refuses before writing it").
   - Done when: the named classes green.
-  - RED:
-  - GREEN:
+  - Also in this commit: `ReadApiIT.an_arrived_text_that_does_not_parse_should_give_500_internal_error_and_never_the_text`
+    and the unreadable-arrived-text `500` half of `NoPayloadInLogsIT.serving_a_payload_should_log_no_payload_marker_at_any_level`
+    (both listed for T004) go now: each stored a text that is not JSON, which the one payload insert refuses
+    as a retryable store failure, so their set-up can no longer be built.
+  - RED (one class per run, `failFast` stops each at its first failure):
+    `ExtractionSweepIT`: `row_whose_text_held_an_escaped_nul_should_be_re_extracted_from_its_stripped_working_copy() FAILED`
+    `Expecting value to be true but was false` (`payload_json IS NOT NULL`);
+    `JdbcShareStoreIT`: `payload_for_extraction_of_a_text_with_an_escaped_nul_should_be_its_stripped_working_copy() FAILED`
+    `Expecting value to be true but was false`;
+    `IntakeIT`: `results_holding_an_escaped_nul_should_be_stored_stripped_with_the_flag_true_and_counted_applied() FAILED`
+    `to contain entries: ["enrichment_applied"=true] but the following map entries had different values`;
+    `JdbcShareQueriesIT`: `payload_of_a_text_with_an_escaped_nul_should_return_the_stripped_working_copy() FAILED`
+    `expected: WORKING_COPY but was: ARRIVED_TEXT`;
+    `ReadApiIT`: `payload_bytes_should_hash_to_the_etag_and_have_no_metadata_key() FAILED`
+    `Expecting actual: Optional[arrived-text] to contain: "working-copy"`.
+  - GREEN: `./gradlew test --tests '*JdbcShareStoreIT' --tests '*IntakeIT' --tests '*ExtractionSweepIT'
+    --tests '*JdbcShareQueriesIT' --tests '*ReadApiIT' --tests '*NulSafetyTest' --tests '*NoPayloadInLogsIT'`:
+    BUILD SUCCESSFUL, 240 tests, 0 failures, 0 skipped.
 
 - [ ] T003 [US1] Remove the skip and refusal types. Tests first:
   - src/test/java/uk/gov/hmcts/cp/resultsstore/config/MicrometerIntakeObserverTest.java: drop

@@ -15,7 +15,6 @@ import org.springframework.dao.DataAccessException;
 import org.springframework.dao.IncorrectResultSizeDataAccessException;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.transaction.TransactionException;
-import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionOperations;
 import uk.gov.hmcts.cp.resultsstore.application.KeyDetailsExtractor;
 import uk.gov.hmcts.cp.resultsstore.application.ShareStore;
@@ -37,13 +36,11 @@ import uk.gov.hmcts.cp.resultsstore.domain.SweepRowOutcome;
  * identity, then its payload and defendant rows, links it into the chain ({@link ShareChain}),
  * recomputes the day's youth flag ({@link YouthFlags}) and marks the receipt {@code STORED}. A
  * conflict means the identity is already stored: the receipt is marked {@code DUPLICATE} with the
- * stored share's id, looked up by the identity (FR-012). The payload's parsed copy is written under a
- * savepoint: when PostgreSQL refuses the {@code jsonb} conversion, the payload row is written without
- * it and the skip is reported, so a payload {@code jsonb} cannot hold is still stored (FR-015). An
- * enriched working copy takes no savepoint: if {@code jsonb} cannot hold it, the whole transaction is
- * rolled back and {@link StoreResult.EnrichedCopyRefused} returned, so the caller can store the arrived
- * copy instead and {@code enrichment_applied} is never true with no parsed copy (specs/002-enrichment
- * FR-018, FR-019, research R18).
+ * stored share's id, looked up by the identity (FR-012). The payload row is written in one insert:
+ * the text exactly as received, and the working copy (the parsed copy, enriched or not) with the
+ * escapes {@code jsonb} refuses removed ({@link NulSafety#strip}), so every share has a working copy
+ * (specs/005-payload-simplification FR-001 to FR-004). A copy the database still refuses (a number
+ * beyond {@code numeric}'s range) fails the transaction like any other database failure.
  * The transaction first sets its own lock, statement and idle-in-transaction timeouts (FR-020). The
  * key details arrive in the request, read before the transaction opened (FR-021). Any failure
  * rolls everything back, the receipt's mark included, and is thrown as a classified
@@ -125,7 +122,10 @@ public class JdbcShareStore implements ShareStore {
             UPDATE hearing_share SET projection_tried_at = now() WHERE share_id = :shareId
             """;
 
-    /** The working copy, or the arrived text when there is none (specs/002-enrichment research R19). */
+    /**
+     * The working copy, or the arrived text for a row stored without one before spec 005
+     * (specs/002-enrichment research R19; specs/005-payload-simplification FR-008).
+     */
     private static final String PAYLOAD_FOR_EXTRACTION = """
             SELECT COALESCE(payload_json::text, payload_text) FROM hearing_share_payload WHERE share_id = :shareId
             """;
@@ -155,9 +155,6 @@ public class JdbcShareStore implements ShareStore {
                    projection_attempts = projection_attempts + 1, projected_at = clock_timestamp()
              WHERE share_id = :shareId
             """;
-
-    /** SQLSTATE class 22, data exception: {@code jsonb} refused the text (e.g. 22003, 22P05). */
-    private static final String DATA_EXCEPTION_CLASS = "22";
 
     private static final String SHARE_ID = "shareId";
 
@@ -230,29 +227,21 @@ public class JdbcShareStore implements ShareStore {
      */
     @Override
     public StoreResult store(final StoreRequest request) {
-        final StoreResult result;
-        if (request.enrichmentApplied() && !NulSafety.isJsonbSafe(request.parsedCopy())) {
-            // Refused before any transaction opens: nothing to roll back (specs/002-enrichment research R18).
-            result = new StoreResult.EnrichedCopyRefused();
-        } else {
-            // Read before the share insert is sent, inside the transaction; local to this call.
-            final AtomicLong insertSent = new AtomicLong();
-            final StoreResult committed;
-            try {
-                committed = storeTransaction.execute(status -> storeLocked(request, status, insertSent));
-            } catch (final DataAccessException | TransactionException failure) {
-                throw RetryableFailures.classify(IntakeStage.STORE, failure);
-            }
-            // After the commit returned: the measure can only over-state the time the number was held open.
-            result = committed instanceof StoreResult.Stored stored
-                    ? stored.withInsertToCommit(Duration.ofNanos(nanoClock.getAsLong() - insertSent.get()))
-                    : committed;
+        // Read before the share insert is sent, inside the transaction; local to this call.
+        final AtomicLong insertSent = new AtomicLong();
+        final StoreResult committed;
+        try {
+            committed = storeTransaction.execute(status -> storeLocked(request, insertSent));
+        } catch (final DataAccessException | TransactionException failure) {
+            throw RetryableFailures.classify(IntakeStage.STORE, failure);
         }
-        return result;
+        // After the commit returned: the measure can only over-state the time the number was held open.
+        return committed instanceof StoreResult.Stored stored
+                ? stored.withInsertToCommit(Duration.ofNanos(nanoClock.getAsLong() - insertSent.get()))
+                : committed;
     }
 
-    private StoreResult storeLocked(final StoreRequest request, final TransactionStatus status,
-            final AtomicLong insertSent) {
+    private StoreResult storeLocked(final StoreRequest request, final AtomicLong insertSent) {
         final ShareIdentity identity = request.identity();
         setTimeouts();
         lockDay(identity.hearingId(), identity.hearingDay());
@@ -264,47 +253,18 @@ public class JdbcShareStore implements ShareStore {
             final UUID existing = existingShare(identity);
             settle(receipts.markDuplicate(request.messageId(), existing));
             result = new StoreResult.Duplicate(existing);
-        } else if (request.enrichmentApplied() && !insertEnrichedPayload(request)) {
-            // The whole transaction goes: the caller runs it again with the arrived copy.
-            status.setRollbackOnly();
-            result = new StoreResult.EnrichedCopyRefused();
         } else {
-            final boolean parsed = request.enrichmentApplied()
-                    || NulSafety.isJsonbSafe(request.parsedCopy()) && insertPayloadParsed(request, status);
-            if (!parsed) {
-                insertPayload(request, null);
-            }
+            insertPayload(request);
             if (request.projection() instanceof Projection.Extracted extracted) {
                 insertDefendants(request.shareId(), extracted);
             }
             chain.join(identity, request.shareId(), place);
             youth.recompute(identity.hearingId(), identity.hearingDay());
             settle(receipts.markStored(request.messageId(), request.shareId()));
-            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), !parsed,
+            result = new StoreResult.Stored(request.shareId(), storedAt.get(), place.isLate(), false,
                     request.enrichmentApplied(), Duration.ZERO);
         }
         return result;
-    }
-
-    /**
-     * Writes the payload row with the enriched copy, with no savepoint. A data exception (SQLSTATE class
-     * 22) is {@code jsonb} refusing the copy: the outcome is "refused", and the caller rolls the whole
-     * transaction back, since PostgreSQL has aborted it. Any other failure is thrown.
-     *
-     * @return whether the row was written
-     */
-    private boolean insertEnrichedPayload(final StoreRequest request) {
-        boolean written;
-        try {
-            insertPayload(request, request.parsedCopy());
-            written = true;
-        } catch (final DataAccessException failure) {
-            if (!isDataException(failure)) {
-                throw failure;
-            }
-            written = false;
-        }
-        return written;
     }
 
     @Override
@@ -476,45 +436,14 @@ public class JdbcShareStore implements ShareStore {
                 .param("youthCourtId", details.youthCourtId());
     }
 
-    /**
-     * Writes the payload row with its parsed copy, under a savepoint. A data exception (SQLSTATE class
-     * 22) can only be the {@code jsonb} conversion refusing the text, e.g. a number beyond its range:
-     * the savepoint is rolled back and the outcome is "not parsed", which the caller records. Any other
-     * failure is thrown and rolls the whole transaction back.
-     *
-     * @return whether the row was written with its parsed copy
-     */
-    private boolean insertPayloadParsed(final StoreRequest request, final TransactionStatus status) {
-        final Object savepoint = status.createSavepoint();
-        boolean parsed;
-        try {
-            insertPayload(request, request.parsedCopy());
-            parsed = true;
-        } catch (final DataAccessException failure) {
-            if (!isDataException(failure)) {
-                throw failure;
-            }
-            status.rollbackToSavepoint(savepoint);
-            parsed = false;
-        }
-        if (parsed) {
-            status.releaseSavepoint(savepoint);
-        }
-        return parsed;
-    }
-
-    private void insertPayload(final StoreRequest request, final String parsedCopy) {
+    /** The payload row: the text as received and its working copy without the escapes {@code jsonb} refuses. */
+    private void insertPayload(final StoreRequest request) {
         jdbc.sql(INSERT_PAYLOAD)
                 .param(SHARE_ID, request.shareId())
                 .param("text", request.text())
                 .param("textBytes", request.text().getBytes(StandardCharsets.UTF_8).length)
-                .param("parsedCopy", parsedCopy)
+                .param("parsedCopy", NulSafety.strip(request.parsedCopy()))
                 .update();
-    }
-
-    private static boolean isDataException(final DataAccessException failure) {
-        final String sqlState = RetryableFailures.sqlState(failure);
-        return sqlState != null && sqlState.startsWith(DATA_EXCEPTION_CLASS);
     }
 
     private void insertDefendants(final UUID shareId, final Projection.Extracted extracted) {

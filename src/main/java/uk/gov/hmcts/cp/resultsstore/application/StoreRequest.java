@@ -15,7 +15,8 @@ import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
  * @param checksum          SHA-256 of the text
  * @param text              the message text exactly as it arrived
  * @param parsedCopy        the working copy for {@code payload_json}: the enriched copy, or the arrived
- *                          text when nothing was added (specs/002-enrichment FR-017)
+ *                          text when nothing was added (specs/002-enrichment FR-017); the store removes
+ *                          the escapes {@code jsonb} refuses before writing it
  * @param enrichmentApplied whether at least one application received results, so the parsed copy is
  *                          the enriched one (FR-018)
  * @param projection        the key details, read before the transaction

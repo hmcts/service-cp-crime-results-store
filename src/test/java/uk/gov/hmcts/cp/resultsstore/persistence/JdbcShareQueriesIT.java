@@ -621,17 +621,19 @@ class JdbcShareQueriesIT {
         }
 
         @Test
-        void payload_should_return_payload_text_and_the_arrived_form_when_the_working_copy_is_null() {
+        void payload_of_a_text_with_an_escaped_nul_should_return_the_stripped_working_copy() {
             final String text = SampleShares.share(UUID.randomUUID(), "2026-10-02", "2026-10-02T14:19:50.706Z",
                     "false", "a\\u0000b");
             final StoreRequest request = received(text);
             store.store(request);
+            final String strippedText = jdbc.sql("SELECT (CAST(:copy AS jsonb) - '_metadata')::text")
+                    .param("copy", NulSafety.strip(text)).query(String.class).single();
 
             final StoredPayload payload = present(queries.payload(request.shareId()));
 
-            assertThat(payload.form()).isEqualTo(PayloadForm.ARRIVED_TEXT);
+            assertThat(payload.form()).isEqualTo(PayloadForm.WORKING_COPY);
             assertThat(PayloadChecksum.sha256Hex(payload.body())).as("body hash")
-                    .isEqualTo(PayloadChecksum.sha256Hex(text));
+                    .isEqualTo(PayloadChecksum.sha256Hex(strippedText));
         }
 
         /** Phase D: {@code payload_text} as stored, whatever the working copy, with the identity columns. */

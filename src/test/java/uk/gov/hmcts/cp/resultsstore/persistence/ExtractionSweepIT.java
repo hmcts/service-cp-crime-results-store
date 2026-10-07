@@ -306,11 +306,11 @@ class ExtractionSweepIT {
     }
 
     @Test
-    void row_with_no_parsed_copy_should_be_read_from_its_stored_text() {
-        // A JSON escape for U+0000: valid JSON text, but jsonb cannot hold it, so no parsed copy is kept.
+    void row_whose_text_held_an_escaped_nul_should_be_re_extracted_from_its_stripped_working_copy() {
+        // A JSON escape for U+0000: valid JSON text that jsonb cannot hold, so the copy is stored without it.
         final String text = SampleShares.share(hearingId, HEARING_DAY, "2026-10-02T10:00:00Z", "false", "\\u0000");
         final UUID shareId = stored(text, failed(COURT_CENTRE_REASON, ExtractionFailureKind.INVALID_UUID));
-        assertThat(jdbc.sql("SELECT payload_json IS NULL FROM hearing_share_payload WHERE share_id = :shareId")
+        assertThat(jdbc.sql("SELECT payload_json IS NOT NULL FROM hearing_share_payload WHERE share_id = :shareId")
                 .param("shareId", shareId).query(Boolean.class).single()).isTrue();
 
         final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
@@ -319,6 +319,37 @@ class ExtractionSweepIT {
         assertThat(share(shareId)).containsEntry("projection_status", "OK")
                 .containsEntry("court_centre_id", SampleShares.COURT_CENTRE)
                 .containsEntry("lja_code", "2577");
+        assertThat(defendants(shareId)).hasSize(1);
+    }
+
+    /** A row stored without a working copy before spec 005 is still read from its text (spec 005 FR-008). */
+    @Test
+    void row_stored_without_a_working_copy_should_be_read_from_its_text() throws SQLException {
+        final UUID shareId = stored("2026-10-02T10:00:00Z", failed(COURT_CENTRE_REASON,
+                ExtractionFailureKind.INVALID_UUID));
+        // The update guard refuses every payload change; replica mode skips triggers on this connection only.
+        try (Connection connection = dataSource.getConnection()) {
+            try (PreparedStatement replica = connection.prepareStatement("SET session_replication_role = replica")) {
+                replica.execute();
+            }
+            try (PreparedStatement clear = connection.prepareStatement(
+                    "UPDATE hearing_share_payload SET payload_json = NULL WHERE share_id = ?")) {
+                clear.setObject(1, shareId);
+                assertThat(clear.executeUpdate()).isEqualTo(1);
+            } finally {
+                try (PreparedStatement origin = connection.prepareStatement("SET session_replication_role = DEFAULT")) {
+                    origin.execute();
+                }
+            }
+        }
+        assertThat(jdbc.sql("SELECT payload_json IS NULL FROM hearing_share_payload WHERE share_id = :shareId")
+                .param("shareId", shareId).query(Boolean.class).single()).isTrue();
+
+        final List<SweepRowOutcome> outcomes = sweep(new KeyDetailsExtractor(), RAISED_VERSION).runRound();
+
+        assertThat(outcomes).containsExactly(SweepRowOutcome.FIXED);
+        assertThat(share(shareId)).containsEntry("projection_status", "OK")
+                .containsEntry("court_centre_id", SampleShares.COURT_CENTRE);
         assertThat(defendants(shareId)).hasSize(1);
     }
 

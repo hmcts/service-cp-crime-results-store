@@ -53,28 +53,6 @@ public final class NulSafety {
         return kept.toString();
     }
 
-    /**
-     * Whether {@code jsonb} can hold the text's parsed copy.
-     *
-     * @param text a JSON text
-     * @return {@code false} when it holds {@code \u0000} or an unpaired surrogate escape
-     */
-    public static boolean isJsonbSafe(final String text) {
-        boolean safe = true;
-        int index = 0;
-        while (safe && index < text.length()) {
-            if (text.charAt(index) == BACKSLASH) {
-                final int unit = unicodeEscape(text, index);
-                safe = isStorable(text, index, unit);
-                // A surrogate pair is checked from its high half; the low half is passed over with it.
-                index += Character.isHighSurrogate((char) unit) ? 2 * ESCAPE_LENGTH : escapeLength(unit);
-            } else {
-                index++;
-            }
-        }
-        return safe;
-    }
-
     private static boolean isStorable(final String text, final int index, final int unit) {
         final boolean storable;
         if (unit == 0 || Character.isLowSurrogate((char) unit)) {

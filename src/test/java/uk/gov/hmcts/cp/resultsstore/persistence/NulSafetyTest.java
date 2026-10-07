@@ -7,7 +7,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 /**
  * The escapes PostgreSQL {@code jsonb} refuses: {@code \u0000} and an escaped UTF-16 surrogate that
@@ -82,32 +81,5 @@ class NulSafetyTest {
     void strip_should_be_idempotent(final String text) {
         final String once = NulSafety.strip(text);
         assertThat(NulSafety.strip(once)).isEqualTo(once);
-        assertThat(NulSafety.isJsonbSafe(once)).isTrue();
-    }
-
-    @ParameterizedTest
-    @MethodSource("jsonbCanHold")
-    void text_that_jsonb_can_hold_should_keep_its_parsed_copy(final String text) {
-        assertThat(NulSafety.isJsonbSafe(text)).isTrue();
-    }
-
-    @ParameterizedTest
-    @ValueSource(strings = {
-        "{\"a\":\"\\u0000\"}",
-        "{\"a\":\"x\\u0000y\"}",
-        // A lone high surrogate, at the end, before a non-escape, or before another high one.
-        "{\"a\":\"\\uD800\"}",
-        "{\"a\":\"\\uDBFFx\"}",
-        "{\"a\":\"\\uD800\\uD800\\uDC00\"}",
-        "{\"a\":\"\\uD800\\n\"}",
-        "{\"a\":\"\\uD800\\u0041\"}",
-        "{\"a\":\"\\uD800abcdefgh\"}",
-        // A lone low surrogate.
-        "{\"a\":\"\\uDC00\"}",
-        "{\"a\":\"\\udfff\"}",
-        "{\"a\":\"\\\\\\u0000\"}",
-    })
-    void text_that_jsonb_refuses_should_skip_its_parsed_copy(final String text) {
-        assertThat(NulSafety.isJsonbSafe(text)).isFalse();
     }
 }
