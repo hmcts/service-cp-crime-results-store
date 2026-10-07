@@ -13,7 +13,9 @@ description: "Task list for feature 005: payload simplification"
 The implementer writes the tests, runs them, records the RED run under the task (a failing assertion,
 never a compile error: land compile-safe seams first), then writes the minimum production code and
 records the GREEN run. One commit per task, the test at or before the production code. A task is
-ticked (`[X]`) only on a green full-suite run, in the commit that completes it.
+ticked (`[X]`) on a green run of the test classes it names, in the commit that completes it. The
+full build (`./gradlew build pmdMain pmdTest jacocoTestReport`) runs ONCE, after T007 and before the
+gate, to save time; a failure found there is fixed in a follow-up commit named after the task.
 
 **Organisation**: one phase, T001–T007, one run of the phase-gate workflow. The write side first
 (T001–T003, on the 0.2.0 jar), the contract (T004, one indivisible commit), the read-side cleanup
@@ -116,7 +118,7 @@ names a share id only).
     `NulSafety.isJsonbSafe` and its two tests. Javadoc: `application/ShareStore.payloadForExtraction`
     ("or `payload_text` for a row stored without a copy before spec 005"); `application/StoreRequest`
     `@param parsedCopy` ("the store removes the escapes `jsonb` refuses before writing it").
-  - Done when: the named classes green; the full suite green.
+  - Done when: the named classes green.
   - RED:
   - GREEN:
 
@@ -142,7 +144,7 @@ names a share id only).
     (`PARSED_COPY_SKIPPED_METER`, its registration and increment); `domain/EnrichmentSkip.UNSTORABLE_RESULTS`.
     Same commit: every `new Stored(` call site (`IntakeServiceTest`, `JdbcShareStoreIT`,
     `JdbcShareStore`) and the switch arm in `persistence/ShareChainIT` (about line 177).
-  - Done when: the named classes green; the full suite green.
+  - Done when: the named classes green.
   - RED:
   - GREEN:
 
@@ -196,8 +198,7 @@ names a share id only).
     `ShareQueries.arrivedText` and `JdbcShareQueries.ARRIVED_SQL` stay until T005 (they compile
     without the route).
   - Done when: `OpenApiContractDriftTest`, `OpenApiContractTest`, `ResultsStoreRulesTest`,
-    `ApiRouteTest`, `ReadApiIT`, `AuthzIT`, `AuditIT`, `NoPayloadInLogsIT` green on the draft jar;
-    the full suite green.
+    `ApiRouteTest`, `ReadApiIT`, `AuthzIT`, `AuditIT`, `NoPayloadInLogsIT` green on the draft jar.
   - RED:
   - GREEN:
 
@@ -226,8 +227,8 @@ names a share id only).
     strip branch of `payload`); delete domain/PayloadForm.java, domain/EnvelopeMetadata.java;
     domain/StoredPayload.java and application/ServedPayload.java lose `form`;
     api/ReadApiExceptionHandler.java (delete the `UnreadablePayloadException` handler and import).
-  - Done when: `./gradlew build pmdMain pmdTest jacocoTestReport` green (the coverage gate holds
-    with the removed classes).
+  - Done when: the named classes green (the coverage gate is checked by the one full build after
+    T007).
   - RED:
   - GREEN:
 
