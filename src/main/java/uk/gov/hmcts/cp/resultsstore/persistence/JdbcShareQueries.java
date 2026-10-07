@@ -21,7 +21,6 @@ import uk.gov.hmcts.cp.resultsstore.application.SearchQuery;
 import uk.gov.hmcts.cp.resultsstore.application.ShareQueries;
 import uk.gov.hmcts.cp.resultsstore.domain.DayYouthFilter;
 import uk.gov.hmcts.cp.resultsstore.domain.KeyDetails;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.ProjectionStatus;
 import uk.gov.hmcts.cp.resultsstore.domain.SearchCursor;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareView;
@@ -33,11 +32,10 @@ import uk.gov.hmcts.cp.resultsstore.domain.StoredPayload;
  *
  * <p>Every statement is a fixed constant with bound parameters. The variants of pull (day filter × court) and
  * search (day filter × latest only × cursor) are built once, when the class loads, from fixed fragments, and
- * chosen by the checked query's values; nothing a caller sends becomes SQL text. Only {@link #PAYLOAD_SQL} and
- * {@link #ARRIVED_SQL} name {@code hearing_share_payload} (Principle III). The working copy is read without
- * {@code _metadata} ({@code payload_json - '_metadata'}); the arrived text, read by the payload query only when
- * there is no working copy and by the arrived query always, is returned as stored and stripped by the service
- * (E8). Neither reads {@code payload_sha256}, which is never served.
+ * chosen by the checked query's values; nothing a caller sends becomes SQL text. Only {@link #PAYLOAD_SQL} names
+ * {@code hearing_share_payload} (Principle III). It reads the working copy alone, without {@code _metadata}
+ * ({@code payload_json - '_metadata'}): every share has one (specs/005-payload-simplification FR-006). It never
+ * reads {@code payload_text} or {@code payload_sha256}, which are never served.
  *
  * <p>Pull safety: a pull returns only rows at or below the visibility bound, the highest {@code stored_seq}
  * stored at or before the database's {@code now()} minus the lag, worked out in the same statement as the
@@ -118,21 +116,10 @@ public class JdbcShareQueries implements ShareQueries {
              ORDER BY s.shared_at
             """;
 
-    /** The payload: the working copy without {@code _metadata}, or the arrived text when there is none. */
+    /** The payload: the working copy without {@code _metadata}. */
     /* default */ static final String PAYLOAD_SQL = """
             SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applied,
-                   CASE WHEN p.payload_json IS NULL THEN p.payload_text
-                        ELSE (p.payload_json - '_metadata')::text END AS body,
-                   p.payload_json IS NULL AS arrived_text
-              FROM hearing_share s
-              JOIN hearing_share_payload p ON p.share_id = s.share_id
-             WHERE s.share_id = :shareId
-            """;
-
-    /** The text as it arrived (phase D): {@code payload_text} whatever the working copy holds. */
-    /* default */ static final String ARRIVED_SQL = """
-            SELECT s.share_id, s.hearing_id, s.hearing_day, s.shared_at, s.enrichment_applied,
-                   p.payload_text AS body
+                   (p.payload_json - '_metadata')::text AS body
               FROM hearing_share s
               JOIN hearing_share_payload p ON p.share_id = s.share_id
              WHERE s.share_id = :shareId
@@ -256,23 +243,14 @@ public class JdbcShareQueries implements ShareQueries {
     public Optional<StoredPayload> payload(final UUID shareId) {
         return jdbc.sql(PAYLOAD_SQL)
                 .param(SHARE_ID, shareId)
-                .query((row, rowNumber) -> storedPayload(row,
-                        row.getBoolean("arrived_text") ? PayloadForm.ARRIVED_TEXT : PayloadForm.WORKING_COPY))
+                .query((row, rowNumber) -> storedPayload(row))
                 .optional();
     }
 
-    @Override
-    public Optional<StoredPayload> arrivedText(final UUID shareId) {
-        return jdbc.sql(ARRIVED_SQL)
-                .param(SHARE_ID, shareId)
-                .query((row, rowNumber) -> storedPayload(row, PayloadForm.ARRIVED_TEXT))
-                .optional();
-    }
-
-    private static StoredPayload storedPayload(final ResultSet row, final PayloadForm form) throws SQLException {
+    private static StoredPayload storedPayload(final ResultSet row) throws SQLException {
         return new StoredPayload(row.getObject("share_id", UUID.class), row.getObject("hearing_id", UUID.class),
                 row.getObject("hearing_day", LocalDate.class), instant(row, "shared_at"),
-                row.getBoolean("enrichment_applied"), row.getString("body"), form);
+                row.getBoolean("enrichment_applied"), row.getString("body"));
     }
 
     private static String youthPredicate(final DayYouthFilter filter) {

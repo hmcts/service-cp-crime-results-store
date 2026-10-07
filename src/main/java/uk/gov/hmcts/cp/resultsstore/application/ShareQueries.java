@@ -11,7 +11,7 @@ import uk.gov.hmcts.cp.resultsstore.domain.StoredPayload;
 
 /**
  * The read side of the store (data-model.md *Read queries*). Read-only; each call is one autocommit
- * statement. Only {@link #payload} and {@link #arrivedText} read the payload table (Principle III).
+ * statement. Only {@link #payload} reads the payload table (Principle III).
  */
 public interface ShareQueries {
 
@@ -52,23 +52,13 @@ public interface ShareQueries {
     List<ShareView> dayVersions(UUID hearingId, LocalDate hearingDay);
 
     /**
-     * A share's payload: the working copy without {@code _metadata}, or the arrived text when the working
-     * copy is empty (FR-033).
+     * A share's payload: the working copy without {@code _metadata} (FR-033; specs/005-payload-simplification
+     * FR-006).
      *
      * @param shareId the share
      * @return the payload, or empty when no share has the id
      */
     Optional<StoredPayload> payload(UUID shareId);
-
-    /**
-     * A share's text as it arrived ({@code payload_text}, still with {@code _metadata}), whatever the working copy
-     * holds (FR-038, FR-041; phase D). {@code payload_sha256} is not read: it is never served.
-     *
-     * @param shareId the share
-     * @return the text in the {@link uk.gov.hmcts.cp.resultsstore.domain.PayloadForm#ARRIVED_TEXT} form, or empty
-     *         when no share has the id
-     */
-    Optional<StoredPayload> arrivedText(UUID shareId);
 
     /**
      * What a pull read.

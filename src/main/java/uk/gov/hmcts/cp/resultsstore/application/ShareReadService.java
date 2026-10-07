@@ -9,9 +9,7 @@ import java.util.List;
 import java.util.UUID;
 import uk.gov.hmcts.cp.resultsstore.api.ProblemReason;
 import uk.gov.hmcts.cp.resultsstore.domain.DayYouthFilter;
-import uk.gov.hmcts.cp.resultsstore.domain.EnvelopeMetadata;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.SearchCursor;
 import uk.gov.hmcts.cp.resultsstore.domain.ShareView;
 import uk.gov.hmcts.cp.resultsstore.domain.SharedDays;
@@ -151,50 +149,21 @@ public class ShareReadService {
     }
 
     /**
-     * The payload as served (FR-033, FR-034): the working copy as the database wrote it without
-     * {@code _metadata}, or the arrived text with {@code _metadata} removed here; the {@code ETag} is over exactly
-     * the bytes returned.
+     * The payload as served (FR-033, FR-034; specs/005-payload-simplification FR-006): the working copy as the
+     * database wrote it without {@code _metadata}, as UTF-8 bytes counted in the payload meter; the {@code ETag} is
+     * over exactly the bytes returned.
      *
      * @param shareId the share
      * @return the bytes, their {@code ETag} and the share's facts
      * @throws NotFoundException {@code share_not_found}
-     * @throws EnvelopeMetadata.UnreadablePayloadException when an arrived text does not parse ({@code 500
-     *         internal_error}); never the text
      */
     public ServedPayload payload(final UUID shareId) {
         final StoredPayload stored = queries.payload(shareId)
                 .orElseThrow(() -> new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
-        final String text = stored.form() == PayloadForm.ARRIVED_TEXT
-                ? EnvelopeMetadata.strip(stored.body())
-                : stored.body();
-        return served(stored, text);
-    }
-
-    /** The text to serve as UTF-8 bytes with their quoted SHA-256 {@code ETag}, counted in the payload meter. */
-    private ServedPayload served(final StoredPayload stored, final String text) {
-        final byte[] body = text.getBytes(StandardCharsets.UTF_8);
+        final byte[] body = stored.body().getBytes(StandardCharsets.UTF_8);
         observer.payloadBytes(body.length);
         return new ServedPayload(body, "\"" + PayloadChecksum.sha256Hex(body) + "\"", stored.shareId(),
-                stored.hearingId(), stored.hearingDay(), stored.sharedTime(), stored.enrichmentApplied(),
-                stored.form());
-    }
-
-    /**
-     * The text as it arrived (FR-041; phase D): {@code payload_text} with {@code _metadata} removed here, before
-     * any application results were added; the {@code ETag} is over exactly the bytes returned. It is not, in
-     * general, the stored checksum: that is over the text as it arrived, and the bytes served differ whenever the
-     * text held {@code _metadata} or was not compact JSON.
-     *
-     * @param shareId the share
-     * @return the bytes, their {@code ETag} and the share's facts, in the arrived-text form
-     * @throws NotFoundException {@code share_not_found}
-     * @throws EnvelopeMetadata.UnreadablePayloadException when the text does not parse ({@code 500
-     *         internal_error}); never the text
-     */
-    public ServedPayload arrivedPayload(final UUID shareId) {
-        final StoredPayload stored = queries.arrivedText(shareId)
-                .orElseThrow(() -> new NotFoundException(ProblemReason.SHARE_NOT_FOUND));
-        return served(stored, EnvelopeMetadata.strip(stored.body()));
+                stored.hearingId(), stored.hearingDay(), stored.sharedTime(), stored.enrichmentApplied());
     }
 
     private static int limit(final Integer limit) {

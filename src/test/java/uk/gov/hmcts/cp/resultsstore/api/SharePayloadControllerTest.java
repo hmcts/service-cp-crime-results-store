@@ -23,7 +23,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService;
 import uk.gov.hmcts.cp.resultsstore.domain.PayloadChecksum;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.support.ShareViews;
 
 /** The payload as exact bytes with a strong ETag and its headers (FR-033 to FR-037; research R10, R11). */
@@ -53,8 +52,7 @@ class SharePayloadControllerTest {
     @BeforeEach
     void payload() {
         when(service.payload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(BODY, ETAG, ShareViews.SHARE_ID,
-                ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.parse("2026-10-02T16:41:07.5Z"), true,
-                PayloadForm.WORKING_COPY));
+                ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.parse("2026-10-02T16:41:07.5Z"), true));
     }
 
     private MockHttpServletResponse fetch(final String ifNoneMatch) throws Exception {

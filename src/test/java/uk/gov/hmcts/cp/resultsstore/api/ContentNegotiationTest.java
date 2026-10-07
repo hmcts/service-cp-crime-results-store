@@ -37,7 +37,6 @@ import uk.gov.hmcts.cp.resultsstore.application.ReadObserver;
 import uk.gov.hmcts.cp.resultsstore.application.SearchPage;
 import uk.gov.hmcts.cp.resultsstore.application.ServedPayload;
 import uk.gov.hmcts.cp.resultsstore.application.ShareReadService;
-import uk.gov.hmcts.cp.resultsstore.domain.PayloadForm;
 import uk.gov.hmcts.cp.resultsstore.domain.ReadOutcome;
 import uk.gov.hmcts.cp.resultsstore.filters.ActionRequestWrapper;
 import uk.gov.hmcts.cp.resultsstore.filters.ApiRoute;
@@ -89,8 +88,7 @@ class ContentNegotiationTest {
                 List.of(ShareViews.complete()));
         when(service.payload(ShareViews.SHARE_ID)).thenReturn(new ServedPayload(
                 "{}".getBytes(StandardCharsets.UTF_8), "\"44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a\"",
-                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false,
-                PayloadForm.WORKING_COPY));
+                ShareViews.SHARE_ID, ShareViews.HEARING_ID, ShareViews.HEARING_DAY, Instant.EPOCH, false));
     }
 
     private static String path(final ApiRoute route) {

@@ -254,7 +254,7 @@ names a share id only).
 
 ## Phase: the read side
 
-- [ ] T005 [US1] Remove the read fallback. Tests first:
+- [X] T005 [US1] Remove the read fallback. Tests first:
   - src/test/java/uk/gov/hmcts/cp/resultsstore/persistence/JdbcShareQueriesTest.java:
     `the_payload_constant_should_read_only_the_working_copy` (`PAYLOAD_SQL` names neither
     `payload_text` nor `arrived_text`; RED on the `CASE`); delete
@@ -279,8 +279,16 @@ names a share id only).
     api/ReadApiExceptionHandler.java (delete the `UnreadablePayloadException` handler and import).
   - Done when: the named classes green (the coverage gate is checked by the one full build after
     T007).
-  - RED:
-  - GREEN:
+  - `ShareReadServiceTest.payload_form_should_follow_the_stored_form` keeps its share-facts half as
+    `the_served_payload_should_carry_the_stored_share_s_facts`; `ReadApiExceptionHandler` had no handler of its
+    own for `UnreadablePayloadException` (the `RuntimeException` handler took it), so only its javadoc and import go.
+  - RED: `./gradlew test --tests '*.JdbcShareQueriesTest'`:
+    `the_payload_constant_should_read_only_the_working_copy() FAILED` `Expecting actual: "SELECT ... CASE WHEN
+    p.payload_json IS NULL THEN p.payload_text ELSE (p.payload_json - '_metadata')::text END AS body ..." to contain:
+    "(p.payload_json - '_metadata')::text AS body"`.
+  - GREEN: `./gradlew test` over `JdbcShareQueriesTest`, `ShareReadServiceTest`, `JdbcShareQueriesIT`,
+    `ContentNegotiationTest`, `SharePayloadControllerTest`, `ReadApiExceptionHandlerTest`, `ReadApiIT`,
+    `NoPayloadInLogsIT`: BUILD SUCCESSFUL, 270 tests, 0 failures, 0 skipped.
 
 ## Phase: the smoke and the documents
 
