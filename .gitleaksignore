@@ -4,3 +4,7 @@
 d6e0d581b4cf392e4bb0f0366c487220c2c003a2:.gitignore:internal-urls:38
 # The first version of this file quoted that path in its note, so the full-history scan flags it too.
 211399086232fa320313973bc34a4d1d21e72d75:.gitleaksignore:internal-urls:2
+# Spec 002's plan quoted the estate's internal mesh hostname pattern as the example progression
+# base URL. It is a hostname, not a credential. Both lines were introduced by the same commit.
+616d2683bea1b7b0d743e1605eebe063b640b409:specs/002-enrichment/contracts/progression-lookup.md:internal-urls:18
+616d2683bea1b7b0d743e1605eebe063b640b409:specs/002-enrichment/research.md:internal-urls:535
